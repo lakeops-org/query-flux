@@ -1,0 +1,40 @@
+queryflux:
+  externalAddress: http://localhost:8080
+  frontends:
+    trinoHttp:
+      enabled: true
+      port: 8080
+    postgresWire:
+      enabled: false
+      port: 5432
+  persistence:
+    type: inMemory
+  adminApi:
+    port: 9000
+
+clusterGroups:
+  trino-default:
+    engine: Trino
+    maxRunningQueries: 100
+    clusters:
+      - name: trino-1
+        endpoint: http://localhost:8081
+
+  duckdb-local:
+    engine: DuckDb
+    maxRunningQueries: 4
+    clusters:
+      - name: duckdb-1
+        databasePath: /tmp/queryflux.duckdb
+
+translation:
+  errorOnUnsupported: false
+
+catalogProvider:
+  type: Null
+
+routers:
+  - type: protocolBased
+    postgresWire: trino-default
+
+routingFallback: trino-default

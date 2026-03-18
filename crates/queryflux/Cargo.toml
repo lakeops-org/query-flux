@@ -1,0 +1,26 @@
+[package]
+name = "queryflux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "queryflux"
+path = "src/main.rs"
+
+[dependencies]
+queryflux-core = { workspace = true }
+queryflux-config = { workspace = true }
+queryflux-persistence = { workspace = true }
+queryflux-routing = { workspace = true }
+queryflux-translation = { workspace = true }
+queryflux-engine-adapters = { workspace = true }
+queryflux-frontend = { workspace = true }
+queryflux-cluster-manager = { workspace = true }
+queryflux-metrics = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+reqwest = { workspace = true }

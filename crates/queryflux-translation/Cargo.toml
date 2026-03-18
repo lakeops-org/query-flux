@@ -1,0 +1,13 @@
+[package]
+name = "queryflux-translation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+queryflux-core = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

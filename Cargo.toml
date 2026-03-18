@@ -1,0 +1,74 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/queryflux",
+    "crates/queryflux-core",
+    "crates/queryflux-persistence",
+    "crates/queryflux-routing",
+    "crates/queryflux-translation",
+    "crates/queryflux-engine-adapters",
+    "crates/queryflux-frontend",
+    "crates/queryflux-cluster-manager",
+    "crates/queryflux-config",
+    "crates/queryflux-metrics",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/lakesphere/queryflux"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+bytes = "1"
+url = { version = "2", features = ["serde"] }
+
+# HTTP
+axum = { version = "0.8", features = ["macros"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+hyper = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Async trait support
+async-trait = "0.1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUIDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Metrics
+prometheus = "0.13"
+
+# Concurrency
+dashmap = "6"
+parking_lot = "0.12"
+
+# Internal crates
+queryflux-core = { path = "crates/queryflux-core" }
+queryflux-persistence = { path = "crates/queryflux-persistence" }
+queryflux-routing = { path = "crates/queryflux-routing" }
+queryflux-translation = { path = "crates/queryflux-translation" }
+queryflux-engine-adapters = { path = "crates/queryflux-engine-adapters" }
+queryflux-frontend = { path = "crates/queryflux-frontend" }
+queryflux-cluster-manager = { path = "crates/queryflux-cluster-manager" }
+queryflux-config = { path = "crates/queryflux-config" }
+queryflux-metrics = { path = "crates/queryflux-metrics" }
