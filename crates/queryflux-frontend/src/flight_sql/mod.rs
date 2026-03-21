@@ -16,18 +16,17 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use arrow::datatypes::Schema;
+use arrow::record_batch::RecordBatch;
 use arrow_flight::encode::FlightDataEncoderBuilder;
 use arrow_flight::error::FlightError;
 use arrow_flight::sql::{
-    server::FlightSqlService, CommandStatementQuery, ProstMessageExt, SqlInfo,
-    TicketStatementQuery,
+    server::FlightSqlService, CommandStatementQuery, ProstMessageExt, SqlInfo, TicketStatementQuery,
 };
 use arrow_flight::{
-    FlightDescriptor, FlightEndpoint, FlightInfo, SchemaAsIpc, Ticket,
-    flight_service_server::FlightServiceServer,
+    flight_service_server::FlightServiceServer, FlightDescriptor, FlightEndpoint, FlightInfo,
+    SchemaAsIpc, Ticket,
 };
-use arrow::datatypes::Schema;
-use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use prost::Message;
@@ -107,8 +106,9 @@ impl QueryFluxFlightSql {
     }
 }
 
-type FlightDataStream =
-    Pin<Box<dyn Stream<Item = std::result::Result<arrow_flight::FlightData, Status>> + Send + 'static>>;
+type FlightDataStream = Pin<
+    Box<dyn Stream<Item = std::result::Result<arrow_flight::FlightData, Status>> + Send + 'static>,
+>;
 
 #[async_trait]
 impl FlightSqlService for QueryFluxFlightSql {
@@ -131,7 +131,9 @@ impl FlightSqlService for QueryFluxFlightSql {
         let ticket_bytes = ticket_query.as_any().encode_to_vec();
 
         let endpoint = FlightEndpoint {
-            ticket: Some(Ticket { ticket: ticket_bytes.into() }),
+            ticket: Some(Ticket {
+                ticket: ticket_bytes.into(),
+            }),
             ..Default::default()
         };
 
@@ -169,7 +171,8 @@ impl FlightSqlService for QueryFluxFlightSql {
             .map_err(|e| Status::internal(e.to_string()))?;
 
         // Channel: sink sends RecordBatches; FlightDataEncoderBuilder encodes them.
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<std::result::Result<RecordBatch, FlightError>>();
+        let (tx, rx) =
+            tokio::sync::mpsc::unbounded_channel::<std::result::Result<RecordBatch, FlightError>>();
         let mut sink = FlightSqlResultSink { tx };
 
         let state2 = self.state.clone();

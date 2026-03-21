@@ -203,7 +203,12 @@ async fn handle_connection(
 
             b'P' => {
                 // Parse (prepared statements) — not supported in V1.
-                write_error_response(&mut writer, "42000", "Prepared statements are not supported").await?;
+                write_error_response(
+                    &mut writer,
+                    "42000",
+                    "Prepared statements are not supported",
+                )
+                .await?;
                 write_msg(&mut writer, b'Z', b"I").await?;
             }
 
@@ -213,7 +218,10 @@ async fn handle_connection(
             }
 
             _ => {
-                warn!(conn_id = connection_id, msg_type, "Postgres wire: unsupported message type");
+                warn!(
+                    conn_id = connection_id,
+                    msg_type, "Postgres wire: unsupported message type"
+                );
                 write_error_response(
                     &mut writer,
                     "0A000",

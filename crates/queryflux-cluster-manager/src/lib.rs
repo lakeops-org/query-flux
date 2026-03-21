@@ -16,10 +16,7 @@ use cluster_state::ClusterStateSnapshot;
 pub trait ClusterGroupManager: Send + Sync {
     /// Pick the least-loaded healthy cluster in a group.
     /// Returns `None` if the group is at capacity (triggers queueing).
-    async fn acquire_cluster(
-        &self,
-        group: &ClusterGroupName,
-    ) -> Result<Option<ClusterName>>;
+    async fn acquire_cluster(&self, group: &ClusterGroupName) -> Result<Option<ClusterName>>;
 
     /// Signal that a query has finished on a cluster (success, failure, or cancel).
     async fn release_cluster(&self, group: &ClusterGroupName, cluster: &ClusterName) -> Result<()>;

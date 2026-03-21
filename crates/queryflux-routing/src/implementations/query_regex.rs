@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use regex::Regex;
 use queryflux_core::{
     error::Result,
     query::{ClusterGroupName, FrontendProtocol},
     session::SessionContext,
 };
+use regex::Regex;
 
 use crate::RouterTrait;
 
@@ -20,13 +20,15 @@ impl QueryRegexRouter {
     pub fn new(rules: Vec<(String, String)>) -> Self {
         let compiled = rules
             .into_iter()
-            .filter_map(|(pattern, group)| {
-                match Regex::new(&pattern) {
-                    Ok(re) => Some((re, ClusterGroupName(group))),
-                    Err(e) => {
-                        tracing::warn!("QueryRegexRouter: skipping invalid regex {:?}: {}", pattern, e);
-                        None
-                    }
+            .filter_map(|(pattern, group)| match Regex::new(&pattern) {
+                Ok(re) => Some((re, ClusterGroupName(group))),
+                Err(e) => {
+                    tracing::warn!(
+                        "QueryRegexRouter: skipping invalid regex {:?}: {}",
+                        pattern,
+                        e
+                    );
+                    None
                 }
             })
             .collect();
@@ -36,7 +38,9 @@ impl QueryRegexRouter {
 
 #[async_trait]
 impl RouterTrait for QueryRegexRouter {
-    fn type_name(&self) -> &'static str { "QueryRegex" }
+    fn type_name(&self) -> &'static str {
+        "QueryRegex"
+    }
 
     async fn route(
         &self,

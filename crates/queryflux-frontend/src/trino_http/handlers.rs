@@ -10,18 +10,18 @@ use axum::{
 use bytes::Bytes;
 use chrono::Utc;
 use queryflux_core::{
-    query::{
-        BackendQueryId, FrontendProtocol, ProxyQueryId, QueryPollResult, QueryStatus,
-    },
+    query::{BackendQueryId, FrontendProtocol, ProxyQueryId, QueryPollResult, QueryStatus},
     session::SessionContext,
 };
-use queryflux_engine_adapters::trino::api::{queued_response, TrinoError, TrinoResponse, TrinoStats};
+use queryflux_engine_adapters::trino::api::{
+    queued_response, TrinoError, TrinoResponse, TrinoStats,
+};
 use serde_json::Value;
 use tracing::{info, warn};
 
+use super::result_sink::TrinoHttpResultSink;
 use crate::dispatch::{dispatch_query, execute_to_sink, rewrite_trino_uri, DispatchOutcome};
 use crate::state::AppState;
-use super::result_sink::TrinoHttpResultSink;
 
 fn json_response(body: impl serde::Serialize) -> Response<Body> {
     let json = serde_json::to_vec(&body).unwrap_or_default();
@@ -51,7 +51,10 @@ fn rewrite_next_uri_bytes(src: &[u8], new_uri: Option<&str>) -> Bytes {
         let after_key = &src[key_pos + KEY.len()..];
         let colon_offset = after_key.iter().position(|&b| b == b':').unwrap_or(0);
         let after_colon = &after_key[colon_offset + 1..];
-        let value_start_offset = after_colon.iter().position(|&b| !b.is_ascii_whitespace()).unwrap_or(0);
+        let value_start_offset = after_colon
+            .iter()
+            .position(|&b| !b.is_ascii_whitespace())
+            .unwrap_or(0);
         let value_start = key_pos + KEY.len() + colon_offset + 1 + value_start_offset;
 
         if src[value_start] == b'"' {
@@ -74,7 +77,10 @@ fn rewrite_next_uri_bytes(src: &[u8], new_uri: Option<&str>) -> Bytes {
                     }
                     None => {
                         let mut out = Vec::with_capacity(src.len());
-                        let trim_end = before.iter().rposition(|&b| b == b',').unwrap_or(before.len());
+                        let trim_end = before
+                            .iter()
+                            .rposition(|&b| b == b',')
+                            .unwrap_or(before.len());
                         let has_preceding_comma = trim_end < before.len();
                         if has_preceding_comma {
                             out.extend_from_slice(&before[..trim_end]);
@@ -82,7 +88,10 @@ fn rewrite_next_uri_bytes(src: &[u8], new_uri: Option<&str>) -> Bytes {
                             out.extend_from_slice(before);
                         }
                         let after_trimmed = if !has_preceding_comma {
-                            let skip = after.iter().position(|&b| b != b',' && !b.is_ascii_whitespace()).unwrap_or(0);
+                            let skip = after
+                                .iter()
+                                .position(|&b| b != b',' && !b.is_ascii_whitespace())
+                                .unwrap_or(0);
                             &after[skip..]
                         } else {
                             after
@@ -140,8 +149,13 @@ fn outcome_to_response(
             let resp = queued_response(&query_id.0, 0, queued_next_uri);
             json_response(&resp).into_response()
         }
-        DispatchOutcome::Async { initial_body, proxy_next_uri } => match initial_body {
-            Some(body) => raw_response_with_rewritten_next_uri(body, proxy_next_uri).into_response(),
+        DispatchOutcome::Async {
+            initial_body,
+            proxy_next_uri,
+        } => match initial_body {
+            Some(body) => {
+                raw_response_with_rewritten_next_uri(body, proxy_next_uri).into_response()
+            }
             None => {
                 let resp = queued_response(&query_id.0, 0, proxy_next_uri.unwrap_or_default());
                 json_response(&resp).into_response()
@@ -149,7 +163,6 @@ fn outcome_to_response(
         },
     }
 }
-
 
 /// POST /v1/statement — client submits a new query.
 pub async fn post_statement(
@@ -165,7 +178,11 @@ pub async fn post_statement(
     let session = extract_session(&headers);
     let protocol = FrontendProtocol::TrinoHttp;
 
-    let (group, _trace) = match state.router_chain.route_with_trace(&sql, &session, &protocol).await {
+    let (group, _trace) = match state
+        .router_chain
+        .route_with_trace(&sql, &session, &protocol)
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             warn!("Routing error: {e}");
@@ -179,7 +196,18 @@ pub async fn post_statement(
     // Trino backend: raw bytes forwarded, nextUri rewritten — zero Arrow.
     // Non-Trino backend (DuckDB, StarRocks): Arrow path → single-page Trino JSON response.
     if state.group_supports_async(&group.0) {
-        match dispatch_query(&state, query_id.clone(), sql, session, protocol, group, false, 0).await {
+        match dispatch_query(
+            &state,
+            query_id.clone(),
+            sql,
+            session,
+            protocol,
+            group,
+            false,
+            0,
+        )
+        .await
+        {
             Ok(outcome) => outcome_to_response(&state, &query_id, outcome),
             Err(e) => {
                 warn!("Dispatch error: {e}");
@@ -219,7 +247,18 @@ pub async fn get_queued_statement(
     let group = queued.cluster_group.clone();
 
     if state.group_supports_async(&group.0) {
-        match dispatch_query(&state, query_id.clone(), sql, session, protocol, group, true, seq).await {
+        match dispatch_query(
+            &state,
+            query_id.clone(),
+            sql,
+            session,
+            protocol,
+            group,
+            true,
+            seq,
+        )
+        .await
+        {
             Ok(outcome) => outcome_to_response(&state, &query_id, outcome),
             Err(e) => {
                 warn!("Dispatch error: {e}");
@@ -270,7 +309,10 @@ pub async fn get_executing_statement(
     let adapter = match state.adapter(&executing.cluster_name.0) {
         Some(a) => a,
         None => {
-            warn!("No adapter for cluster {}/{}", executing.cluster_group, executing.cluster_name);
+            warn!(
+                "No adapter for cluster {}/{}",
+                executing.cluster_group, executing.cluster_name
+            );
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
@@ -300,24 +342,38 @@ pub async fn get_executing_statement(
         Ok(r) => r,
         Err(e) => {
             warn!("Poll error: {e}");
-            state.metrics.on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
-            let _ = state.cluster_manager.release_cluster(&executing.cluster_group, &executing.cluster_name).await;
+            state
+                .metrics
+                .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
+            let _ = state
+                .cluster_manager
+                .release_cluster(&executing.cluster_group, &executing.cluster_name)
+                .await;
             let _ = state.persistence.delete(&backend_id).await;
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
 
-    let elapsed_ms = (Utc::now() - executing.creation_time).num_milliseconds().max(0) as u64;
+    let elapsed_ms = (Utc::now() - executing.creation_time)
+        .num_milliseconds()
+        .max(0) as u64;
 
     match poll_result {
-        QueryPollResult::Raw { body, next_uri, engine_stats } => {
+        QueryPollResult::Raw {
+            body,
+            next_uri,
+            engine_stats,
+        } => {
             if next_uri.is_none() {
                 // Final page — query complete.
                 state.record_query(
                     &executing.id,
                     Some(backend_id.0.clone()),
                     // sql_preview: original SQL (translated_sql field holds the pre-translation original)
-                    executing.translated_sql.as_deref().unwrap_or(&executing.sql),
+                    executing
+                        .translated_sql
+                        .as_deref()
+                        .unwrap_or(&executing.sql),
                     &session,
                     &FrontendProtocol::TrinoHttp,
                     &executing.cluster_group,
@@ -326,7 +382,11 @@ pub async fn get_executing_statement(
                     FrontendProtocol::TrinoHttp.default_dialect(),
                     adapter.engine_type().dialect(),
                     executing.translated_sql.is_some(),
-                    if executing.translated_sql.is_some() { Some(executing.sql.clone()) } else { None },
+                    if executing.translated_sql.is_some() {
+                        Some(executing.sql.clone())
+                    } else {
+                        None
+                    },
                     QueryStatus::Success,
                     elapsed_ms,
                     None,
@@ -334,25 +394,35 @@ pub async fn get_executing_statement(
                     None,
                     engine_stats,
                 );
-                state.metrics.on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
-                let _ = state.cluster_manager.release_cluster(&executing.cluster_group, &executing.cluster_name).await;
+                state
+                    .metrics
+                    .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
+                let _ = state
+                    .cluster_manager
+                    .release_cluster(&executing.cluster_group, &executing.cluster_name)
+                    .await;
                 let _ = state.persistence.delete(&backend_id).await;
                 return raw_response_with_rewritten_next_uri(body, None).into_response();
             }
 
             // Intermediate page — rewrite nextUri (swap Trino host → QueryFlux), no persistence write.
-            let proxy_next_uri = next_uri.as_deref().map(|uri| {
-                rewrite_trino_uri(uri, &state.external_address)
-            });
+            let proxy_next_uri = next_uri
+                .as_deref()
+                .map(|uri| rewrite_trino_uri(uri, &state.external_address));
             raw_response_with_rewritten_next_uri(body, proxy_next_uri).into_response()
         }
 
         QueryPollResult::Failed { message, .. } => {
-            state.metrics.on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
+            state
+                .metrics
+                .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
             state.record_query(
                 &executing.id,
                 Some(backend_id.0.clone()),
-                executing.translated_sql.as_deref().unwrap_or(&executing.sql),
+                executing
+                    .translated_sql
+                    .as_deref()
+                    .unwrap_or(&executing.sql),
                 &session,
                 &FrontendProtocol::TrinoHttp,
                 &executing.cluster_group,
@@ -361,7 +431,11 @@ pub async fn get_executing_statement(
                 FrontendProtocol::TrinoHttp.default_dialect(),
                 adapter.engine_type().dialect(),
                 executing.translated_sql.is_some(),
-                if executing.translated_sql.is_some() { Some(executing.sql.clone()) } else { None },
+                if executing.translated_sql.is_some() {
+                    Some(executing.sql.clone())
+                } else {
+                    None
+                },
                 QueryStatus::Failed,
                 elapsed_ms,
                 None,
@@ -369,7 +443,10 @@ pub async fn get_executing_statement(
                 None,
                 None,
             );
-            let _ = state.cluster_manager.release_cluster(&executing.cluster_group, &executing.cluster_name).await;
+            let _ = state
+                .cluster_manager
+                .release_cluster(&executing.cluster_group, &executing.cluster_name)
+                .await;
             warn!(id = %executing.id, "Query failed: {message}");
             let _ = state.persistence.delete(&backend_id).await;
             let error_resp = TrinoResponse {
@@ -402,13 +479,15 @@ pub async fn get_executing_statement(
 
         QueryPollResult::Pending { next_uri, .. } => {
             // Still running — rewrite nextUri, no persistence write needed.
-            let proxy_next_uri = next_uri.as_deref()
+            let proxy_next_uri = next_uri
+                .as_deref()
                 .map(|uri| rewrite_trino_uri(uri, &state.external_address))
-                .unwrap_or_else(|| format!("{}/v1/statement/{}", state.external_address, trino_path));
+                .unwrap_or_else(|| {
+                    format!("{}/v1/statement/{}", state.external_address, trino_path)
+                });
             let resp = queued_response(&executing.id.0, 0, proxy_next_uri);
             json_response(&resp).into_response()
         }
-
     }
 }
 
@@ -432,8 +511,13 @@ pub async fn delete_executing_statement(
         let client = reqwest::Client::new();
         let _ = client.delete(&trino_url).send().await;
 
-        state.metrics.on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
-        let _ = state.cluster_manager.release_cluster(&executing.cluster_group, &executing.cluster_name).await;
+        state
+            .metrics
+            .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
+        let _ = state
+            .cluster_manager
+            .release_cluster(&executing.cluster_group, &executing.cluster_name)
+            .await;
         let _ = state.persistence.delete(&backend_id).await;
     }
 

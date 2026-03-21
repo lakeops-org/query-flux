@@ -59,11 +59,7 @@ impl TrinoClient {
 
     /// Execute `sql` and wait for completion.
     /// `extra_headers` lets callers add routing headers (e.g. `X-Qf-Group`).
-    pub async fn execute(
-        &self,
-        sql: &str,
-        extra_headers: &[(&str, &str)],
-    ) -> Result<QueryResult> {
+    pub async fn execute(&self, sql: &str, extra_headers: &[(&str, &str)]) -> Result<QueryResult> {
         let mut headers = HeaderMap::new();
         headers.insert("X-Trino-User", HeaderValue::from_static("test"));
         for (name, value) in extra_headers {
@@ -74,7 +70,8 @@ impl TrinoClient {
         }
 
         // Submit query
-        let resp = self.http
+        let resp = self
+            .http
             .post(format!("{}/v1/statement", self.base_url))
             .headers(headers.clone())
             .body(sql.to_string())
@@ -101,11 +98,16 @@ impl TrinoClient {
                 all_rows.extend(rows);
             }
             if let Some(err) = page.error.take() {
-                let msg = err.get("message")
+                let msg = err
+                    .get("message")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown error")
                     .to_string();
-                return Ok(QueryResult { columns, rows: all_rows, error: Some(msg) });
+                return Ok(QueryResult {
+                    columns,
+                    rows: all_rows,
+                    error: Some(msg),
+                });
             }
 
             let state = page.stats.as_ref().map(|s| s.state.as_str()).unwrap_or("");
@@ -118,7 +120,8 @@ impl TrinoClient {
             let next_url = next.unwrap();
             tokio::time::sleep(Duration::from_millis(100)).await;
 
-            let resp = self.http
+            let resp = self
+                .http
                 .get(&next_url)
                 .headers(headers.clone())
                 .send()
@@ -127,12 +130,20 @@ impl TrinoClient {
             if !resp.status().is_success() {
                 // Non-2xx on a poll means the query failed or was cleaned up.
                 let msg = format!("poll returned HTTP {}", resp.status());
-                return Ok(QueryResult { columns, rows: all_rows, error: Some(msg) });
+                return Ok(QueryResult {
+                    columns,
+                    rows: all_rows,
+                    error: Some(msg),
+                });
             }
             page = resp.json().await?;
         }
 
-        Ok(QueryResult { columns, rows: all_rows, error: None })
+        Ok(QueryResult {
+            columns,
+            rows: all_rows,
+            error: None,
+        })
     }
 
     /// Shorthand: execute with a single routing header `X-Qf-Group: {group}`.

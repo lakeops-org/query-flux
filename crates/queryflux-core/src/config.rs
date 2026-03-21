@@ -89,11 +89,16 @@ pub struct FrontendConfig {
 
 impl Default for FrontendConfig {
     fn default() -> Self {
-        Self { enabled: true, port: 8080 }
+        Self {
+            enabled: true,
+            port: 8080,
+        }
     }
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", tag = "type")]
@@ -101,8 +106,12 @@ pub enum PersistenceConfig {
     #[default]
     #[serde(rename = "inMemory")]
     InMemory,
-    Redis { url: String },
-    Postgres { url: String },
+    Redis {
+        url: String,
+    },
+    Postgres {
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +121,9 @@ pub struct AdminApiConfig {
     pub port: u16,
 }
 
-fn default_admin_port() -> u16 { 9000 }
+fn default_admin_port() -> u16 {
+    9000
+}
 
 impl Default for AdminApiConfig {
     fn default() -> Self {

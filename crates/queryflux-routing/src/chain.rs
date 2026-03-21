@@ -1,9 +1,9 @@
-use serde::Serialize;
 use queryflux_core::{
     error::Result,
     query::{ClusterGroupName, FrontendProtocol},
     session::SessionContext,
 };
+use serde::Serialize;
 
 use crate::RouterTrait;
 

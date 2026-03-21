@@ -1,9 +1,3 @@
-use async_trait::async_trait;
-use sqlx::PgPool;
-use queryflux_core::{
-    error::{QueryFluxError, Result},
-    query::{BackendQueryId, ExecutingQuery, ProxyQueryId, QueuedQuery},
-};
 use crate::{
     cluster_config::{
         ClusterConfigRecord, ClusterGroupConfigRecord, UpsertClusterConfig,
@@ -13,6 +7,12 @@ use crate::{
     query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
     ClusterConfigStore, Persistence, QueryHistoryStore,
 };
+use async_trait::async_trait;
+use queryflux_core::{
+    error::{QueryFluxError, Result},
+    query::{BackendQueryId, ExecutingQuery, ProxyQueryId, QueuedQuery},
+};
+use sqlx::PgPool;
 
 /// Postgres backend — implements both `Persistence` (in-flight query state)
 /// and `MetricsStore` (historical query records + cluster snapshots).
@@ -25,9 +25,9 @@ pub struct PostgresStore {
 impl PostgresStore {
     /// Connect to Postgres and return a ready instance.
     pub async fn connect(database_url: &str) -> Result<Self> {
-        let pool = PgPool::connect(database_url)
-            .await
-            .map_err(|e| QueryFluxError::Persistence(format!("Failed to connect to Postgres: {e}")))?;
+        let pool = PgPool::connect(database_url).await.map_err(|e| {
+            QueryFluxError::Persistence(format!("Failed to connect to Postgres: {e}"))
+        })?;
         Ok(Self { pool })
     }
 
@@ -39,7 +39,6 @@ impl PostgresStore {
             .map_err(|e| QueryFluxError::Persistence(format!("Migration failed: {e}")))?;
         Ok(())
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -93,9 +92,17 @@ impl QueryHistoryStore for PostgresStore {
         let (total, failed, translated, avg_ms) = row;
         Ok(DashboardStats {
             queries_last_hour: total,
-            error_rate_last_hour: if total > 0 { failed as f64 / total as f64 } else { 0.0 },
+            error_rate_last_hour: if total > 0 {
+                failed as f64 / total as f64
+            } else {
+                0.0
+            },
             avg_duration_ms_last_hour: avg_ms,
-            translation_rate_last_hour: if total > 0 { translated as f64 / total as f64 } else { 0.0 },
+            translation_rate_last_hour: if total > 0 {
+                translated as f64 / total as f64
+            } else {
+                0.0
+            },
         })
     }
 
@@ -158,7 +165,6 @@ impl QueryHistoryStore for PostgresStore {
                 .map_err(|e| QueryFluxError::Persistence(format!("list_engines: {e}")))?;
         Ok(rows.into_iter().map(|(e,)| e).collect())
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -168,22 +174,18 @@ impl QueryHistoryStore for PostgresStore {
 #[async_trait]
 impl ClusterConfigStore for PostgresStore {
     async fn list_cluster_configs(&self) -> Result<Vec<ClusterConfigRecord>> {
-        sqlx::query_as::<_, ClusterConfigRecord>(
-            "SELECT * FROM cluster_configs ORDER BY name",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| QueryFluxError::Persistence(format!("list_cluster_configs: {e}")))
+        sqlx::query_as::<_, ClusterConfigRecord>("SELECT * FROM cluster_configs ORDER BY name")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("list_cluster_configs: {e}")))
     }
 
     async fn get_cluster_config(&self, name: &str) -> Result<Option<ClusterConfigRecord>> {
-        sqlx::query_as::<_, ClusterConfigRecord>(
-            "SELECT * FROM cluster_configs WHERE name = $1",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| QueryFluxError::Persistence(format!("get_cluster_config: {e}")))
+        sqlx::query_as::<_, ClusterConfigRecord>("SELECT * FROM cluster_configs WHERE name = $1")
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("get_cluster_config: {e}")))
     }
 
     async fn upsert_cluster_config(
@@ -427,7 +429,10 @@ impl Persistence for PostgresStore {
             .collect()
     }
 
-    async fn delete_queued_not_accessed_since(&self, cutoff: chrono::DateTime<chrono::Utc>) -> Result<u64> {
+    async fn delete_queued_not_accessed_since(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
         // last_accessed is stored inside the JSONB data blob.
         let result = sqlx::query(
             "DELETE FROM queued_queries WHERE (data->>'last_accessed')::timestamptz < $1",
@@ -435,7 +440,9 @@ impl Persistence for PostgresStore {
         .bind(cutoff)
         .execute(&self.pool)
         .await
-        .map_err(|e| QueryFluxError::Persistence(format!("delete_queued_not_accessed_since: {e}")))?;
+        .map_err(|e| {
+            QueryFluxError::Persistence(format!("delete_queued_not_accessed_since: {e}"))
+        })?;
         Ok(result.rows_affected())
     }
 }
@@ -447,20 +454,28 @@ impl Persistence for PostgresStore {
 #[async_trait]
 impl MetricsStore for PostgresStore {
     async fn record_query(&self, r: QueryRecord) -> Result<()> {
-        let (engine_elapsed_ms, cpu_ms, proc_rows, proc_bytes, phys_bytes, peak_mem, spilled, splits) =
-            match &r.engine_stats {
-                Some(s) => (
-                    s.engine_elapsed_time_ms.map(|v| v as i64),
-                    s.cpu_time_ms.map(|v| v as i64),
-                    s.processed_rows.map(|v| v as i64),
-                    s.processed_bytes.map(|v| v as i64),
-                    s.physical_input_bytes.map(|v| v as i64),
-                    s.peak_memory_bytes.map(|v| v as i64),
-                    s.spilled_bytes.map(|v| v as i64),
-                    s.total_splits.map(|v| v as i32),
-                ),
-                None => (None, None, None, None, None, None, None, None),
-            };
+        let (
+            engine_elapsed_ms,
+            cpu_ms,
+            proc_rows,
+            proc_bytes,
+            phys_bytes,
+            peak_mem,
+            spilled,
+            splits,
+        ) = match &r.engine_stats {
+            Some(s) => (
+                s.engine_elapsed_time_ms.map(|v| v as i64),
+                s.cpu_time_ms.map(|v| v as i64),
+                s.processed_rows.map(|v| v as i64),
+                s.processed_bytes.map(|v| v as i64),
+                s.physical_input_bytes.map(|v| v as i64),
+                s.peak_memory_bytes.map(|v| v as i64),
+                s.spilled_bytes.map(|v| v as i64),
+                s.total_splits.map(|v| v as i32),
+            ),
+            None => (None, None, None, None, None, None, None, None),
+        };
 
         sqlx::query(
             r#"INSERT INTO query_records

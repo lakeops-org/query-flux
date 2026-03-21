@@ -92,8 +92,7 @@ impl AppState {
             database: None,
             sql_preview: sql.chars().take(500).collect(),
             status,
-            routing_trace: routing_trace
-                .and_then(|t| serde_json::to_value(t).ok()),
+            routing_trace: routing_trace.and_then(|t| serde_json::to_value(t).ok()),
             queue_duration_ms: 0,
             execution_duration_ms: execution_ms,
             rows_returned: rows,

@@ -20,7 +20,10 @@ pub struct SimpleClusterGroupManager {
 
 impl SimpleClusterGroupManager {
     pub fn new(
-        groups: HashMap<ClusterGroupName, (Vec<Arc<ClusterState>>, Arc<dyn ClusterSelectionStrategy>)>,
+        groups: HashMap<
+            ClusterGroupName,
+            (Vec<Arc<ClusterState>>, Arc<dyn ClusterSelectionStrategy>),
+        >,
     ) -> Self {
         Self { groups }
     }
@@ -29,9 +32,10 @@ impl SimpleClusterGroupManager {
 #[async_trait]
 impl ClusterGroupManager for SimpleClusterGroupManager {
     async fn acquire_cluster(&self, group: &ClusterGroupName) -> Result<Option<ClusterName>> {
-        let (clusters, strategy) = self.groups.get(group).ok_or_else(|| {
-            QueryFluxError::NoClusterGroupAvailable(group.0.clone())
-        })?;
+        let (clusters, strategy) = self
+            .groups
+            .get(group)
+            .ok_or_else(|| QueryFluxError::NoClusterGroupAvailable(group.0.clone()))?;
 
         // Build the eligible candidate list (healthy + enabled + under capacity).
         let eligible: Vec<(usize, &Arc<ClusterState>)> = clusters
@@ -74,13 +78,17 @@ impl ClusterGroupManager for SimpleClusterGroupManager {
         group: &ClusterGroupName,
         cluster: &ClusterName,
     ) -> Result<Option<ClusterStateSnapshot>> {
-        Ok(self.groups.get(group)
+        Ok(self
+            .groups
+            .get(group)
             .and_then(|(cs, _)| cs.iter().find(|c| &c.cluster_name == cluster))
             .map(|c| c.snapshot()))
     }
 
     async fn all_cluster_states(&self) -> Result<Vec<ClusterStateSnapshot>> {
-        Ok(self.groups.values()
+        Ok(self
+            .groups
+            .values()
             .flat_map(|(cs, _)| cs.iter().map(|c| c.snapshot()))
             .collect())
     }

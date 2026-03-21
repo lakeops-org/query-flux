@@ -4,16 +4,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Parser;
 use queryflux_cluster_manager::{
-    cluster_state::ClusterState,
-    simple::SimpleClusterGroupManager,
-    strategy::strategy_from_config,
+    cluster_state::ClusterState, simple::SimpleClusterGroupManager, strategy::strategy_from_config,
 };
 use queryflux_config::{yaml::YamlFileConfigProvider, ConfigProvider};
 use queryflux_core::{
     config::EngineConfig,
     query::{ClusterGroupName, ClusterName, EngineType},
 };
-use queryflux_persistence::cluster_config::{UpsertClusterConfig, UpsertClusterGroupConfig};
 use queryflux_engine_adapters::duckdb::DuckDbAdapter;
 use queryflux_engine_adapters::starrocks::StarRocksAdapter;
 use queryflux_engine_adapters::trino::TrinoAdapter;
@@ -26,23 +23,22 @@ use queryflux_frontend::{
     FrontendListenerTrait,
 };
 use queryflux_metrics::{
-    buffered_store::BufferedMetricsStore,
-    prometheus_store::PrometheusMetrics,
-    MetricsStore, MultiMetricsStore,
+    buffered_store::BufferedMetricsStore, prometheus_store::PrometheusMetrics, MetricsStore,
+    MultiMetricsStore,
 };
-use queryflux_persistence::{in_memory::InMemoryPersistence, postgres::PostgresStore, AdminStore, ClusterConfigStore};
-use queryflux_translation::TranslationService;
+use queryflux_persistence::cluster_config::{UpsertClusterConfig, UpsertClusterGroupConfig};
+use queryflux_persistence::{
+    in_memory::InMemoryPersistence, postgres::PostgresStore, AdminStore, ClusterConfigStore,
+};
 use queryflux_routing::{
     chain::RouterChain,
     implementations::{
-        client_tags::ClientTagsRouter,
-        header::HeaderRouter,
-        protocol_based::ProtocolBasedRouter,
-        python_script::PythonScriptRouter,
-        query_regex::QueryRegexRouter,
+        client_tags::ClientTagsRouter, header::HeaderRouter, protocol_based::ProtocolBasedRouter,
+        python_script::PythonScriptRouter, query_regex::QueryRegexRouter,
     },
     RouterTrait,
 };
+use queryflux_translation::TranslationService;
 use tracing::info;
 
 #[derive(Parser)]
@@ -81,42 +77,53 @@ async fn main() -> Result<()> {
     // When Postgres is configured we seed cluster/group config on first run and read
     // from the DB on subsequent starts, so persistence must be ready before the
     // two-pass cluster/adapter construction below.
-    let prometheus = Arc::new(PrometheusMetrics::new().context("Failed to init Prometheus metrics")?);
+    let prometheus =
+        Arc::new(PrometheusMetrics::new().context("Failed to init Prometheus metrics")?);
     let mut pg_store: Option<Arc<PostgresStore>> = None;
 
-    let (persistence, metrics): (Arc<dyn queryflux_persistence::Persistence>, Arc<dyn MetricsStore>) =
-        match &config.queryflux.persistence {
-            queryflux_core::config::PersistenceConfig::Postgres { url } => {
-                let pg = Arc::new(
-                    PostgresStore::connect(url)
-                        .await
-                        .context("Failed to connect to Postgres")?,
-                );
-                pg.migrate().await.context("Migration failed")?;
-                let buffered = Arc::new(BufferedMetricsStore::new(
-                    pg.clone() as Arc<dyn MetricsStore>,
-                    100,
-                    std::time::Duration::from_secs(5),
-                ));
-                let metrics = Arc::new(MultiMetricsStore::new(vec![
-                    prometheus.clone() as Arc<dyn MetricsStore>,
-                    buffered as Arc<dyn MetricsStore>,
-                ]));
-                pg_store = Some(pg.clone());
-                (pg as Arc<dyn queryflux_persistence::Persistence>, metrics as Arc<dyn MetricsStore>)
-            }
-            _ => (
-                Arc::new(InMemoryPersistence::new()),
+    let (persistence, metrics): (
+        Arc<dyn queryflux_persistence::Persistence>,
+        Arc<dyn MetricsStore>,
+    ) = match &config.queryflux.persistence {
+        queryflux_core::config::PersistenceConfig::Postgres { url } => {
+            let pg = Arc::new(
+                PostgresStore::connect(url)
+                    .await
+                    .context("Failed to connect to Postgres")?,
+            );
+            pg.migrate().await.context("Migration failed")?;
+            let buffered = Arc::new(BufferedMetricsStore::new(
+                pg.clone() as Arc<dyn MetricsStore>,
+                100,
+                std::time::Duration::from_secs(5),
+            ));
+            let metrics = Arc::new(MultiMetricsStore::new(vec![
                 prometheus.clone() as Arc<dyn MetricsStore>,
-            ),
-        };
+                buffered as Arc<dyn MetricsStore>,
+            ]));
+            pg_store = Some(pg.clone());
+            (
+                pg as Arc<dyn queryflux_persistence::Persistence>,
+                metrics as Arc<dyn MetricsStore>,
+            )
+        }
+        _ => (
+            Arc::new(InMemoryPersistence::new()),
+            prometheus.clone() as Arc<dyn MetricsStore>,
+        ),
+    };
 
     // --- When Postgres is active, load cluster/group config from DB ---
     // On the very first run (tables empty) we seed from YAML so existing deployments
     // migrate transparently without any manual step.
     if let Some(pg) = &pg_store {
         // Seed cluster configs from YAML if the table is empty.
-        if pg.cluster_configs_count().await.context("DB cluster config count")? == 0 {
+        if pg
+            .cluster_configs_count()
+            .await
+            .context("DB cluster config count")?
+            == 0
+        {
             info!("Seeding cluster configs from YAML into Postgres (first run)");
             for (name, cfg) in &config.clusters {
                 if let Some(upsert) = UpsertClusterConfig::from_core(cfg) {
@@ -127,7 +134,12 @@ async fn main() -> Result<()> {
             }
         }
         // Seed group configs from YAML if the table is empty.
-        if pg.group_configs_count().await.context("DB group config count")? == 0 {
+        if pg
+            .group_configs_count()
+            .await
+            .context("DB group config count")?
+            == 0
+        {
             info!("Seeding cluster group configs from YAML into Postgres (first run)");
             for (name, cfg) in &config.cluster_groups {
                 pg.upsert_group_config(name, &UpsertClusterGroupConfig::from_core(cfg))
@@ -171,7 +183,10 @@ async fn main() -> Result<()> {
             for e in &all_errors {
                 tracing::error!("{e}");
             }
-            anyhow::bail!("Config validation failed with {} error(s)", all_errors.len());
+            anyhow::bail!(
+                "Config validation failed with {} error(s)",
+                all_errors.len()
+            );
         }
     }
 
@@ -184,7 +199,10 @@ async fn main() -> Result<()> {
     let mut adapters: AdapterMap = HashMap::new();
     // Flat list of (adapter, state) pairs used by the health-check and reconciler loops.
     // States here are the first ClusterState built per cluster (for health-check purposes).
-    let mut health_check_pairs: Vec<(Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>, Arc<ClusterState>)> = Vec::new();
+    let mut health_check_pairs: Vec<(
+        Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>,
+        Arc<ClusterState>,
+    )> = Vec::new();
 
     // Pass 1 — one adapter per cluster.
     for (cluster_name_str, cluster_cfg) in &config.clusters {
@@ -195,14 +213,19 @@ async fn main() -> Result<()> {
         let cluster_name = ClusterName(cluster_name_str.clone());
         // Use a placeholder group for adapter construction (adapters don't use group_name at runtime).
         let placeholder_group = ClusterGroupName("_".to_string());
-        let engine = cluster_cfg.engine.as_ref()
-            .context(format!("cluster '{cluster_name_str}' missing required 'engine' field"))?;
+        let engine = cluster_cfg.engine.as_ref().context(format!(
+            "cluster '{cluster_name_str}' missing required 'engine' field"
+        ))?;
 
         let adapter: Arc<dyn queryflux_engine_adapters::EngineAdapterTrait> = match engine {
             EngineConfig::Trino => {
-                let endpoint = cluster_cfg.endpoint.clone()
+                let endpoint = cluster_cfg
+                    .endpoint
+                    .clone()
                     .context(format!("cluster '{cluster_name_str}' missing endpoint"))?;
-                let tls_skip = cluster_cfg.tls.as_ref()
+                let tls_skip = cluster_cfg
+                    .tls
+                    .as_ref()
                     .map(|t| t.insecure_skip_verify)
                     .unwrap_or(false);
                 Arc::new(TrinoAdapter::new(
@@ -213,18 +236,31 @@ async fn main() -> Result<()> {
                     cluster_cfg.auth.clone(),
                 ))
             }
-            EngineConfig::DuckDb => {
-                Arc::new(
-                    DuckDbAdapter::new(cluster_name.clone(), placeholder_group, cluster_cfg.database_path.clone())
-                        .context(format!("Failed to open DuckDB for cluster '{cluster_name_str}'"))?,
+            EngineConfig::DuckDb => Arc::new(
+                DuckDbAdapter::new(
+                    cluster_name.clone(),
+                    placeholder_group,
+                    cluster_cfg.database_path.clone(),
                 )
-            }
+                .context(format!(
+                    "Failed to open DuckDB for cluster '{cluster_name_str}'"
+                ))?,
+            ),
             EngineConfig::StarRocks => {
-                let endpoint = cluster_cfg.endpoint.clone()
+                let endpoint = cluster_cfg
+                    .endpoint
+                    .clone()
                     .context(format!("cluster '{cluster_name_str}' missing endpoint"))?;
                 Arc::new(
-                    StarRocksAdapter::new(cluster_name.clone(), placeholder_group, endpoint, cluster_cfg.auth.clone())
-                        .context(format!("Failed to create StarRocks adapter for cluster '{cluster_name_str}'"))?,
+                    StarRocksAdapter::new(
+                        cluster_name.clone(),
+                        placeholder_group,
+                        endpoint,
+                        cluster_cfg.auth.clone(),
+                    )
+                    .context(format!(
+                        "Failed to create StarRocks adapter for cluster '{cluster_name_str}'"
+                    ))?,
                 )
             }
             other => anyhow::bail!("Engine {other:?} not yet implemented"),
@@ -234,7 +270,13 @@ async fn main() -> Result<()> {
     }
 
     // Pass 2 — one group entry per cluster_group, resolving member cluster names.
-    type GroupMap = HashMap<ClusterGroupName, (Vec<Arc<ClusterState>>, Arc<dyn queryflux_cluster_manager::strategy::ClusterSelectionStrategy>)>;
+    type GroupMap = HashMap<
+        ClusterGroupName,
+        (
+            Vec<Arc<ClusterState>>,
+            Arc<dyn queryflux_cluster_manager::strategy::ClusterSelectionStrategy>,
+        ),
+    >;
     let mut group_states: GroupMap = HashMap::new();
     let mut group_members: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -247,8 +289,9 @@ async fn main() -> Result<()> {
         let mut states: Vec<Arc<ClusterState>> = Vec::new();
 
         for member_name in &group_config.members {
-            let cluster_cfg = config.clusters.get(member_name)
-                .context(format!("group '{group_name}' references unknown cluster '{member_name}'"))?;
+            let cluster_cfg = config.clusters.get(member_name).context(format!(
+                "group '{group_name}' references unknown cluster '{member_name}'"
+            ))?;
 
             let adapter = match adapters.get(member_name) {
                 Some(a) => a.clone(),
@@ -259,7 +302,9 @@ async fn main() -> Result<()> {
                 }
             };
 
-            let engine = cluster_cfg.engine.as_ref()
+            let engine = cluster_cfg
+                .engine
+                .as_ref()
                 .context(format!("cluster '{member_name}' missing engine"))?;
             let engine_type = engine_type_from_config(engine);
 
@@ -274,7 +319,10 @@ async fn main() -> Result<()> {
             states.push(state.clone());
 
             // Register in health_check_pairs only once per cluster (first group wins).
-            if !health_check_pairs.iter().any(|(_, s)| s.cluster_name.0 == *member_name) {
+            if !health_check_pairs
+                .iter()
+                .any(|(_, s)| s.cluster_name.0 == *member_name)
+            {
                 health_check_pairs.push((adapter, state));
             }
         }
@@ -287,13 +335,10 @@ async fn main() -> Result<()> {
     let cluster_manager = Arc::new(SimpleClusterGroupManager::new(group_states));
 
     // --- Build translation service ---
-    let translation = Arc::new(
-        TranslationService::new_sqlglot()
-            .unwrap_or_else(|e| {
-                tracing::warn!("sqlglot unavailable ({e}), translation disabled");
-                TranslationService::disabled()
-            })
-    );
+    let translation = Arc::new(TranslationService::new_sqlglot().unwrap_or_else(|e| {
+        tracing::warn!("sqlglot unavailable ({e}), translation disabled");
+        TranslationService::disabled()
+    }));
 
     // --- Build router chain ---
     let fallback = ClusterGroupName(config.routing_fallback.clone());
@@ -302,15 +347,25 @@ async fn main() -> Result<()> {
     for router_cfg in &config.routers {
         use queryflux_core::config::RouterConfig;
         match router_cfg {
-            RouterConfig::ProtocolBased { trino_http, postgres_wire, mysql_wire, clickhouse_http } => {
+            RouterConfig::ProtocolBased {
+                trino_http,
+                postgres_wire,
+                mysql_wire,
+                clickhouse_http,
+            } => {
                 routers.push(Box::new(ProtocolBasedRouter {
                     trino_http: trino_http.as_ref().map(|s| ClusterGroupName(s.clone())),
                     postgres_wire: postgres_wire.as_ref().map(|s| ClusterGroupName(s.clone())),
                     mysql_wire: mysql_wire.as_ref().map(|s| ClusterGroupName(s.clone())),
-                    clickhouse_http: clickhouse_http.as_ref().map(|s| ClusterGroupName(s.clone())),
+                    clickhouse_http: clickhouse_http
+                        .as_ref()
+                        .map(|s| ClusterGroupName(s.clone())),
                 }));
             }
-            RouterConfig::Header { header_name, header_value_to_group } => {
+            RouterConfig::Header {
+                header_name,
+                header_value_to_group,
+            } => {
                 let mapping = header_value_to_group
                     .iter()
                     .map(|(k, v)| (k.clone(), ClusterGroupName(v.clone())))
@@ -331,7 +386,10 @@ async fn main() -> Result<()> {
                     .collect();
                 routers.push(Box::new(ClientTagsRouter::new(mapping)));
             }
-            RouterConfig::PythonScript { script, script_file } => {
+            RouterConfig::PythonScript {
+                script,
+                script_file,
+            } => {
                 let router = if let Some(path) = script_file {
                     PythonScriptRouter::from_file(path)
                         .context(format!("Failed to load routing script from {path}"))?
@@ -363,7 +421,12 @@ async fn main() -> Result<()> {
     // --- Start admin server (Prometheus /metrics + future /admin/* endpoints) ---
     let admin_port = config.queryflux.admin_api.port;
     let admin_store = pg_store.map(|pg| pg as Arc<dyn AdminStore>);
-    let admin = AdminFrontend::new(prometheus, app_state.cluster_manager.clone(), admin_store, admin_port);
+    let admin = AdminFrontend::new(
+        prometheus,
+        app_state.cluster_manager.clone(),
+        admin_store,
+        admin_port,
+    );
 
     // --- Start Trino HTTP frontend ---
     let trino_port = config.queryflux.frontends.trino_http.port;
@@ -410,7 +473,9 @@ async fn main() -> Result<()> {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
             loop {
                 interval.tick().await;
-                let Ok(all) = state.persistence.list_all().await else { continue };
+                let Ok(all) = state.persistence.list_all().await else {
+                    continue;
+                };
                 let cutoff = chrono::Utc::now() - chrono::Duration::seconds(CLIENT_TIMEOUT_SECS);
                 for q in all {
                     if q.last_accessed < cutoff {
@@ -421,8 +486,13 @@ async fn main() -> Result<()> {
                             last_accessed = %q.last_accessed,
                             "Evicting zombie executing query — not polled for >5 min"
                         );
-                        state.metrics.on_query_finished(&q.cluster_group.0, &q.cluster_name.0);
-                        let _ = state.cluster_manager.release_cluster(&q.cluster_group, &q.cluster_name).await;
+                        state
+                            .metrics
+                            .on_query_finished(&q.cluster_group.0, &q.cluster_name.0);
+                        let _ = state
+                            .cluster_manager
+                            .release_cluster(&q.cluster_group, &q.cluster_name)
+                            .await;
                         let _ = state.persistence.delete(&q.backend_query_id).await;
                     }
                 }
@@ -441,7 +511,11 @@ async fn main() -> Result<()> {
             loop {
                 interval.tick().await;
                 let cutoff = chrono::Utc::now() - chrono::Duration::seconds(CLIENT_TIMEOUT_SECS);
-                match state.persistence.delete_queued_not_accessed_since(cutoff).await {
+                match state
+                    .persistence
+                    .delete_queued_not_accessed_since(cutoff)
+                    .await
+                {
                     Ok(0) => {}
                     Ok(n) => tracing::info!("Cleaned up {n} stale queued queries"),
                     Err(e) => tracing::warn!("Queued query cleanup failed: {e}"),

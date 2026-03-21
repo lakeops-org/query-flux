@@ -5,8 +5,8 @@ use serde_json::Value;
 use queryflux_core::{
     error::Result,
     query::{
-        ClusterGroupName, ClusterName, EngineType, FrontendProtocol, QueryEngineStats,
-        QueryStatus, SqlDialect,
+        ClusterGroupName, ClusterName, EngineType, FrontendProtocol, QueryEngineStats, QueryStatus,
+        SqlDialect,
     },
 };
 

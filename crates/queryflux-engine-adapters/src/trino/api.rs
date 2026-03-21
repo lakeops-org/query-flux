@@ -91,11 +91,7 @@ pub struct TrinoError {
 }
 
 /// Synthetic queued response returned to the client when QueryFlux has no cluster available.
-pub fn queued_response(
-    query_id: &str,
-    elapsed_ms: u64,
-    next_uri: String,
-) -> TrinoResponse {
+pub fn queued_response(query_id: &str, elapsed_ms: u64, next_uri: String) -> TrinoResponse {
     TrinoResponse {
         id: query_id.to_string(),
         next_uri: Some(next_uri),

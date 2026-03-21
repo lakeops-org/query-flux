@@ -326,11 +326,16 @@ fn all_descriptors() -> &'static Vec<EngineDescriptor> {
 /// Returns a list of human-readable error messages; empty = valid.
 pub fn validate_cluster_config(cluster_name: &str, config: &ClusterConfig) -> Vec<String> {
     let Some(engine) = &config.engine else {
-        return vec![format!("cluster '{cluster_name}': missing required 'engine' field")];
+        return vec![format!(
+            "cluster '{cluster_name}': missing required 'engine' field"
+        )];
     };
 
     let Some(desc) = descriptor_for(engine) else {
-        return vec![format!("cluster '{cluster_name}': unknown engine '{}'", engine_key(engine))];
+        return vec![format!(
+            "cluster '{cluster_name}': unknown engine '{}'",
+            engine_key(engine)
+        )];
     };
 
     let mut errors: Vec<String> = Vec::new();

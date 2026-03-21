@@ -19,7 +19,9 @@ pub struct ProtocolBasedRouter {
 
 #[async_trait]
 impl RouterTrait for ProtocolBasedRouter {
-    fn type_name(&self) -> &'static str { "ProtocolBased" }
+    fn type_name(&self) -> &'static str {
+        "ProtocolBased"
+    }
 
     async fn route(
         &self,

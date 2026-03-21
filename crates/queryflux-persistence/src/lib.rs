@@ -100,7 +100,11 @@ pub trait ClusterConfigStore: Send + Sync {
     // --- Cluster configs ---
     async fn list_cluster_configs(&self) -> Result<Vec<ClusterConfigRecord>>;
     async fn get_cluster_config(&self, name: &str) -> Result<Option<ClusterConfigRecord>>;
-    async fn upsert_cluster_config(&self, name: &str, cfg: &UpsertClusterConfig) -> Result<ClusterConfigRecord>;
+    async fn upsert_cluster_config(
+        &self,
+        name: &str,
+        cfg: &UpsertClusterConfig,
+    ) -> Result<ClusterConfigRecord>;
     async fn delete_cluster_config(&self, name: &str) -> Result<bool>;
     /// Returns the number of stored cluster configs (used for first-run seeding).
     async fn cluster_configs_count(&self) -> Result<i64>;
@@ -108,7 +112,11 @@ pub trait ClusterConfigStore: Send + Sync {
     // --- Cluster group configs ---
     async fn list_group_configs(&self) -> Result<Vec<ClusterGroupConfigRecord>>;
     async fn get_group_config(&self, name: &str) -> Result<Option<ClusterGroupConfigRecord>>;
-    async fn upsert_group_config(&self, name: &str, cfg: &UpsertClusterGroupConfig) -> Result<ClusterGroupConfigRecord>;
+    async fn upsert_group_config(
+        &self,
+        name: &str,
+        cfg: &UpsertClusterGroupConfig,
+    ) -> Result<ClusterGroupConfigRecord>;
     async fn delete_group_config(&self, name: &str) -> Result<bool>;
     /// Returns the number of stored group configs (used for first-run seeding).
     async fn group_configs_count(&self) -> Result<i64>;

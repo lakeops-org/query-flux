@@ -163,7 +163,10 @@ async fn handle_connection(
                 let db = String::from_utf8_lossy(body)
                     .trim_end_matches('\0')
                     .to_string();
-                if let SessionContext::MySqlWire { user, session_vars, .. } = &session {
+                if let SessionContext::MySqlWire {
+                    user, session_vars, ..
+                } = &session
+                {
                     session = SessionContext::MySqlWire {
                         schema: if db.is_empty() { None } else { Some(db) },
                         user: user.clone(),
@@ -178,14 +181,7 @@ async fn handle_connection(
                     .trim_end_matches('\0')
                     .to_string();
                 debug!(conn_id = connection_id, sql = %sql, "MySQL wire: query");
-                handle_com_query(
-                    &mut writer,
-                    &state,
-                    &session,
-                    &sql,
-                    seq.wrapping_add(1),
-                )
-                .await?;
+                handle_com_query(&mut writer, &state, &session, &sql, seq.wrapping_add(1)).await?;
             }
 
             COM_FIELD_LIST => {
@@ -194,7 +190,10 @@ async fn handle_connection(
             }
 
             _ => {
-                warn!(conn_id = connection_id, cmd, "MySQL wire: unsupported command");
+                warn!(
+                    conn_id = connection_id,
+                    cmd, "MySQL wire: unsupported command"
+                );
                 write_packet(
                     &mut writer,
                     seq.wrapping_add(1),
@@ -287,7 +286,12 @@ async fn write_string_result<W: AsyncWriteExt + Unpin>(
     write_packet(writer, seq, &count).await?;
     seq = seq.wrapping_add(1);
 
-    write_packet(writer, seq, &build_column_def_named(col_name, MYSQL_TYPE_VAR_STRING)).await?;
+    write_packet(
+        writer,
+        seq,
+        &build_column_def_named(col_name, MYSQL_TYPE_VAR_STRING),
+    )
+    .await?;
     seq = seq.wrapping_add(1);
 
     write_packet(writer, seq, &build_eof()).await?;
@@ -528,7 +532,7 @@ fn build_err(error_code: u16, message: &str) -> Vec<u8> {
     pkt.extend_from_slice(&error_code.to_le_bytes());
     pkt.push(b'#'); // SQL state marker
     pkt.extend_from_slice(b"HY000"); // generic SQL state
-    // Truncate to 512 bytes to keep packets reasonable.
+                                     // Truncate to 512 bytes to keep packets reasonable.
     pkt.extend_from_slice(message.as_bytes().get(..512).unwrap_or(message.as_bytes()));
     pkt
 }
@@ -587,7 +591,11 @@ fn parse_handshake_response(payload: &[u8]) -> (String, Option<String>) {
     // Optional null-terminated database (CLIENT_CONNECT_WITH_DB).
     let database = if pos < payload.len() {
         let db = read_nul_str(payload, &mut pos);
-        if db.is_empty() { None } else { Some(db) }
+        if db.is_empty() {
+            None
+        } else {
+            Some(db)
+        }
     } else {
         None
     };

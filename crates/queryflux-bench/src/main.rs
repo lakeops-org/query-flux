@@ -12,8 +12,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use axum::{routing::get, routing::post, Router};
 use axum::response::Json;
+use axum::{routing::get, routing::post, Router};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
@@ -25,9 +25,6 @@ static QUERY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Silence queryflux tracing so only our output reaches stdout.
-    std::env::set_var("RUST_LOG", "error");
-
     let mock_port = free_port();
     let qf_port = free_port();
     let admin_port = free_port();
@@ -81,6 +78,8 @@ routingFallback: bench-group
     let mut qf_proc = std::process::Command::new(&queryflux_bin)
         .arg("--config")
         .arg(&config_path)
+        // Avoid `set_var` (unsafe in Rust 2024+); child env is isolated and thread-safe.
+        .env("RUST_LOG", "error")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
@@ -271,8 +270,14 @@ fn build_results(direct_ms: &[f64], proxy_ms: &[f64]) -> Value {
     // Print a human-readable summary to stderr so CI logs are easy to read.
     eprintln!("\n── QueryFlux overhead benchmark ────────────────────────────────────────");
     eprintln!("                  p50       p95       p99");
-    eprintln!("  Direct        {:>6.2} ms  {:>6.2} ms  {:>6.2} ms", d_p50, d_p95, d_p99);
-    eprintln!("  Via QueryFlux {:>6.2} ms  {:>6.2} ms  {:>6.2} ms", p_p50, p_p95, p_p99);
+    eprintln!(
+        "  Direct        {:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
+        d_p50, d_p95, d_p99
+    );
+    eprintln!(
+        "  Via QueryFlux {:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
+        p_p50, p_p95, p_p99
+    );
     eprintln!(
         "  Overhead      {:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
         p_p50 - d_p50,

@@ -66,7 +66,9 @@ impl InMemoryPersistence {
             rows_returned: record.rows_returned.map(|v| v as i64),
             error_message: record.error_message,
             created_at: record.created_at,
-            engine_elapsed_time_ms: stats.and_then(|s| s.engine_elapsed_time_ms).map(|v| v as i64),
+            engine_elapsed_time_ms: stats
+                .and_then(|s| s.engine_elapsed_time_ms)
+                .map(|v| v as i64),
             cpu_time_ms: stats.and_then(|s| s.cpu_time_ms).map(|v| v as i64),
             processed_rows: stats.and_then(|s| s.processed_rows).map(|v| v as i64),
             processed_bytes: stats.and_then(|s| s.processed_bytes).map(|v| v as i64),
@@ -85,7 +87,8 @@ impl InMemoryPersistence {
 #[async_trait]
 impl Persistence for InMemoryPersistence {
     async fn upsert(&self, query: ExecutingQuery) -> Result<()> {
-        self.executing.insert(query.backend_query_id.0.clone(), query);
+        self.executing
+            .insert(query.backend_query_id.0.clone(), query);
         Ok(())
     }
     async fn get(&self, id: &BackendQueryId) -> Result<Option<ExecutingQuery>> {
@@ -206,7 +209,10 @@ impl QueryHistoryStore for InMemoryPersistence {
 
         let failed = recent.iter().filter(|r| r.status == "Failed").count() as f64;
         let translated = recent.iter().filter(|r| r.was_translated).count() as f64;
-        let avg_ms = recent.iter().map(|r| r.execution_duration_ms as f64).sum::<f64>()
+        let avg_ms = recent
+            .iter()
+            .map(|r| r.execution_duration_ms as f64)
+            .sum::<f64>()
             / total as f64;
 
         Ok(DashboardStats {
@@ -273,7 +279,11 @@ impl QueryHistoryStore for InMemoryPersistence {
 #[async_trait]
 impl ClusterConfigStore for InMemoryPersistence {
     async fn list_cluster_configs(&self) -> Result<Vec<ClusterConfigRecord>> {
-        Ok(self.cluster_configs.iter().map(|e| e.value().clone()).collect())
+        Ok(self
+            .cluster_configs
+            .iter()
+            .map(|e| e.value().clone())
+            .collect())
     }
 
     async fn get_cluster_config(&self, name: &str) -> Result<Option<ClusterConfigRecord>> {
@@ -286,10 +296,7 @@ impl ClusterConfigStore for InMemoryPersistence {
         cfg: &UpsertClusterConfig,
     ) -> Result<ClusterConfigRecord> {
         let now = Utc::now();
-        let existing_created_at = self
-            .cluster_configs
-            .get(name)
-            .map(|e| e.value().created_at);
+        let existing_created_at = self.cluster_configs.get(name).map(|e| e.value().created_at);
         let record = ClusterConfigRecord {
             name: name.to_string(),
             engine_key: cfg.engine_key.clone(),
@@ -304,7 +311,8 @@ impl ClusterConfigStore for InMemoryPersistence {
             created_at: existing_created_at.unwrap_or(now),
             updated_at: now,
         };
-        self.cluster_configs.insert(name.to_string(), record.clone());
+        self.cluster_configs
+            .insert(name.to_string(), record.clone());
         Ok(record)
     }
 
@@ -317,7 +325,11 @@ impl ClusterConfigStore for InMemoryPersistence {
     }
 
     async fn list_group_configs(&self) -> Result<Vec<ClusterGroupConfigRecord>> {
-        Ok(self.group_configs.iter().map(|e| e.value().clone()).collect())
+        Ok(self
+            .group_configs
+            .iter()
+            .map(|e| e.value().clone())
+            .collect())
     }
 
     async fn get_group_config(&self, name: &str) -> Result<Option<ClusterGroupConfigRecord>> {
@@ -330,8 +342,7 @@ impl ClusterConfigStore for InMemoryPersistence {
         cfg: &UpsertClusterGroupConfig,
     ) -> Result<ClusterGroupConfigRecord> {
         let now = Utc::now();
-        let existing_created_at =
-            self.group_configs.get(name).map(|e| e.value().created_at);
+        let existing_created_at = self.group_configs.get(name).map(|e| e.value().created_at);
         let record = ClusterGroupConfigRecord {
             name: name.to_string(),
             enabled: cfg.enabled,

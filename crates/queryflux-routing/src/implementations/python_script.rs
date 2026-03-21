@@ -37,7 +37,9 @@ impl PythonScriptRouter {
 
 #[async_trait]
 impl RouterTrait for PythonScriptRouter {
-    fn type_name(&self) -> &'static str { "PythonScript" }
+    fn type_name(&self) -> &'static str {
+        "PythonScript"
+    }
 
     async fn route(
         &self,
@@ -68,18 +70,15 @@ fn call_python_router(
         // Execute the script to define the `route` function.
         // PyO3 0.28 requires a CStr — convert via a temporary CString.
         let globals = PyDict::new(py);
-        let cscript = std::ffi::CString::new(script).map_err(|e| {
-            QueryFluxError::Routing(format!("Script contains null byte: {e}"))
-        })?;
-        py.run(&cscript, Some(&globals), None).map_err(|e| {
-            QueryFluxError::Routing(format!("Python routing script error: {e}"))
-        })?;
+        let cscript = std::ffi::CString::new(script)
+            .map_err(|e| QueryFluxError::Routing(format!("Script contains null byte: {e}")))?;
+        py.run(&cscript, Some(&globals), None)
+            .map_err(|e| QueryFluxError::Routing(format!("Python routing script error: {e}")))?;
 
-        let route_fn = globals.get_item("route").map_err(|e| {
-            QueryFluxError::Routing(format!("Script has no 'route' function: {e}"))
-        })?.ok_or_else(|| {
-            QueryFluxError::Routing("Script has no 'route' function".to_string())
-        })?;
+        let route_fn = globals
+            .get_item("route")
+            .map_err(|e| QueryFluxError::Routing(format!("Script has no 'route' function: {e}")))?
+            .ok_or_else(|| QueryFluxError::Routing("Script has no 'route' function".to_string()))?;
 
         let result = route_fn
             .call1((sql, user, protocol))

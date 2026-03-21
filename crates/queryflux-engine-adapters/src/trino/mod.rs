@@ -55,7 +55,13 @@ impl TrinoAdapter {
             .build()
             .expect("Failed to build HTTP client");
 
-        Self { cluster_name, group_name, endpoint, http_client, auth }
+        Self {
+            cluster_name,
+            group_name,
+            endpoint,
+            http_client,
+            auth,
+        }
     }
 
     /// Apply cluster-level auth credentials to a request builder.
@@ -64,9 +70,7 @@ impl TrinoAdapter {
             Some(ClusterAuth::Basic { username, password }) => {
                 builder.basic_auth(username, Some(password))
             }
-            Some(ClusterAuth::Bearer { token }) => {
-                builder.bearer_auth(token)
-            }
+            Some(ClusterAuth::Bearer { token }) => builder.bearer_auth(token),
             None => builder,
         }
     }
@@ -102,9 +106,10 @@ impl EngineAdapterTrait for TrinoAdapter {
         req = self.apply_cluster_auth(req);
         req = self.apply_session_headers(req, session);
 
-        let resp = req.send().await.map_err(|e| {
-            QueryFluxError::Engine(format!("Trino submit failed: {e}"))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| QueryFluxError::Engine(format!("Trino submit failed: {e}")))?;
 
         if resp.status() == StatusCode::UNAUTHORIZED {
             let www_auth = resp
@@ -130,9 +135,8 @@ impl EngineAdapterTrait for TrinoAdapter {
             QueryFluxError::Engine(format!("Failed to read Trino response body: {e}"))
         })?;
 
-        let trino_resp: TrinoResponse = serde_json::from_slice(&body_bytes).map_err(|e| {
-            QueryFluxError::Engine(format!("Failed to parse Trino response: {e}"))
-        })?;
+        let trino_resp: TrinoResponse = serde_json::from_slice(&body_bytes)
+            .map_err(|e| QueryFluxError::Engine(format!("Failed to parse Trino response: {e}")))?;
 
         let backend_query_id = BackendQueryId(trino_resp.id.clone());
         let next_uri = trino_resp.next_uri.clone();
@@ -151,17 +155,21 @@ impl EngineAdapterTrait for TrinoAdapter {
     ) -> Result<QueryPollResult> {
         let uri = match next_uri {
             Some(u) => u,
-            None => return Ok(QueryPollResult::Failed {
-                message: "poll_query called with no nextUri".to_string(),
-                error_code: None,
-            }),
+            None => {
+                return Ok(QueryPollResult::Failed {
+                    message: "poll_query called with no nextUri".to_string(),
+                    error_code: None,
+                })
+            }
         };
 
         debug!(uri = %uri, "Polling Trino");
 
-        let resp = self.apply_cluster_auth(self.http_client.get(uri)).send().await.map_err(|e| {
-            QueryFluxError::Engine(format!("Trino poll GET failed: {e}"))
-        })?;
+        let resp = self
+            .apply_cluster_auth(self.http_client.get(uri))
+            .send()
+            .await
+            .map_err(|e| QueryFluxError::Engine(format!("Trino poll GET failed: {e}")))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -171,9 +179,10 @@ impl EngineAdapterTrait for TrinoAdapter {
             )));
         }
 
-        let body_bytes = resp.bytes().await.map_err(|e| {
-            QueryFluxError::Engine(format!("Failed to read Trino poll body: {e}"))
-        })?;
+        let body_bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| QueryFluxError::Engine(format!("Failed to read Trino poll body: {e}")))?;
 
         let trino_resp: TrinoResponse = serde_json::from_slice(&body_bytes).map_err(|e| {
             QueryFluxError::Engine(format!("Failed to parse Trino poll response: {e}"))
@@ -203,7 +212,11 @@ impl EngineAdapterTrait for TrinoAdapter {
         } else {
             None
         };
-        Ok(QueryPollResult::Raw { body: body_bytes, next_uri, engine_stats })
+        Ok(QueryPollResult::Raw {
+            body: body_bytes,
+            next_uri,
+            engine_stats,
+        })
     }
 
     async fn cancel_query(&self, _backend_id: &BackendQueryId) -> Result<()> {
@@ -214,7 +227,9 @@ impl EngineAdapterTrait for TrinoAdapter {
 
     async fn health_check(&self) -> bool {
         let url = self.trino_url("/v1/info");
-        self.apply_cluster_auth(self.http_client.get(&url)).send().await
+        self.apply_cluster_auth(self.http_client.get(&url))
+            .send()
+            .await
             .map(|r| r.status().is_success())
             .unwrap_or(false)
     }
@@ -238,7 +253,11 @@ impl EngineAdapterTrait for TrinoAdapter {
     ) -> Result<crate::ArrowStream> {
         // Submit query — get initial body + first next_uri.
         let execution = self.submit_query(sql, session).await?;
-        let QueryExecution::Async { initial_body, next_uri: first_next_uri, .. } = execution;
+        let QueryExecution::Async {
+            initial_body,
+            next_uri: first_next_uri,
+            ..
+        } = execution;
 
         let http_client = self.http_client.clone();
         let auth = self.auth.clone();
@@ -251,8 +270,13 @@ impl EngineAdapterTrait for TrinoAdapter {
             // Process initial body (first page from submit).
             if let Some(body) = initial_body {
                 match trino_body_to_batch(&body, &mut schema) {
-                    Err(e) => { let _ = tx.send(Err(e)); return; }
-                    Ok(Some(batch)) => { let _ = tx.send(Ok(batch)); }
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+                    Ok(Some(batch)) => {
+                        let _ = tx.send(Ok(batch));
+                    }
                     Ok(None) => {}
                 }
                 // Update next_uri from the initial body.
@@ -267,19 +291,21 @@ impl EngineAdapterTrait for TrinoAdapter {
                     Some(ClusterAuth::Basic { username, password }) => {
                         http_client.get(&uri).basic_auth(username, Some(password))
                     }
-                    Some(ClusterAuth::Bearer { token }) => {
-                        http_client.get(&uri).bearer_auth(token)
-                    }
+                    Some(ClusterAuth::Bearer { token }) => http_client.get(&uri).bearer_auth(token),
                     None => http_client.get(&uri),
                 };
                 let body = match req.send().await {
                     Err(e) => {
-                        let _ = tx.send(Err(QueryFluxError::Engine(format!("Trino poll failed: {e}"))));
+                        let _ = tx.send(Err(QueryFluxError::Engine(format!(
+                            "Trino poll failed: {e}"
+                        ))));
                         return;
                     }
                     Ok(resp) => match resp.bytes().await {
                         Err(e) => {
-                            let _ = tx.send(Err(QueryFluxError::Engine(format!("Trino read body failed: {e}"))));
+                            let _ = tx.send(Err(QueryFluxError::Engine(format!(
+                                "Trino read body failed: {e}"
+                            ))));
                             return;
                         }
                         Ok(b) => b,
@@ -289,7 +315,9 @@ impl EngineAdapterTrait for TrinoAdapter {
                 // Parse next_uri before converting to batch.
                 let resp: TrinoResponse = match serde_json::from_slice(&body) {
                     Err(e) => {
-                        let _ = tx.send(Err(QueryFluxError::Engine(format!("Trino parse failed: {e}"))));
+                        let _ = tx.send(Err(QueryFluxError::Engine(format!(
+                            "Trino parse failed: {e}"
+                        ))));
                         return;
                     }
                     Ok(r) => r,
@@ -301,8 +329,13 @@ impl EngineAdapterTrait for TrinoAdapter {
                 next_uri = resp.next_uri.clone();
 
                 match trino_body_to_batch(&body, &mut schema) {
-                    Err(e) => { let _ = tx.send(Err(e)); return; }
-                    Ok(Some(batch)) => { let _ = tx.send(Ok(batch)); }
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+                    Ok(Some(batch)) => {
+                        let _ = tx.send(Ok(batch));
+                    }
                     Ok(None) => {}
                 }
             }
@@ -320,11 +353,18 @@ impl EngineAdapterTrait for TrinoAdapter {
             running_queries: u64,
         }
         let url = self.trino_url("/v1/cluster");
-        let resp = self.apply_cluster_auth(self.http_client.get(&url)).send().await.ok()?;
+        let resp = self
+            .apply_cluster_auth(self.http_client.get(&url))
+            .send()
+            .await
+            .ok()?;
         if !resp.status().is_success() {
             return None;
         }
-        resp.json::<ClusterInfo>().await.ok().map(|c| c.running_queries)
+        resp.json::<ClusterInfo>()
+            .await
+            .ok()
+            .map(|c| c.running_queries)
     }
 
     // --- Catalog discovery ---
@@ -334,11 +374,13 @@ impl EngineAdapterTrait for TrinoAdapter {
     }
 
     async fn list_databases(&self, catalog: &str) -> Result<Vec<String>> {
-        self.run_show_query(&format!("SHOW SCHEMAS IN {catalog}")).await
+        self.run_show_query(&format!("SHOW SCHEMAS IN {catalog}"))
+            .await
     }
 
     async fn list_tables(&self, catalog: &str, database: &str) -> Result<Vec<String>> {
-        self.run_show_query(&format!("SHOW TABLES IN {catalog}.{database}")).await
+        self.run_show_query(&format!("SHOW TABLES IN {catalog}.{database}"))
+            .await
     }
 
     async fn describe_table(
@@ -349,15 +391,19 @@ impl EngineAdapterTrait for TrinoAdapter {
     ) -> Result<Option<TableSchema>> {
         let sql = format!("DESCRIBE {catalog}.{database}.{table}");
         let session = SessionContext::TrinoHttp {
-            headers: HashMap::from([
-                ("x-trino-user".to_string(), "queryflux-catalog-discovery".to_string()),
-            ]),
+            headers: HashMap::from([(
+                "x-trino-user".to_string(),
+                "queryflux-catalog-discovery".to_string(),
+            )]),
         };
         let execution = self.submit_query(&sql, &session).await?;
-        if let QueryExecution::Async { initial_body: Some(body), .. } = execution {
-            let resp: TrinoResponse = serde_json::from_slice(&body).map_err(|e| {
-                QueryFluxError::Catalog(format!("DESCRIBE parse failed: {e}"))
-            })?;
+        if let QueryExecution::Async {
+            initial_body: Some(body),
+            ..
+        } = execution
+        {
+            let resp: TrinoResponse = serde_json::from_slice(&body)
+                .map_err(|e| QueryFluxError::Catalog(format!("DESCRIBE parse failed: {e}")))?;
             let columns = parse_describe_result(&resp, catalog, database, table);
             return Ok(Some(columns));
         }
@@ -368,18 +414,23 @@ impl EngineAdapterTrait for TrinoAdapter {
 impl TrinoAdapter {
     async fn run_show_query(&self, sql: &str) -> Result<Vec<String>> {
         let session = SessionContext::TrinoHttp {
-            headers: HashMap::from([
-                ("x-trino-user".to_string(), "queryflux-catalog-discovery".to_string()),
-            ]),
+            headers: HashMap::from([(
+                "x-trino-user".to_string(),
+                "queryflux-catalog-discovery".to_string(),
+            )]),
         };
         let execution = self.submit_query(sql, &session).await?;
-        if let QueryExecution::Async { initial_body: Some(body), .. } = execution {
-            let resp: TrinoResponse = serde_json::from_slice(&body).map_err(|e| {
-                QueryFluxError::Catalog(format!("SHOW query parse failed: {e}"))
-            })?;
+        if let QueryExecution::Async {
+            initial_body: Some(body),
+            ..
+        } = execution
+        {
+            let resp: TrinoResponse = serde_json::from_slice(&body)
+                .map_err(|e| QueryFluxError::Catalog(format!("SHOW query parse failed: {e}")))?;
             if let Some(data) = resp.data {
                 if let Some(rows) = data.as_array() {
-                    return Ok(rows.iter()
+                    return Ok(rows
+                        .iter()
                         .filter_map(|row| row.as_array()?.first()?.as_str().map(String::from))
                         .collect());
                 }
@@ -435,9 +486,9 @@ fn trino_body_to_batch(
 
 /// Parse Trino column metadata JSON → Arrow Fields.
 fn trino_columns_to_fields(cols: &serde_json::Value) -> Result<Vec<Field>> {
-    let arr = cols.as_array().ok_or_else(|| {
-        QueryFluxError::Engine("Trino columns is not an array".into())
-    })?;
+    let arr = cols
+        .as_array()
+        .ok_or_else(|| QueryFluxError::Engine("Trino columns is not an array".into()))?;
     arr.iter()
         .map(|col| {
             let name = col["name"].as_str().unwrap_or("?").to_string();
@@ -598,17 +649,21 @@ fn parse_describe_result(
     database: &str,
     table: &str,
 ) -> TableSchema {
-    let columns = resp.data.as_ref()
+    let columns = resp
+        .data
+        .as_ref()
         .and_then(|d| d.as_array())
         .map(|rows| {
-            rows.iter().filter_map(|row| {
-                let arr = row.as_array()?;
-                Some(queryflux_core::catalog::ColumnDef {
-                    name: arr.first()?.as_str()?.to_string(),
-                    data_type: arr.get(1)?.as_str()?.to_uppercase(),
-                    nullable: arr.get(2).and_then(|v| v.as_str()) != Some("not null"),
+            rows.iter()
+                .filter_map(|row| {
+                    let arr = row.as_array()?;
+                    Some(queryflux_core::catalog::ColumnDef {
+                        name: arr.first()?.as_str()?.to_string(),
+                        data_type: arr.get(1)?.as_str()?.to_uppercase(),
+                        nullable: arr.get(2).and_then(|v| v.as_str()) != Some("not null"),
+                    })
                 })
-            }).collect()
+                .collect()
         })
         .unwrap_or_default();
 

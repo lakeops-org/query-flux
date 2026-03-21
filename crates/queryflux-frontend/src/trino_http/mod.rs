@@ -29,12 +29,18 @@ impl TrinoHttpFrontend {
     pub fn router(&self) -> Router {
         Router::new()
             .route("/v1/statement", post(post_statement))
-            .route("/v1/statement/qf/queued/{id}/{seq}", get(get_queued_statement))
+            .route(
+                "/v1/statement/qf/queued/{id}/{seq}",
+                get(get_queued_statement),
+            )
             // Catch all Trino statement poll URLs: /v1/statement/queued/{id}/...
             // and /v1/statement/executing/{id}/... — both use the same handler.
             // axum gives /v1/statement/qf/... (static "qf") higher priority than this wildcard.
             .route("/v1/statement/{*trino_path}", get(get_executing_statement))
-            .route("/v1/statement/{*trino_path}", delete(delete_executing_statement))
+            .route(
+                "/v1/statement/{*trino_path}",
+                delete(delete_executing_statement),
+            )
             .with_state(self.state.clone())
     }
 }
@@ -44,12 +50,12 @@ impl FrontendListenerTrait for TrinoHttpFrontend {
     async fn listen(&self) -> Result<()> {
         let addr = format!("0.0.0.0:{}", self.port);
         info!("Trino HTTP frontend listening on {addr}");
-        let listener = TcpListener::bind(&addr).await.map_err(|e| {
-            queryflux_core::error::QueryFluxError::Other(e.into())
-        })?;
-        axum::serve(listener, self.router()).await.map_err(|e| {
-            queryflux_core::error::QueryFluxError::Other(e.into())
-        })?;
+        let listener = TcpListener::bind(&addr)
+            .await
+            .map_err(|e| queryflux_core::error::QueryFluxError::Other(e.into()))?;
+        axum::serve(listener, self.router())
+            .await
+            .map_err(|e| queryflux_core::error::QueryFluxError::Other(e.into()))?;
         Ok(())
     }
 }

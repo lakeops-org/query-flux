@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use queryflux_core::{config::EngineConfig, query::EngineType};
 
@@ -32,13 +32,17 @@ pub struct RoundRobinStrategy {
 
 impl RoundRobinStrategy {
     pub fn new() -> Self {
-        Self { counter: AtomicU64::new(0) }
+        Self {
+            counter: AtomicU64::new(0),
+        }
     }
 }
 
 impl ClusterSelectionStrategy for RoundRobinStrategy {
     fn pick(&self, candidates: &[ClusterCandidate<'_>]) -> Option<usize> {
-        if candidates.is_empty() { return None; }
+        if candidates.is_empty() {
+            return None;
+        }
         let idx = self.counter.fetch_add(1, Ordering::Relaxed) as usize % candidates.len();
         Some(idx)
     }
@@ -70,7 +74,11 @@ impl ClusterSelectionStrategy for FailoverStrategy {
     fn pick(&self, candidates: &[ClusterCandidate<'_>]) -> Option<usize> {
         // Candidates are already filtered to healthy + under capacity.
         // The first one in the slice is the highest-priority available cluster.
-        if candidates.is_empty() { None } else { Some(0) }
+        if candidates.is_empty() {
+            None
+        } else {
+            Some(0)
+        }
     }
 }
 
@@ -92,7 +100,9 @@ impl EngineAffinityStrategy {
 
 impl ClusterSelectionStrategy for EngineAffinityStrategy {
     fn pick(&self, candidates: &[ClusterCandidate<'_>]) -> Option<usize> {
-        if candidates.is_empty() { return None; }
+        if candidates.is_empty() {
+            return None;
+        }
         // Find the highest-priority engine type that has at least one candidate.
         for preferred_engine in &self.preference {
             let engine_candidates: Vec<usize> = candidates
@@ -124,20 +134,25 @@ pub struct WeightedStrategy {
 
 impl WeightedStrategy {
     pub fn new(weights: HashMap<String, u32>) -> Self {
-        Self { weights: weights.into_iter().collect() }
+        Self {
+            weights: weights.into_iter().collect(),
+        }
     }
 }
 
 impl ClusterSelectionStrategy for WeightedStrategy {
     fn pick(&self, candidates: &[ClusterCandidate<'_>]) -> Option<usize> {
-        if candidates.is_empty() { return None; }
+        if candidates.is_empty() {
+            return None;
+        }
 
         // Build (candidate_index, weight) pairs for eligible candidates.
         let weighted: Vec<(usize, u32)> = candidates
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                let w = self.weights
+                let w = self
+                    .weights
                     .iter()
                     .find(|(name, _)| name == c.name)
                     .map(|(_, w)| *w)
@@ -147,11 +162,16 @@ impl ClusterSelectionStrategy for WeightedStrategy {
             .collect();
 
         let total: u32 = weighted.iter().map(|(_, w)| w).sum();
-        if total == 0 { return Some(0); }
+        if total == 0 {
+            return Some(0);
+        }
 
         // Deterministic pseudo-random using sum of running queries as seed.
         // Good enough for load distribution without needing an RNG dependency.
-        let seed: u64 = candidates.iter().map(|c| c.running_queries).sum::<u64>()
+        let seed: u64 = candidates
+            .iter()
+            .map(|c| c.running_queries)
+            .sum::<u64>()
             .wrapping_add(candidates.len() as u64)
             .wrapping_mul(2654435761);
         let roll = (seed % total as u64) as u32;

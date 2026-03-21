@@ -23,28 +23,19 @@ use anyhow::Result;
 use async_trait::async_trait;
 use axum::Router;
 use queryflux_cluster_manager::{
-    cluster_state::ClusterState,
-    simple::SimpleClusterGroupManager,
-    strategy::strategy_from_config,
+    cluster_state::ClusterState, simple::SimpleClusterGroupManager, strategy::strategy_from_config,
 };
 use queryflux_core::{
     error::Result as QfResult,
     query::{ClusterGroupName, ClusterName, EngineType},
 };
 use queryflux_engine_adapters::{
-    duckdb::DuckDbAdapter,
-    starrocks::StarRocksAdapter,
-    trino::TrinoAdapter,
-    EngineAdapterTrait,
+    duckdb::DuckDbAdapter, starrocks::StarRocksAdapter, trino::TrinoAdapter, EngineAdapterTrait,
 };
 use queryflux_frontend::trino_http::{state::AppState, TrinoHttpFrontend};
 use queryflux_metrics::{ClusterSnapshot, MetricsStore, QueryRecord};
 use queryflux_persistence::in_memory::InMemoryPersistence;
-use queryflux_routing::{
-    chain::RouterChain,
-    implementations::header::HeaderRouter,
-    RouterTrait,
-};
+use queryflux_routing::{chain::RouterChain, implementations::header::HeaderRouter, RouterTrait};
 use queryflux_translation::TranslationService;
 use tokio::net::TcpListener;
 
@@ -56,8 +47,12 @@ struct NoOpMetrics;
 
 #[async_trait]
 impl MetricsStore for NoOpMetrics {
-    async fn record_query(&self, _r: QueryRecord) -> QfResult<()> { Ok(()) }
-    async fn record_cluster_snapshot(&self, _s: ClusterSnapshot) -> QfResult<()> { Ok(()) }
+    async fn record_query(&self, _r: QueryRecord) -> QfResult<()> {
+        Ok(())
+    }
+    async fn record_cluster_snapshot(&self, _s: ClusterSnapshot) -> QfResult<()> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +89,10 @@ impl TestHarness {
             .with_env_filter("error")
             .try_init(); // ignore "already initialised" errors
 
-        type GroupEntry = (Vec<Arc<ClusterState>>, Arc<dyn queryflux_cluster_manager::strategy::ClusterSelectionStrategy>);
+        type GroupEntry = (
+            Vec<Arc<ClusterState>>,
+            Arc<dyn queryflux_cluster_manager::strategy::ClusterSelectionStrategy>,
+        );
         let mut group_states: HashMap<ClusterGroupName, GroupEntry> = HashMap::new();
         let mut adapters: HashMap<String, Arc<dyn EngineAdapterTrait>> = HashMap::new();
         let mut group_members: HashMap<String, Vec<String>> = HashMap::new();
@@ -109,27 +107,43 @@ impl TestHarness {
             .expect("Failed to create in-memory DuckDB adapter");
         {
             let state = Arc::new(ClusterState::new(
-                duck_cluster.clone(), duck_group.clone(), EngineType::DuckDb, None, 8, true,
+                duck_cluster.clone(),
+                duck_group.clone(),
+                EngineType::DuckDb,
+                None,
+                8,
+                true,
             ));
-            group_states.insert(duck_group.clone(), (vec![state], strategy_from_config(None)));
+            group_states.insert(
+                duck_group.clone(),
+                (vec![state], strategy_from_config(None)),
+            );
             group_members.insert(GROUP_DUCKDB.to_string(), vec![duck_cluster.0.clone()]);
             available_groups.push(GROUP_DUCKDB.to_string());
             header_map.insert(GROUP_DUCKDB.to_string(), duck_group.clone());
         }
 
         // --- Trino (optional — needs TRINO_URL or default test port reachable) ---
-        let trino_url = std::env::var("TRINO_URL")
-            .unwrap_or_else(|_| "http://localhost:18081".to_string());
+        let trino_url =
+            std::env::var("TRINO_URL").unwrap_or_else(|_| "http://localhost:18081".to_string());
         let trino_available = is_trino_ready(&trino_url).await;
         if trino_available {
             let group = ClusterGroupName(GROUP_TRINO.to_string());
             let cluster = ClusterName("trino-1".to_string());
             let state = Arc::new(ClusterState::new(
-                cluster.clone(), group.clone(), EngineType::Trino,
-                Some(trino_url.clone()), 20, true,
+                cluster.clone(),
+                group.clone(),
+                EngineType::Trino,
+                Some(trino_url.clone()),
+                20,
+                true,
             ));
             let adapter = Arc::new(TrinoAdapter::new(
-                cluster.clone(), group.clone(), trino_url, false, None,
+                cluster.clone(),
+                group.clone(),
+                trino_url,
+                false,
+                None,
             )) as Arc<dyn EngineAdapterTrait>;
 
             group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
@@ -147,8 +161,12 @@ impl TestHarness {
             let group = ClusterGroupName(GROUP_STARROCKS.to_string());
             let cluster = ClusterName("starrocks-1".to_string());
             let state = Arc::new(ClusterState::new(
-                cluster.clone(), group.clone(), EngineType::StarRocks,
-                Some(sr_url.clone()), 8, true,
+                cluster.clone(),
+                group.clone(),
+                EngineType::StarRocks,
+                Some(sr_url.clone()),
+                8,
+                true,
             ));
             let adapter = Arc::new(
                 StarRocksAdapter::new(cluster.clone(), group.clone(), sr_url, None)
@@ -167,8 +185,8 @@ impl TestHarness {
         // --- Lakekeeper (optional — enables Iceberg tests across all engines) ---
         let lakekeeper_url = std::env::var("LAKEKEEPER_URL")
             .unwrap_or_else(|_| "http://localhost:18181".to_string());
-        let minio_endpoint = std::env::var("MINIO_ENDPOINT")
-            .unwrap_or_else(|_| "localhost:19000".to_string());
+        let minio_endpoint =
+            std::env::var("MINIO_ENDPOINT").unwrap_or_else(|_| "localhost:19000".to_string());
 
         if is_lakekeeper_ready(&lakekeeper_url).await {
             let catalog_endpoint = format!("{}/catalog", lakekeeper_url);
@@ -192,8 +210,7 @@ impl TestHarness {
 
             // StarRocks: register external catalog (uses internal Docker addresses).
             if let Some((_, sr)) = &sr_adapter {
-                let sr_setup =
-                    "CREATE EXTERNAL CATALOG IF NOT EXISTS lakekeeper \
+                let sr_setup = "CREATE EXTERNAL CATALOG IF NOT EXISTS lakekeeper \
                      PROPERTIES ( \
                        \"type\" = \"iceberg\", \
                        \"iceberg.catalog.type\" = \"rest\", \
@@ -220,7 +237,10 @@ impl TestHarness {
         }
 
         // Register DuckDB adapter (after Iceberg setup).
-        adapters.insert(duck_cluster.0.clone(), Arc::new(duck_adapter) as Arc<dyn EngineAdapterTrait>);
+        adapters.insert(
+            duck_cluster.0.clone(),
+            Arc::new(duck_adapter) as Arc<dyn EngineAdapterTrait>,
+        );
 
         // Router: X-Qf-Group header → cluster group
         routers.push(Box::new(HeaderRouter::new(
@@ -261,7 +281,9 @@ impl TestHarness {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
             axum::serve(listener, router)
-                .with_graceful_shutdown(async { let _ = shutdown_rx.await; })
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
                 .await
                 .ok();
         });
@@ -269,7 +291,11 @@ impl TestHarness {
         // Give the server a moment to be ready.
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        Ok(Self { port, groups: available_groups, _shutdown_tx: shutdown_tx })
+        Ok(Self {
+            port,
+            groups: available_groups,
+            _shutdown_tx: shutdown_tx,
+        })
     }
 
     pub fn base_url(&self) -> String {
@@ -300,21 +326,27 @@ async fn port_is_open(host: &str, port: u16) -> bool {
 }
 
 async fn is_trino_ready(url: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(url) else { return false };
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
     let host = parsed.host_str().unwrap_or("localhost");
     let port = parsed.port().unwrap_or(8080);
     port_is_open(host, port).await
 }
 
 async fn is_starrocks_ready(url: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(url) else { return false };
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
     let host = parsed.host_str().unwrap_or("localhost");
     let port = parsed.port().unwrap_or(9030);
     port_is_open(host, port).await
 }
 
 async fn is_lakekeeper_ready(url: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(url) else { return false };
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
     let host = parsed.host_str().unwrap_or("localhost");
     let port = parsed.port().unwrap_or(8181);
     port_is_open(host, port).await

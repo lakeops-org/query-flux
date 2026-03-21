@@ -123,7 +123,11 @@ impl UpsertClusterConfig {
             auth_username,
             auth_password,
             auth_token,
-            tls_insecure_skip_verify: cfg.tls.as_ref().map(|t| t.insecure_skip_verify).unwrap_or(false),
+            tls_insecure_skip_verify: cfg
+                .tls
+                .as_ref()
+                .map(|t| t.insecure_skip_verify)
+                .unwrap_or(false),
             enabled: cfg.enabled,
         })
     }
@@ -184,7 +188,9 @@ impl ClusterConfigRecord {
             endpoint: self.endpoint.clone(),
             database_path: self.database_path.clone(),
             tls: if self.tls_insecure_skip_verify {
-                Some(TlsConfig { insecure_skip_verify: true })
+                Some(TlsConfig {
+                    insecure_skip_verify: true,
+                })
             } else {
                 None
             },

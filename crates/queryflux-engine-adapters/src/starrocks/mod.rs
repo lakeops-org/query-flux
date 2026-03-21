@@ -8,18 +8,13 @@ use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use futures::stream;
-use mysql_async::{
-    consts::ColumnType,
-    prelude::Queryable,
-    Conn, Opts, OptsBuilder, Row, Value,
-};
+use mysql_async::{consts::ColumnType, prelude::Queryable, Conn, Opts, OptsBuilder, Row, Value};
 use queryflux_core::{
     catalog::TableSchema,
     config::ClusterAuth,
     error::{QueryFluxError, Result},
     query::{
-        BackendQueryId, ClusterGroupName, ClusterName, EngineType,
-        QueryExecution, QueryPollResult,
+        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
     },
     session::SessionContext,
 };
@@ -63,7 +58,12 @@ impl StarRocksAdapter {
 
         let opts = Opts::from(builder);
 
-        Ok(Self { cluster_name, group_name, opts, endpoint })
+        Ok(Self {
+            cluster_name,
+            group_name,
+            opts,
+            endpoint,
+        })
     }
 
     /// Execute a DDL/setup statement that returns no rows (CREATE EXTERNAL CATALOG, etc.).
@@ -75,20 +75,23 @@ impl StarRocksAdapter {
     }
 
     async fn connect(&self) -> Result<Conn> {
-        Conn::new(self.opts.clone()).await
+        Conn::new(self.opts.clone())
+            .await
             .map_err(|e| QueryFluxError::Engine(format!("StarRocks connect failed: {e}")))
     }
 
     async fn run_query(&self, sql: &str) -> Result<Vec<Row>> {
         let mut conn = self.connect().await?;
-        conn.query::<Row, _>(sql).await
+        conn.query::<Row, _>(sql)
+            .await
             .map_err(|e| QueryFluxError::Engine(format!("StarRocks query failed: {e}")))
     }
 
     /// Run a query and return the first column of each row as strings.
     async fn run_first_col(&self, sql: &str) -> Result<Vec<String>> {
         let rows = self.run_query(sql).await?;
-        Ok(rows.into_iter()
+        Ok(rows
+            .into_iter()
             .filter_map(|mut row| {
                 row.take::<String, usize>(0)
                     .or_else(|| row.take::<i64, usize>(0).map(|i| i.to_string()))
@@ -156,11 +159,14 @@ impl EngineAdapterTrait for StarRocksAdapter {
 
         if let Some(db) = session.database() {
             let use_sql = format!("USE `{}`", db.replace('`', "``"));
-            conn.query_drop(&use_sql).await
+            conn.query_drop(&use_sql)
+                .await
                 .map_err(|e| QueryFluxError::Engine(format!("StarRocks USE failed: {e}")))?;
         }
 
-        let mut rows: Vec<Row> = conn.query::<Row, _>(sql).await
+        let mut rows: Vec<Row> = conn
+            .query::<Row, _>(sql)
+            .await
             .map_err(|e| QueryFluxError::Engine(format!("StarRocks query failed: {e}")))?;
 
         if rows.is_empty() {
@@ -171,11 +177,13 @@ impl EngineAdapterTrait for StarRocksAdapter {
         let fields: Vec<Field> = rows[0]
             .columns_ref()
             .iter()
-            .map(|c| Field::new(
-                c.name_str().to_string(),
-                mysql_column_type_to_arrow(c.column_type()),
-                true,
-            ))
+            .map(|c| {
+                Field::new(
+                    c.name_str().to_string(),
+                    mysql_column_type_to_arrow(c.column_type()),
+                    true,
+                )
+            })
             .collect();
         let schema = Arc::new(ArrowSchema::new(fields));
 
@@ -227,7 +235,11 @@ impl EngineAdapterTrait for StarRocksAdapter {
     ) -> Result<Option<TableSchema>> {
         // DESC [catalog.]db.table — returns Field, Type, Null, Key, Default, Extra
         let qualified = if catalog.is_empty() || catalog == "default_catalog" {
-            format!("`{}`.`{}`", database.replace('`', "``"), table.replace('`', "``"))
+            format!(
+                "`{}`.`{}`",
+                database.replace('`', "``"),
+                table.replace('`', "``")
+            )
         } else {
             format!(
                 "`{}`.`{}`.`{}`",
@@ -242,16 +254,25 @@ impl EngineAdapterTrait for StarRocksAdapter {
             Err(_) => return Ok(None),
         };
 
-        let columns = rows.iter_mut().filter_map(|row| {
-            let name: String = row.take(0)?;
-            let data_type = row.take::<String, usize>(1)
-                .unwrap_or_else(|| "VARCHAR".to_string())
-                .to_uppercase();
-            let nullable = row.take::<String, usize>(2)
-                .map(|s| s.to_uppercase() != "NO")
-                .unwrap_or(true);
-            Some(queryflux_core::catalog::ColumnDef { name, data_type, nullable })
-        }).collect();
+        let columns = rows
+            .iter_mut()
+            .filter_map(|row| {
+                let name: String = row.take(0)?;
+                let data_type = row
+                    .take::<String, usize>(1)
+                    .unwrap_or_else(|| "VARCHAR".to_string())
+                    .to_uppercase();
+                let nullable = row
+                    .take::<String, usize>(2)
+                    .map(|s| s.to_uppercase() != "NO")
+                    .unwrap_or(true);
+                Some(queryflux_core::catalog::ColumnDef {
+                    name,
+                    data_type,
+                    nullable,
+                })
+            })
+            .collect();
 
         Ok(Some(TableSchema {
             catalog: catalog.to_string(),
@@ -283,11 +304,7 @@ fn mysql_column_type_to_arrow(ct: ColumnType) -> DataType {
     }
 }
 
-fn starrocks_build_column(
-    dt: &DataType,
-    rows: &mut Vec<Row>,
-    col_idx: usize,
-) -> Result<ArrayRef> {
+fn starrocks_build_column(dt: &DataType, rows: &mut Vec<Row>, col_idx: usize) -> Result<ArrayRef> {
     match dt {
         DataType::Boolean => {
             let mut b = BooleanBuilder::with_capacity(rows.len());
@@ -296,7 +313,10 @@ fn starrocks_build_column(
                     Value::NULL => b.append_null(),
                     Value::Int(i) => b.append_value(i != 0),
                     Value::UInt(u) => b.append_value(u != 0),
-                    Value::Bytes(bs) => match String::from_utf8(bs).ok().and_then(|s| s.parse::<i64>().ok()) {
+                    Value::Bytes(bs) => match String::from_utf8(bs)
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok())
+                    {
                         Some(i) => b.append_value(i != 0),
                         None => b.append_null(),
                     },
@@ -312,7 +332,10 @@ fn starrocks_build_column(
                     Value::NULL => b.append_null(),
                     Value::Int(i) => b.append_value(i as i8),
                     Value::UInt(u) => b.append_value(u as i8),
-                    Value::Bytes(bs) => match String::from_utf8(bs).ok().and_then(|s| s.parse::<i8>().ok()) {
+                    Value::Bytes(bs) => match String::from_utf8(bs)
+                        .ok()
+                        .and_then(|s| s.parse::<i8>().ok())
+                    {
                         Some(v) => b.append_value(v),
                         None => b.append_null(),
                     },
@@ -328,7 +351,10 @@ fn starrocks_build_column(
                     Value::NULL => b.append_null(),
                     Value::Int(i) => b.append_value(i as i16),
                     Value::UInt(u) => b.append_value(u as i16),
-                    Value::Bytes(bs) => match String::from_utf8(bs).ok().and_then(|s| s.parse::<i16>().ok()) {
+                    Value::Bytes(bs) => match String::from_utf8(bs)
+                        .ok()
+                        .and_then(|s| s.parse::<i16>().ok())
+                    {
                         Some(v) => b.append_value(v),
                         None => b.append_null(),
                     },
@@ -344,7 +370,10 @@ fn starrocks_build_column(
                     Value::NULL => b.append_null(),
                     Value::Int(i) => b.append_value(i as i32),
                     Value::UInt(u) => b.append_value(u as i32),
-                    Value::Bytes(bs) => match String::from_utf8(bs).ok().and_then(|s| s.parse::<i32>().ok()) {
+                    Value::Bytes(bs) => match String::from_utf8(bs)
+                        .ok()
+                        .and_then(|s| s.parse::<i32>().ok())
+                    {
                         Some(v) => b.append_value(v),
                         None => b.append_null(),
                     },
@@ -360,7 +389,10 @@ fn starrocks_build_column(
                     Value::NULL => b.append_null(),
                     Value::Int(i) => b.append_value(i),
                     Value::UInt(u) => b.append_value(u as i64),
-                    Value::Bytes(bs) => match String::from_utf8(bs).ok().and_then(|s| s.parse::<i64>().ok()) {
+                    Value::Bytes(bs) => match String::from_utf8(bs)
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok())
+                    {
                         Some(v) => b.append_value(v),
                         None => b.append_null(),
                     },
@@ -376,7 +408,10 @@ fn starrocks_build_column(
                     Value::NULL => b.append_null(),
                     Value::Float(f) => b.append_value(f),
                     Value::Double(d) => b.append_value(d as f32),
-                    Value::Bytes(bs) => match String::from_utf8(bs).ok().and_then(|s| s.parse::<f32>().ok()) {
+                    Value::Bytes(bs) => match String::from_utf8(bs)
+                        .ok()
+                        .and_then(|s| s.parse::<f32>().ok())
+                    {
                         Some(v) => b.append_value(v),
                         None => b.append_null(),
                     },
@@ -392,7 +427,10 @@ fn starrocks_build_column(
                     Value::NULL => b.append_null(),
                     Value::Float(f) => b.append_value(f as f64),
                     Value::Double(d) => b.append_value(d),
-                    Value::Bytes(bs) => match String::from_utf8(bs).ok().and_then(|s| s.parse::<f64>().ok()) {
+                    Value::Bytes(bs) => match String::from_utf8(bs)
+                        .ok()
+                        .and_then(|s| s.parse::<f64>().ok())
+                    {
                         Some(v) => b.append_value(v),
                         None => b.append_null(),
                     },
@@ -408,15 +446,17 @@ fn starrocks_build_column(
                     Value::NULL => b.append_null(),
                     Value::Bytes(bytes) => match String::from_utf8(bytes) {
                         Ok(s) => b.append_value(s),
-                        Err(e) => b.append_value(format!("<binary:{} bytes>", e.into_bytes().len())),
+                        Err(e) => {
+                            b.append_value(format!("<binary:{} bytes>", e.into_bytes().len()))
+                        }
                     },
                     Value::Int(i) => b.append_value(i.to_string()),
                     Value::UInt(u) => b.append_value(u.to_string()),
                     Value::Float(f) => b.append_value(f.to_string()),
                     Value::Double(d) => b.append_value(d.to_string()),
-                    Value::Date(y, mo, d, h, mi, s, us) => {
-                        b.append_value(format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}.{us:06}"))
-                    }
+                    Value::Date(y, mo, d, h, mi, s, us) => b.append_value(format!(
+                        "{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}.{us:06}"
+                    )),
                     Value::Time(neg, days, h, mi, s, us) => {
                         let sign = if neg { "-" } else { "" };
                         let total_h = days * 24 + h as u32;
@@ -428,5 +468,3 @@ fn starrocks_build_column(
         }
     }
 }
-
-

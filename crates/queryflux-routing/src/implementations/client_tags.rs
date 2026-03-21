@@ -24,7 +24,9 @@ impl ClientTagsRouter {
 
 #[async_trait]
 impl RouterTrait for ClientTagsRouter {
-    fn type_name(&self) -> &'static str { "ClientTags" }
+    fn type_name(&self) -> &'static str {
+        "ClientTags"
+    }
 
     async fn route(
         &self,

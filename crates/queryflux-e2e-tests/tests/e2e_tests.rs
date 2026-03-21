@@ -59,7 +59,10 @@ macro_rules! require_group {
 
 #[tokio::test]
 async fn duckdb_select_literal() {
-    let r = client().execute_on("SELECT 1 + 1 AS result", GROUP_DUCKDB).await.expect("query");
+    let r = client()
+        .execute_on("SELECT 1 + 1 AS result", GROUP_DUCKDB)
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.columns.len(), 1);
     assert_eq!(r.columns[0].name, "result");
@@ -69,10 +72,10 @@ async fn duckdb_select_literal() {
 
 #[tokio::test]
 async fn duckdb_select_multiple_columns() {
-    let r = client().execute_on(
-        "SELECT 42 AS n, 'hello' AS s, true AS b",
-        GROUP_DUCKDB,
-    ).await.expect("query");
+    let r = client()
+        .execute_on("SELECT 42 AS n, 'hello' AS s, true AS b", GROUP_DUCKDB)
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.columns.len(), 3);
     assert_eq!(r.rows.len(), 1);
@@ -80,24 +83,30 @@ async fn duckdb_select_multiple_columns() {
 
 #[tokio::test]
 async fn duckdb_select_multi_row() {
-    let r = client().execute_on(
-        "SELECT v FROM (VALUES (1), (2), (3)) t(v)",
-        GROUP_DUCKDB,
-    ).await.expect("query");
+    let r = client()
+        .execute_on("SELECT v FROM (VALUES (1), (2), (3)) t(v)", GROUP_DUCKDB)
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.rows.len(), 3);
 }
 
 #[tokio::test]
 async fn duckdb_empty_result() {
-    let r = client().execute_on("SELECT 1 WHERE false", GROUP_DUCKDB).await.expect("query");
+    let r = client()
+        .execute_on("SELECT 1 WHERE false", GROUP_DUCKDB)
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.rows.len(), 0);
 }
 
 #[tokio::test]
 async fn duckdb_syntax_error_returns_error() {
-    let r = client().execute_on("THIS IS NOT SQL", GROUP_DUCKDB).await.expect("query");
+    let r = client()
+        .execute_on("THIS IS NOT SQL", GROUP_DUCKDB)
+        .await
+        .expect("query");
     assert!(r.error.is_some(), "expected error for invalid SQL");
 }
 
@@ -107,7 +116,10 @@ async fn duckdb_syntax_error_returns_error() {
 
 #[tokio::test]
 async fn routing_fallback_uses_duckdb() {
-    let r = client().execute("SELECT 99 AS n", &[]).await.expect("query");
+    let r = client()
+        .execute("SELECT 99 AS n", &[])
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.rows.len(), 1);
 }
@@ -124,13 +136,16 @@ async fn routing_same_sql_duckdb_and_starrocks() {
     let sql = "SELECT 1 + 1 AS result";
 
     let duck = c.execute_on(sql, GROUP_DUCKDB).await.expect("duckdb");
-    let sr   = c.execute_on(sql, GROUP_STARROCKS).await.expect("starrocks");
+    let sr = c.execute_on(sql, GROUP_STARROCKS).await.expect("starrocks");
 
     assert!(duck.error.is_none(), "duckdb error: {:?}", duck.error);
-    assert!(sr.error.is_none(),   "starrocks error: {:?}", sr.error);
+    assert!(sr.error.is_none(), "starrocks error: {:?}", sr.error);
     assert_eq!(duck.rows.len(), 1);
-    assert_eq!(sr.rows.len(),   1);
-    assert_eq!(duck.rows[0][0], sr.rows[0][0], "same SQL should return same value");
+    assert_eq!(sr.rows.len(), 1);
+    assert_eq!(
+        duck.rows[0][0], sr.rows[0][0],
+        "same SQL should return same value"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +156,10 @@ async fn routing_same_sql_duckdb_and_starrocks() {
 #[ignore = "requires Trino — run with: make test-e2e"]
 async fn trino_select_literal() {
     require_group!(GROUP_TRINO);
-    let r = client().execute_on("SELECT 1 + 1 AS result", GROUP_TRINO).await.expect("query");
+    let r = client()
+        .execute_on("SELECT 1 + 1 AS result", GROUP_TRINO)
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.columns.len(), 1);
     assert_eq!(r.columns[0].name, "result");
@@ -152,10 +170,10 @@ async fn trino_select_literal() {
 #[ignore = "requires Trino — run with: make test-e2e"]
 async fn trino_select_multi_row() {
     require_group!(GROUP_TRINO);
-    let r = client().execute_on(
-        "SELECT v FROM (VALUES (1), (2), (3)) t(v)",
-        GROUP_TRINO,
-    ).await.expect("query");
+    let r = client()
+        .execute_on("SELECT v FROM (VALUES (1), (2), (3)) t(v)", GROUP_TRINO)
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.rows.len(), 3);
 }
@@ -164,7 +182,10 @@ async fn trino_select_multi_row() {
 #[ignore = "requires Trino — run with: make test-e2e"]
 async fn trino_syntax_error_returns_error() {
     require_group!(GROUP_TRINO);
-    let r = client().execute_on("THIS IS NOT SQL", GROUP_TRINO).await.expect("query");
+    let r = client()
+        .execute_on("THIS IS NOT SQL", GROUP_TRINO)
+        .await
+        .expect("query");
     assert!(r.error.is_some(), "expected error for invalid SQL");
 }
 
@@ -176,7 +197,10 @@ async fn trino_syntax_error_returns_error() {
 #[ignore = "requires StarRocks — run with: make test-e2e"]
 async fn starrocks_select_literal() {
     require_group!(GROUP_STARROCKS);
-    let r = client().execute_on("SELECT 1 + 1 AS result", GROUP_STARROCKS).await.expect("query");
+    let r = client()
+        .execute_on("SELECT 1 + 1 AS result", GROUP_STARROCKS)
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.rows.len(), 1);
 }
@@ -185,10 +209,13 @@ async fn starrocks_select_literal() {
 #[ignore = "requires StarRocks — run with: make test-e2e"]
 async fn starrocks_select_multi_row() {
     require_group!(GROUP_STARROCKS);
-    let r = client().execute_on(
-        "SELECT 1 AS v UNION ALL SELECT 2 UNION ALL SELECT 3",
-        GROUP_STARROCKS,
-    ).await.expect("query");
+    let r = client()
+        .execute_on(
+            "SELECT 1 AS v UNION ALL SELECT 2 UNION ALL SELECT 3",
+            GROUP_STARROCKS,
+        )
+        .await
+        .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.rows.len(), 3);
 }
@@ -206,7 +233,9 @@ async fn routing_all_three_engines() {
     let sql = "SELECT 7 AS n";
 
     for group in [GROUP_DUCKDB, GROUP_TRINO, GROUP_STARROCKS] {
-        let r = c.execute_on(sql, group).await
+        let r = c
+            .execute_on(sql, group)
+            .await
             .unwrap_or_else(|e| panic!("query on {group} failed: {e}"));
         assert!(r.error.is_none(), "{group} returned error: {:?}", r.error);
         assert_eq!(r.rows.len(), 1, "{group} should return 1 row");
@@ -254,7 +283,10 @@ async fn iceberg_trino_customer_count() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_TRINO);
     let r = client()
-        .execute_on("SELECT COUNT(*) AS n FROM lakekeeper.tpch.customer", GROUP_TRINO)
+        .execute_on(
+            "SELECT COUNT(*) AS n FROM lakekeeper.tpch.customer",
+            GROUP_TRINO,
+        )
         .await
         .expect("query");
     assert!(r.error.is_none(), "trino error: {:?}", r.error);
@@ -270,7 +302,10 @@ async fn iceberg_trino_customer_count() {
 async fn iceberg_duckdb_customer_count() {
     require_group!(GROUP_LAKEKEEPER);
     let r = client()
-        .execute_on("SELECT COUNT(*) AS n FROM lakekeeper.tpch.customer", GROUP_DUCKDB)
+        .execute_on(
+            "SELECT COUNT(*) AS n FROM lakekeeper.tpch.customer",
+            GROUP_DUCKDB,
+        )
         .await
         .expect("query");
     if let Some(ref err) = r.error {
@@ -291,7 +326,10 @@ async fn iceberg_starrocks_customer_count() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_STARROCKS);
     let r = client()
-        .execute_on("SELECT COUNT(*) AS n FROM lakekeeper.tpch.customer", GROUP_STARROCKS)
+        .execute_on(
+            "SELECT COUNT(*) AS n FROM lakekeeper.tpch.customer",
+            GROUP_STARROCKS,
+        )
         .await
         .expect("query");
     assert!(r.error.is_none(), "starrocks error: {:?}", r.error);
@@ -312,14 +350,14 @@ async fn iceberg_cross_engine_customer_count_matches() {
     let sql = "SELECT COUNT(*) AS n FROM lakekeeper.tpch.customer";
 
     let trino = c.execute_on(sql, GROUP_TRINO).await.expect("trino");
-    let duck  = c.execute_on(sql, GROUP_DUCKDB).await.expect("duckdb");
-    let sr    = c.execute_on(sql, GROUP_STARROCKS).await.expect("starrocks");
+    let duck = c.execute_on(sql, GROUP_DUCKDB).await.expect("duckdb");
+    let sr = c.execute_on(sql, GROUP_STARROCKS).await.expect("starrocks");
 
     assert!(trino.error.is_none(), "trino error: {:?}", trino.error);
-    assert!(sr.error.is_none(),    "starrocks error: {:?}", sr.error);
+    assert!(sr.error.is_none(), "starrocks error: {:?}", sr.error);
 
     let trino_n = json_row_as_i64(&trino, 0);
-    let sr_n    = json_row_as_i64(&sr, 0);
+    let sr_n = json_row_as_i64(&sr, 0);
     assert_eq!(trino_n, sr_n, "trino vs starrocks customer count mismatch");
 
     // DuckDB Iceberg may fail when MinIO is only reachable inside Docker.
@@ -330,7 +368,11 @@ async fn iceberg_cross_engine_customer_count_matches() {
             panic!("unexpected duckdb error: {err}");
         }
     } else {
-        assert_eq!(json_row_as_i64(&duck, 0), trino_n, "duckdb vs trino customer count mismatch");
+        assert_eq!(
+            json_row_as_i64(&duck, 0),
+            trino_n,
+            "duckdb vs trino customer count mismatch"
+        );
     }
 }
 
@@ -346,17 +388,17 @@ async fn iceberg_cross_engine_aggregation_matches() {
     let sql = "SELECT COUNT(*) AS n FROM lakekeeper.tpch.orders";
 
     let trino = c.execute_on(sql, GROUP_TRINO).await.expect("trino");
-    let duck  = c.execute_on(sql, GROUP_DUCKDB).await.expect("duckdb");
-    let sr    = c.execute_on(sql, GROUP_STARROCKS).await.expect("starrocks");
+    let duck = c.execute_on(sql, GROUP_DUCKDB).await.expect("duckdb");
+    let sr = c.execute_on(sql, GROUP_STARROCKS).await.expect("starrocks");
 
     assert!(trino.error.is_none(), "trino error: {:?}", trino.error);
-    assert!(sr.error.is_none(),    "starrocks error: {:?}", sr.error);
+    assert!(sr.error.is_none(), "starrocks error: {:?}", sr.error);
 
     // tpch.tiny = SF 0.01 → orders has 15000 rows.
     let trino_n = json_row_as_i64(&trino, 0);
-    let sr_n    = json_row_as_i64(&sr, 0);
+    let sr_n = json_row_as_i64(&sr, 0);
     assert_eq!(trino_n, 15000, "trino orders count mismatch");
-    assert_eq!(sr_n,    15000, "starrocks orders count mismatch");
+    assert_eq!(sr_n, 15000, "starrocks orders count mismatch");
 
     if let Some(ref err) = duck.error {
         if is_docker_hostname_error(err) {
@@ -365,6 +407,10 @@ async fn iceberg_cross_engine_aggregation_matches() {
             panic!("unexpected duckdb error: {err}");
         }
     } else {
-        assert_eq!(json_row_as_i64(&duck, 0), 15000, "duckdb orders count mismatch");
+        assert_eq!(
+            json_row_as_i64(&duck, 0),
+            15000,
+            "duckdb orders count mismatch"
+        );
     }
 }

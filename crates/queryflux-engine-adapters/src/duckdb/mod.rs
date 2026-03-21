@@ -6,7 +6,9 @@ use futures::stream;
 use queryflux_core::{
     catalog::TableSchema,
     error::{QueryFluxError, Result},
-    query::{BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult},
+    query::{
+        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
+    },
     session::SessionContext,
 };
 use tracing::debug;
@@ -95,19 +97,18 @@ impl EngineAdapterTrait for DuckDbAdapter {
         let conn = Arc::clone(&self.conn);
         let sql = sql.to_string();
 
-        let batches =
-            tokio::task::spawn_blocking(move || {
-                let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
-                let mut stmt = guard
-                    .prepare(&sql)
-                    .map_err(|e| QueryFluxError::Engine(format!("DuckDB prepare failed: {e}")))?;
-                let arrow = stmt
-                    .query_arrow([])
-                    .map_err(|e| QueryFluxError::Engine(format!("DuckDB query failed: {e}")))?;
-                Ok::<_, QueryFluxError>(arrow.collect::<Vec<_>>())
-            })
-            .await
-            .map_err(|e| QueryFluxError::Engine(format!("spawn_blocking failed: {e}")))??;
+        let batches = tokio::task::spawn_blocking(move || {
+            let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+            let mut stmt = guard
+                .prepare(&sql)
+                .map_err(|e| QueryFluxError::Engine(format!("DuckDB prepare failed: {e}")))?;
+            let arrow = stmt
+                .query_arrow([])
+                .map_err(|e| QueryFluxError::Engine(format!("DuckDB query failed: {e}")))?;
+            Ok::<_, QueryFluxError>(arrow.collect::<Vec<_>>())
+        })
+        .await
+        .map_err(|e| QueryFluxError::Engine(format!("spawn_blocking failed: {e}")))??;
 
         Ok(Box::pin(stream::iter(batches.into_iter().map(Ok))))
     }
@@ -116,7 +117,9 @@ impl EngineAdapterTrait for DuckDbAdapter {
 
     async fn list_catalogs(&self) -> Result<Vec<String>> {
         let rows = self
-            .run_show_query("SELECT catalog_name FROM information_schema.schemata GROUP BY catalog_name")
+            .run_show_query(
+                "SELECT catalog_name FROM information_schema.schemata GROUP BY catalog_name",
+            )
             .await?;
         if rows.is_empty() {
             Ok(vec!["memory".to_string()])
@@ -126,7 +129,8 @@ impl EngineAdapterTrait for DuckDbAdapter {
     }
 
     async fn list_databases(&self, _catalog: &str) -> Result<Vec<String>> {
-        self.run_show_query("SELECT schema_name FROM information_schema.schemata").await
+        self.run_show_query("SELECT schema_name FROM information_schema.schemata")
+            .await
     }
 
     async fn list_tables(&self, _catalog: &str, database: &str) -> Result<Vec<String>> {
@@ -149,49 +153,60 @@ impl EngineAdapterTrait for DuckDbAdapter {
              ORDER BY ordinal_position"
         );
         let conn = Arc::clone(&self.conn);
-        let rows: Vec<(String, String, bool)> =
-            tokio::task::spawn_blocking(move || {
-                let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
-                let mut stmt = guard
-                    .prepare(&sql)
-                    .map_err(|e| QueryFluxError::Engine(format!("DuckDB prepare failed: {e}")))?;
-                let arrow = stmt
-                    .query_arrow([])
-                    .map_err(|e| QueryFluxError::Engine(format!("DuckDB query failed: {e}")))?;
-                use duckdb::arrow::array::{Array, StringArray};
-                let mut rows = Vec::new();
-                for batch in arrow.collect::<Vec<_>>() {
-                    let names = batch.column(0).as_any().downcast_ref::<StringArray>();
-                    let types = batch.column(1).as_any().downcast_ref::<StringArray>();
-                    let nullables = batch.column(2).as_any().downcast_ref::<StringArray>();
-                    for i in 0..batch.num_rows() {
-                        let name = names
-                            .and_then(|a| if !a.is_null(i) { Some(a.value(i).to_string()) } else { None });
-                        let data_type = types
-                            .and_then(|a| if !a.is_null(i) { Some(a.value(i).to_uppercase()) } else { None });
-                        let nullable = nullables
-                            .map(|a| a.is_null(i) || a.value(i).to_uppercase() != "NO")
-                            .unwrap_or(true);
-                        if let (Some(name), Some(data_type)) = (name, data_type) {
-                            rows.push((name, data_type, nullable));
+        let rows: Vec<(String, String, bool)> = tokio::task::spawn_blocking(move || {
+            let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+            let mut stmt = guard
+                .prepare(&sql)
+                .map_err(|e| QueryFluxError::Engine(format!("DuckDB prepare failed: {e}")))?;
+            let arrow = stmt
+                .query_arrow([])
+                .map_err(|e| QueryFluxError::Engine(format!("DuckDB query failed: {e}")))?;
+            use duckdb::arrow::array::{Array, StringArray};
+            let mut rows = Vec::new();
+            for batch in arrow.collect::<Vec<_>>() {
+                let names = batch.column(0).as_any().downcast_ref::<StringArray>();
+                let types = batch.column(1).as_any().downcast_ref::<StringArray>();
+                let nullables = batch.column(2).as_any().downcast_ref::<StringArray>();
+                for i in 0..batch.num_rows() {
+                    let name = names.and_then(|a| {
+                        if !a.is_null(i) {
+                            Some(a.value(i).to_string())
+                        } else {
+                            None
                         }
+                    });
+                    let data_type = types.and_then(|a| {
+                        if !a.is_null(i) {
+                            Some(a.value(i).to_uppercase())
+                        } else {
+                            None
+                        }
+                    });
+                    let nullable = nullables
+                        .map(|a| a.is_null(i) || a.value(i).to_uppercase() != "NO")
+                        .unwrap_or(true);
+                    if let (Some(name), Some(data_type)) = (name, data_type) {
+                        rows.push((name, data_type, nullable));
                     }
                 }
-                Ok::<_, QueryFluxError>(rows)
-            })
-            .await
-            .map_err(|e| QueryFluxError::Engine(format!("spawn_blocking failed: {e}")))??;
+            }
+            Ok::<_, QueryFluxError>(rows)
+        })
+        .await
+        .map_err(|e| QueryFluxError::Engine(format!("spawn_blocking failed: {e}")))??;
 
         if rows.is_empty() {
             return Ok(None);
         }
         let columns = rows
             .into_iter()
-            .map(|(name, data_type, nullable)| queryflux_core::catalog::ColumnDef {
-                name,
-                data_type,
-                nullable,
-            })
+            .map(
+                |(name, data_type, nullable)| queryflux_core::catalog::ColumnDef {
+                    name,
+                    data_type,
+                    nullable,
+                },
+            )
             .collect();
         Ok(Some(TableSchema {
             catalog: catalog.to_string(),
@@ -250,7 +265,8 @@ impl DuckDbAdapter {
                     use duckdb::arrow::util::display::array_value_to_string;
                     for i in 0..col.len() {
                         if !col.is_null(i) {
-                            results.push(array_value_to_string(col.as_ref(), i).unwrap_or_default());
+                            results
+                                .push(array_value_to_string(col.as_ref(), i).unwrap_or_default());
                         }
                     }
                 }

@@ -10,8 +10,8 @@ use futures::StreamExt;
 use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{
-        ClusterGroupName, ExecutingQuery, FrontendProtocol, ProxyQueryId, QueuedQuery,
-        QueryExecution, QueryStats, QueryStatus,
+        ClusterGroupName, ExecutingQuery, FrontendProtocol, ProxyQueryId, QueryExecution,
+        QueryStats, QueryStatus, QueuedQuery,
     },
     session::SessionContext,
 };
@@ -87,10 +87,19 @@ pub async fn dispatch_query(
         Some(c) => c,
         None => {
             let uri = persist_queued_query(
-                state, query_id, sql, session, protocol, group, already_queued, sequence,
+                state,
+                query_id,
+                sql,
+                session,
+                protocol,
+                group,
+                already_queued,
+                sequence,
             )
             .await?;
-            return Ok(DispatchOutcome::Queued { queued_next_uri: uri });
+            return Ok(DispatchOutcome::Queued {
+                queued_next_uri: uri,
+            });
         }
     };
 
@@ -100,7 +109,10 @@ pub async fn dispatch_query(
         Some(a) => a,
         None => {
             state.metrics.on_query_finished(&group.0, &cluster_name.0);
-            let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+            let _ = state
+                .cluster_manager
+                .release_cluster(&group, &cluster_name)
+                .await;
             return Err(QueryFluxError::Engine(format!(
                 "No adapter for {group}/{cluster_name}"
             )));
@@ -119,7 +131,10 @@ pub async fn dispatch_query(
         Err(e) => {
             warn!(id = %query_id, "Translation error: {e}");
             state.metrics.on_query_finished(&group.0, &cluster_name.0);
-            let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+            let _ = state
+                .cluster_manager
+                .release_cluster(&group, &cluster_name)
+                .await;
             return Err(e);
         }
     };
@@ -132,7 +147,10 @@ pub async fn dispatch_query(
         Ok(e) => e,
         Err(e) => {
             state.metrics.on_query_finished(&group.0, &cluster_name.0);
-            let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+            let _ = state
+                .cluster_manager
+                .release_cluster(&group, &cluster_name)
+                .await;
             warn!(id = %query_id, "Submit error: {e}");
             return Err(e);
         }
@@ -143,12 +161,20 @@ pub async fn dispatch_query(
         let _ = state.persistence.delete_queued(&query_id).await;
     }
 
-    let QueryExecution::Async { backend_query_id, next_uri, initial_body } = execution;
+    let QueryExecution::Async {
+        backend_query_id,
+        next_uri,
+        initial_body,
+    } = execution;
     let now = Utc::now();
     let executing = ExecutingQuery {
         id: query_id.clone(),
         sql,
-        translated_sql: if was_translated { Some(original_sql) } else { None },
+        translated_sql: if was_translated {
+            Some(original_sql)
+        } else {
+            None
+        },
         cluster_group: group.clone(),
         cluster_name: cluster_name.clone(),
         backend_query_id: backend_query_id.clone(),
@@ -162,10 +188,13 @@ pub async fn dispatch_query(
     info!(id = %query_id, backend = %backend_query_id, cluster = %cluster_name, "Query submitted (async)");
 
     // Rewrite nextUri: swap Trino host → QueryFlux external address, keep full path.
-    let proxy_next_uri = next_uri.as_deref().map(|uri| {
-        rewrite_trino_uri(uri, &state.external_address)
-    });
-    Ok(DispatchOutcome::Async { initial_body, proxy_next_uri })
+    let proxy_next_uri = next_uri
+        .as_deref()
+        .map(|uri| rewrite_trino_uri(uri, &state.external_address));
+    Ok(DispatchOutcome::Async {
+        initial_body,
+        proxy_next_uri,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -230,15 +259,13 @@ pub async fn execute_to_sink(
     let mut seq: u64 = 0;
     let (cluster_name, adapter) = loop {
         match state.cluster_manager.acquire_cluster(&group).await? {
-            Some(name) => {
-                match state.adapter(&name.0) {
-                    Some(a) => break (name, a),
-                    None => {
-                        let msg = format!("No adapter for {group}/{name}");
-                        return sink.on_error(&msg).await;
-                    }
+            Some(name) => match state.adapter(&name.0) {
+                Some(a) => break (name, a),
+                None => {
+                    let msg = format!("No adapter for {group}/{name}");
+                    return sink.on_error(&msg).await;
                 }
-            }
+            },
             None => {
                 queued_backoff_delay(seq).await;
                 seq += 1;
@@ -259,7 +286,10 @@ pub async fn execute_to_sink(
     {
         Ok(t) => t,
         Err(e) => {
-            let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+            let _ = state
+                .cluster_manager
+                .release_cluster(&group, &cluster_name)
+                .await;
             return sink.on_error(&e.to_string()).await;
         }
     };
@@ -270,7 +300,10 @@ pub async fn execute_to_sink(
     let mut stream = match adapter.execute_as_arrow(&translated, &session).await {
         Ok(s) => s,
         Err(e) => {
-            let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+            let _ = state
+                .cluster_manager
+                .release_cluster(&group, &cluster_name)
+                .await;
             return sink.on_error(&e.to_string()).await;
         }
     };
@@ -282,35 +315,64 @@ pub async fn execute_to_sink(
         match result {
             Err(e) => {
                 let stream_error = Some(e.to_string());
-                let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+                let _ = state
+                    .cluster_manager
+                    .release_cluster(&group, &cluster_name)
+                    .await;
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 state.record_query(
-                    &query_id, None, &original_sql, &session, &protocol, &group, &cluster_name,
-                    engine_type, src_dialect.clone(), tgt_dialect.clone(),
-                    was_translated, if was_translated { Some(translated.clone()) } else { None },
-                    QueryStatus::Failed, elapsed_ms, None,
-                    stream_error.clone(), None, None,
+                    &query_id,
+                    None,
+                    &original_sql,
+                    &session,
+                    &protocol,
+                    &group,
+                    &cluster_name,
+                    engine_type,
+                    src_dialect.clone(),
+                    tgt_dialect.clone(),
+                    was_translated,
+                    if was_translated {
+                        Some(translated.clone())
+                    } else {
+                        None
+                    },
+                    QueryStatus::Failed,
+                    elapsed_ms,
+                    None,
+                    stream_error.clone(),
+                    None,
+                    None,
                 );
                 return sink.on_error(stream_error.as_deref().unwrap()).await;
             }
             Ok(batch) => {
                 if !schema_sent {
                     if let Err(e) = sink.on_schema(batch.schema_ref()).await {
-                        let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+                        let _ = state
+                            .cluster_manager
+                            .release_cluster(&group, &cluster_name)
+                            .await;
                         return Err(e);
                     }
                     schema_sent = true;
                 }
                 rows_returned += batch.num_rows() as u64;
                 if let Err(e) = sink.on_batch(&batch).await {
-                    let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+                    let _ = state
+                        .cluster_manager
+                        .release_cluster(&group, &cluster_name)
+                        .await;
                     return Err(e);
                 }
             }
         }
     }
 
-    let _ = state.cluster_manager.release_cluster(&group, &cluster_name).await;
+    let _ = state
+        .cluster_manager
+        .release_cluster(&group, &cluster_name)
+        .await;
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
     let stats = QueryStats {
@@ -320,11 +382,28 @@ pub async fn execute_to_sink(
     };
 
     state.record_query(
-        &query_id, None, &original_sql, &session, &protocol, &group, &cluster_name,
-        engine_type, src_dialect, tgt_dialect,
-        was_translated, if was_translated { Some(translated) } else { None },
-        QueryStatus::Success, elapsed_ms, Some(rows_returned),
-        None, None, None,
+        &query_id,
+        None,
+        &original_sql,
+        &session,
+        &protocol,
+        &group,
+        &cluster_name,
+        engine_type,
+        src_dialect,
+        tgt_dialect,
+        was_translated,
+        if was_translated {
+            Some(translated)
+        } else {
+            None
+        },
+        QueryStatus::Success,
+        elapsed_ms,
+        Some(rows_returned),
+        None,
+        None,
+        None,
     );
 
     // If no batches arrived (empty result), still send an empty schema if we have nothing.

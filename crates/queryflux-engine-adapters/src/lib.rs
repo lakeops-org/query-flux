@@ -29,11 +29,7 @@ pub trait EngineAdapterTrait: Send + Sync {
     /// Synchronous engines (DuckDB, StarRocks) return `QueryExecution::Sync` with the
     /// full result immediately. Async engines (Trino, ClickHouse) return `QueryExecution::Async`
     /// with a backend query ID to poll.
-    async fn submit_query(
-        &self,
-        sql: &str,
-        session: &SessionContext,
-    ) -> Result<QueryExecution>;
+    async fn submit_query(&self, sql: &str, session: &SessionContext) -> Result<QueryExecution>;
 
     /// Poll a previously submitted async query for its current state.
     /// Only called when `submit_query` returned `QueryExecution::Async`.
@@ -81,11 +77,7 @@ pub trait EngineAdapterTrait: Send + Sync {
     /// inspecting individual types.
     ///
     /// Default: returns an error. Adapters that support Arrow execution override this.
-    async fn execute_as_arrow(
-        &self,
-        _sql: &str,
-        _session: &SessionContext,
-    ) -> Result<ArrowStream> {
+    async fn execute_as_arrow(&self, _sql: &str, _session: &SessionContext) -> Result<ArrowStream> {
         Err(QueryFluxError::Engine(format!(
             "Arrow execution not implemented for {:?} adapter",
             self.engine_type()

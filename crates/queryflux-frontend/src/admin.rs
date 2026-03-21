@@ -7,7 +7,6 @@ use axum::{
     routing::{get, patch},
     Json, Router,
 };
-use tower_http::cors::{Any, CorsLayer};
 use queryflux_cluster_manager::ClusterGroupManager;
 use queryflux_core::{
     engine_registry,
@@ -22,6 +21,7 @@ use queryflux_persistence::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 use utoipa::{OpenApi, ToSchema};
 
@@ -111,7 +111,12 @@ impl AdminFrontend {
         admin_store: Option<Arc<dyn AdminStore>>,
         port: u16,
     ) -> Self {
-        Self { prometheus, cluster_manager, admin_store, port }
+        Self {
+            prometheus,
+            cluster_manager,
+            admin_store,
+            port,
+        }
     }
 
     fn router(&self) -> Router {
@@ -121,8 +126,8 @@ impl AdminFrontend {
             admin_store: self.admin_store.clone(),
         });
 
-        let spec_json = serde_json::to_string(&ApiDoc::openapi())
-            .unwrap_or_else(|_| "{}".to_string());
+        let spec_json =
+            serde_json::to_string(&ApiDoc::openapi()).unwrap_or_else(|_| "{}".to_string());
 
         Router::new()
             .route("/metrics", get(metrics_handler))
@@ -133,7 +138,10 @@ impl AdminFrontend {
             .route("/admin/engines", get(list_engines_handler))
             .route("/admin/engine-stats", get(get_engine_stats_handler))
             .route("/admin/group-stats", get(get_group_stats_handler))
-            .route("/admin/clusters/{group}/{cluster}", patch(update_cluster_handler))
+            .route(
+                "/admin/clusters/{group}/{cluster}",
+                patch(update_cluster_handler),
+            )
             .route("/admin/engine-registry", get(engine_registry_handler))
             // Persisted cluster config CRUD (requires Postgres persistence)
             .route("/admin/config/clusters", get(list_cluster_configs_handler))
@@ -155,13 +163,7 @@ impl AdminFrontend {
                 "/openapi.json",
                 get(move || {
                     let spec = spec_json.clone();
-                    async move {
-                        (
-                            StatusCode::OK,
-                            [("content-type", "application/json")],
-                            spec,
-                        )
-                    }
+                    async move { (StatusCode::OK, [("content-type", "application/json")], spec) }
                 }),
             )
             .route("/docs", get(swagger_ui_handler))
@@ -182,12 +184,12 @@ impl FrontendListenerTrait for AdminFrontend {
         info!(
             "Admin server listening on {addr}  — Prometheus: {addr}/metrics  Swagger UI: {addr}/docs"
         );
-        let listener = TcpListener::bind(&addr).await.map_err(|e| {
-            queryflux_core::error::QueryFluxError::Engine(e.to_string())
-        })?;
-        axum::serve(listener, self.router()).await.map_err(|e| {
-            queryflux_core::error::QueryFluxError::Engine(e.to_string())
-        })?;
+        let listener = TcpListener::bind(&addr)
+            .await
+            .map_err(|e| queryflux_core::error::QueryFluxError::Engine(e.to_string()))?;
+        axum::serve(listener, self.router())
+            .await
+            .map_err(|e| queryflux_core::error::QueryFluxError::Engine(e.to_string()))?;
         Ok(())
     }
 }
@@ -266,7 +268,10 @@ async fn list_queries_handler(
     Query(filters): Query<QueryFilters>,
 ) -> impl IntoResponse {
     let Some(pg) = &state.admin_store else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured")
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
             .into_response();
     };
     match pg.list_queries(&filters).await {
@@ -288,7 +293,10 @@ async fn list_queries_handler(
 )]
 async fn get_stats_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
     let Some(pg) = &state.admin_store else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured")
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
             .into_response();
     };
     match pg.get_dashboard_stats().await {
@@ -310,7 +318,10 @@ async fn get_stats_handler(State(state): State<Arc<AdminState>>) -> impl IntoRes
 )]
 async fn list_engines_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
     let Some(pg) = &state.admin_store else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured")
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
             .into_response();
     };
     match pg.list_engines().await {
@@ -338,7 +349,10 @@ async fn get_engine_stats_handler(
     Query(params): Query<EngineStatsParams>,
 ) -> impl IntoResponse {
     let Some(pg) = &state.admin_store else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured")
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
             .into_response();
     };
     let hours = params.hours.unwrap_or(24).clamp(1, 168);
@@ -367,7 +381,10 @@ async fn get_group_stats_handler(
     Query(params): Query<EngineStatsParams>,
 ) -> impl IntoResponse {
     let Some(pg) = &state.admin_store else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured")
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
             .into_response();
     };
     let hours = params.hours.unwrap_or(24).clamp(1, 168);
@@ -415,11 +432,24 @@ async fn update_cluster_handler(
     let group = ClusterGroupName(group);
     let cluster_name = ClusterName(cluster);
 
-    match state.cluster_manager.update_cluster(&group, &cluster_name, body.enabled, body.max_running_queries).await {
+    match state
+        .cluster_manager
+        .update_cluster(
+            &group,
+            &cluster_name,
+            body.enabled,
+            body.max_running_queries,
+        )
+        .await
+    {
         Ok(false) => (StatusCode::NOT_FOUND, "Cluster not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         Ok(true) => {
-            match state.cluster_manager.cluster_state(&group, &cluster_name).await {
+            match state
+                .cluster_manager
+                .cluster_state(&group, &cluster_name)
+                .await
+            {
                 Ok(Some(s)) => Json(ClusterStateDto {
                     group_name: s.group_name.0,
                     cluster_name: s.cluster_name.0,
@@ -430,8 +460,11 @@ async fn update_cluster_handler(
                     max_running_queries: s.max_running_queries,
                     is_healthy: s.is_healthy,
                     enabled: s.enabled,
-                }).into_response(),
-                Ok(None) => (StatusCode::NOT_FOUND, "Cluster not found after update").into_response(),
+                })
+                .into_response(),
+                Ok(None) => {
+                    (StatusCode::NOT_FOUND, "Cluster not found after update").into_response()
+                }
                 Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
             }
         }
@@ -457,9 +490,7 @@ macro_rules! require_pg {
     };
 }
 
-async fn list_cluster_configs_handler(
-    State(state): State<Arc<AdminState>>,
-) -> impl IntoResponse {
+async fn list_cluster_configs_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
     let pg = require_pg!(state);
     match pg.list_cluster_configs().await {
         Ok(rows) => Json(rows).into_response(),
@@ -507,9 +538,7 @@ async fn delete_cluster_config_handler(
 // Persisted cluster group config CRUD
 // ---------------------------------------------------------------------------
 
-async fn list_group_configs_handler(
-    State(state): State<Arc<AdminState>>,
-) -> impl IntoResponse {
+async fn list_group_configs_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
     let pg = require_pg!(state);
     match pg.list_group_configs().await {
         Ok(rows) => Json(rows).into_response(),

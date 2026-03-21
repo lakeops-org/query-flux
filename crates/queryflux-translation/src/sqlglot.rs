@@ -49,11 +49,9 @@ impl TranslatorTrait for SqlglotTranslator {
         let tgt = self.target.sqlglot_name().to_string();
         let schema_context = schema_context.clone();
 
-        tokio::task::spawn_blocking(move || {
-            translate_with_gil(&sql, &src, &tgt, &schema_context)
-        })
-        .await
-        .map_err(|e| QueryFluxError::Translation(format!("spawn_blocking error: {e}")))?
+        tokio::task::spawn_blocking(move || translate_with_gil(&sql, &src, &tgt, &schema_context))
+            .await
+            .map_err(|e| QueryFluxError::Translation(format!("spawn_blocking error: {e}")))?
     }
 }
 
@@ -64,9 +62,8 @@ fn translate_with_gil(
     schema_context: &SchemaContext,
 ) -> Result<String> {
     Python::attach(|py| {
-        let sqlglot = PyModule::import(py, "sqlglot").map_err(|e| {
-            QueryFluxError::Translation(format!("Failed to import sqlglot: {e}"))
-        })?;
+        let sqlglot = PyModule::import(py, "sqlglot")
+            .map_err(|e| QueryFluxError::Translation(format!("Failed to import sqlglot: {e}")))?;
 
         if schema_context.is_empty() {
             debug!(src, tgt, "sqlglot dialect-only translation");

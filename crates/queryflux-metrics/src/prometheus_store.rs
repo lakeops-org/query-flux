@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use prometheus::{
-    CounterVec, Encoder, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder,
-};
+use prometheus::{CounterVec, Encoder, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder};
 use queryflux_core::error::Result;
 
 use crate::{ClusterSnapshot, MetricsStore, QueryRecord};
@@ -38,7 +36,9 @@ impl PrometheusMetrics {
                 "queryflux_query_duration_seconds",
                 "Query execution duration in seconds",
             )
-            .buckets(vec![0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0]),
+            .buckets(vec![
+                0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0,
+            ]),
             &["engine_type", "cluster_group"],
         )?;
 
@@ -88,7 +88,9 @@ impl PrometheusMetrics {
         let encoder = TextEncoder::new();
         let metric_families = self.registry.gather();
         let mut buffer = Vec::new();
-        encoder.encode(&metric_families, &mut buffer).unwrap_or_default();
+        encoder
+            .encode(&metric_families, &mut buffer)
+            .unwrap_or_default();
         String::from_utf8(buffer).unwrap_or_default()
     }
 }
@@ -132,9 +134,7 @@ impl MetricsStore for PrometheusMetrics {
         if record.was_translated {
             let src = format!("{:?}", record.source_dialect);
             let tgt = format!("{:?}", record.target_dialect);
-            self.translated_total
-                .with_label_values(&[&src, &tgt])
-                .inc();
+            self.translated_total.with_label_values(&[&src, &tgt]).inc();
         }
 
         Ok(())
