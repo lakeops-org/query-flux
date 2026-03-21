@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/queryflux",
+    "crates/queryflux-bench",
+    "crates/queryflux-e2e-tests",
     "crates/queryflux-core",
     "crates/queryflux-persistence",
     "crates/queryflux-routing",
@@ -30,7 +32,7 @@ url = { version = "2", features = ["serde"] }
 axum = { version = "0.8", features = ["macros"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace"] }
+tower-http = { version = "0.6", features = ["trace", "cors"] }
 hyper = { version = "1", features = ["full"] }
 
 # Serialization
@@ -72,3 +74,31 @@ queryflux-frontend = { path = "crates/queryflux-frontend" }
 queryflux-cluster-manager = { path = "crates/queryflux-cluster-manager" }
 queryflux-config = { path = "crates/queryflux-config" }
 queryflux-metrics = { path = "crates/queryflux-metrics" }
+
+# DuckDB embedded engine
+duckdb = { version = "1", features = ["bundled"] }
+
+# Arrow ecosystem — version must match what duckdb uses (57.x)
+arrow = { version = "57", features = ["ipc"] }
+futures = "0.3"
+
+# Arrow Flight SQL (gRPC) — for Flight SQL frontend
+arrow-flight = { version = "57", features = ["flight-sql"] }
+arrow-ipc = "57"
+tonic = { version = "0.14", features = ["transport"] }
+prost = "0.14"
+
+# Python interop for sqlglot translation + routing scripts
+pyo3 = { version = "0.28.2", features = ["auto-initialize"] }
+
+# Regex for query routing
+regex = "1"
+
+# Postgres client (persistence + metrics)
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }
+
+# MySQL wire protocol client (StarRocks backend)
+mysql_async = { version = "0.36.1", default-features = false, features = ["default-rustls"] }
+
+# OpenAPI documentation
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }

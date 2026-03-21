@@ -25,6 +25,8 @@ impl HeaderRouter {
 
 #[async_trait]
 impl RouterTrait for HeaderRouter {
+    fn type_name(&self) -> &'static str { "Header" }
+
     async fn route(
         &self,
         _sql: &str,

@@ -1,7 +1,10 @@
+pub mod sqlglot;
+
 use std::collections::HashMap;
 
 use async_trait::async_trait;
 use queryflux_core::{error::Result, query::SqlDialect};
+pub use sqlglot::SqlglotTranslator;
 
 /// Schema context passed to the translator so sqlglot can produce accurate output.
 /// Maps table name → { column name → SQL type string }.
@@ -56,5 +59,42 @@ impl TranslatorTrait for PassthroughTranslator {
     }
     async fn translate(&self, sql: &str, _schema_context: &SchemaContext) -> Result<String> {
         Ok(sql.to_string())
+    }
+}
+
+/// Central translation service.
+///
+/// Call `maybe_translate` before submitting SQL to a backend engine.
+/// Returns the original SQL unchanged when dialects match (zero overhead).
+pub struct TranslationService {
+    enabled: bool,
+}
+
+impl TranslationService {
+    /// Create a service backed by sqlglot. Verifies sqlglot is importable at startup.
+    pub fn new_sqlglot() -> Result<Self> {
+        SqlglotTranslator::check_available()?;
+        Ok(Self { enabled: true })
+    }
+
+    /// Create a no-op service (translation disabled).
+    pub fn disabled() -> Self {
+        Self { enabled: false }
+    }
+
+    /// Translate `sql` from `src` to `tgt` if they differ.
+    /// Returns the original SQL unchanged when dialects match or translation is disabled.
+    pub async fn maybe_translate(
+        &self,
+        sql: &str,
+        src: &SqlDialect,
+        tgt: &SqlDialect,
+        schema: &SchemaContext,
+    ) -> Result<String> {
+        if !self.enabled || src.is_compatible_with(tgt) {
+            return Ok(sql.to_string());
+        }
+        let translator = SqlglotTranslator::new(src.clone(), tgt.clone());
+        translator.translate(sql, schema).await
     }
 }

@@ -3,3 +3,4 @@ Cargo.lock
 .env
 *.duckdb
 config.yaml
+.venv/

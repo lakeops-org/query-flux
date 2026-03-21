@@ -1,21 +1,29 @@
 pub mod api;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
+use arrow::array::{
+    ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
+    Int64Builder, Int8Builder, StringBuilder,
+};
+use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use bytes::Bytes;
 use queryflux_core::{
     catalog::TableSchema,
+    config::ClusterAuth,
     error::{QueryFluxError, Result},
     query::{
-        BackendQueryId, ClusterGroupName, ClusterName, ColumnDef, EngineType, QueryExecution,
-        QueryPollResult, QueryStats,
+        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryEngineStats,
+        QueryExecution, QueryPollResult,
     },
     session::SessionContext,
 };
 use reqwest::{Client, StatusCode};
-use tracing::{debug, warn};
+use tokio_stream::wrappers::UnboundedReceiverStream;
+use tracing::debug;
 
 use crate::EngineAdapterTrait;
 use api::TrinoResponse;
@@ -30,6 +38,7 @@ pub struct TrinoAdapter {
     pub group_name: ClusterGroupName,
     pub endpoint: String,
     http_client: Client,
+    auth: Option<ClusterAuth>,
 }
 
 impl TrinoAdapter {
@@ -38,6 +47,7 @@ impl TrinoAdapter {
         group_name: ClusterGroupName,
         endpoint: String,
         tls_skip_verify: bool,
+        auth: Option<ClusterAuth>,
     ) -> Self {
         let http_client = Client::builder()
             .timeout(Duration::from_secs(30))
@@ -45,7 +55,20 @@ impl TrinoAdapter {
             .build()
             .expect("Failed to build HTTP client");
 
-        Self { cluster_name, group_name, endpoint, http_client }
+        Self { cluster_name, group_name, endpoint, http_client, auth }
+    }
+
+    /// Apply cluster-level auth credentials to a request builder.
+    fn apply_cluster_auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.auth {
+            Some(ClusterAuth::Basic { username, password }) => {
+                builder.basic_auth(username, Some(password))
+            }
+            Some(ClusterAuth::Bearer { token }) => {
+                builder.bearer_auth(token)
+            }
+            None => builder,
+        }
     }
 
     fn trino_url(&self, path: &str) -> String {
@@ -76,6 +99,7 @@ impl EngineAdapterTrait for TrinoAdapter {
         debug!(cluster = %self.cluster_name, url = %url, "Submitting query to Trino");
 
         let mut req = self.http_client.post(&url).body(sql.to_string());
+        req = self.apply_cluster_auth(req);
         req = self.apply_session_headers(req, session);
 
         let resp = req.send().await.map_err(|e| {
@@ -90,8 +114,7 @@ impl EngineAdapterTrait for TrinoAdapter {
                 .unwrap_or("")
                 .to_string();
             return Err(QueryFluxError::Engine(format!(
-                "Trino returned 401 Unauthorized: {}",
-                www_auth
+                "Trino returned 401 Unauthorized: {www_auth}"
             )));
         }
 
@@ -136,7 +159,7 @@ impl EngineAdapterTrait for TrinoAdapter {
 
         debug!(uri = %uri, "Polling Trino");
 
-        let resp = self.http_client.get(uri).send().await.map_err(|e| {
+        let resp = self.apply_cluster_auth(self.http_client.get(uri)).send().await.map_err(|e| {
             QueryFluxError::Engine(format!("Trino poll GET failed: {e}"))
         })?;
 
@@ -165,7 +188,22 @@ impl EngineAdapterTrait for TrinoAdapter {
         }
 
         let next_uri = trino_resp.next_uri.clone();
-        Ok(QueryPollResult::Raw { body: body_bytes, next_uri })
+        let engine_stats = if next_uri.is_none() {
+            let s = &trino_resp.stats;
+            Some(QueryEngineStats {
+                engine_elapsed_time_ms: Some(s.elapsed_time_millis),
+                cpu_time_ms: Some(s.cpu_time_millis),
+                processed_rows: Some(s.processed_rows),
+                processed_bytes: Some(s.processed_bytes),
+                physical_input_bytes: Some(s.physical_input_bytes),
+                peak_memory_bytes: Some(s.peak_user_memory_bytes),
+                spilled_bytes: Some(s.spilled_bytes),
+                total_splits: Some(s.total_splits),
+            })
+        } else {
+            None
+        };
+        Ok(QueryPollResult::Raw { body: body_bytes, next_uri, engine_stats })
     }
 
     async fn cancel_query(&self, _backend_id: &BackendQueryId) -> Result<()> {
@@ -176,7 +214,7 @@ impl EngineAdapterTrait for TrinoAdapter {
 
     async fn health_check(&self) -> bool {
         let url = self.trino_url("/v1/info");
-        self.http_client.get(&url).send().await
+        self.apply_cluster_auth(self.http_client.get(&url)).send().await
             .map(|r| r.status().is_success())
             .unwrap_or(false)
     }
@@ -189,6 +227,106 @@ impl EngineAdapterTrait for TrinoAdapter {
         true
     }
 
+    fn base_url(&self) -> &str {
+        &self.endpoint
+    }
+
+    async fn execute_as_arrow(
+        &self,
+        sql: &str,
+        session: &SessionContext,
+    ) -> Result<crate::ArrowStream> {
+        // Submit query — get initial body + first next_uri.
+        let execution = self.submit_query(sql, session).await?;
+        let QueryExecution::Async { initial_body, next_uri: first_next_uri, .. } = execution;
+
+        let http_client = self.http_client.clone();
+        let auth = self.auth.clone();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<RecordBatch>>();
+
+        tokio::spawn(async move {
+            let mut next_uri = first_next_uri;
+            let mut schema: Option<Arc<ArrowSchema>> = None;
+
+            // Process initial body (first page from submit).
+            if let Some(body) = initial_body {
+                match trino_body_to_batch(&body, &mut schema) {
+                    Err(e) => { let _ = tx.send(Err(e)); return; }
+                    Ok(Some(batch)) => { let _ = tx.send(Ok(batch)); }
+                    Ok(None) => {}
+                }
+                // Update next_uri from the initial body.
+                if let Ok(resp) = serde_json::from_slice::<TrinoResponse>(&body) {
+                    next_uri = resp.next_uri;
+                }
+            }
+
+            // Poll remaining pages.
+            while let Some(uri) = next_uri {
+                let req = match &auth {
+                    Some(ClusterAuth::Basic { username, password }) => {
+                        http_client.get(&uri).basic_auth(username, Some(password))
+                    }
+                    Some(ClusterAuth::Bearer { token }) => {
+                        http_client.get(&uri).bearer_auth(token)
+                    }
+                    None => http_client.get(&uri),
+                };
+                let body = match req.send().await {
+                    Err(e) => {
+                        let _ = tx.send(Err(QueryFluxError::Engine(format!("Trino poll failed: {e}"))));
+                        return;
+                    }
+                    Ok(resp) => match resp.bytes().await {
+                        Err(e) => {
+                            let _ = tx.send(Err(QueryFluxError::Engine(format!("Trino read body failed: {e}"))));
+                            return;
+                        }
+                        Ok(b) => b,
+                    },
+                };
+
+                // Parse next_uri before converting to batch.
+                let resp: TrinoResponse = match serde_json::from_slice(&body) {
+                    Err(e) => {
+                        let _ = tx.send(Err(QueryFluxError::Engine(format!("Trino parse failed: {e}"))));
+                        return;
+                    }
+                    Ok(r) => r,
+                };
+                if let Some(err) = &resp.error {
+                    let _ = tx.send(Err(QueryFluxError::Engine(err.message.clone())));
+                    return;
+                }
+                next_uri = resp.next_uri.clone();
+
+                match trino_body_to_batch(&body, &mut schema) {
+                    Err(e) => { let _ = tx.send(Err(e)); return; }
+                    Ok(Some(batch)) => { let _ = tx.send(Ok(batch)); }
+                    Ok(None) => {}
+                }
+            }
+            // tx dropped here → stream ends.
+        });
+
+        Ok(Box::pin(UnboundedReceiverStream::new(rx)))
+    }
+
+    /// Trino exposes `GET /v1/cluster` with aggregate running/queued counts.
+    async fn fetch_running_query_count(&self) -> Option<u64> {
+        #[derive(serde::Deserialize)]
+        struct ClusterInfo {
+            #[serde(rename = "runningQueries")]
+            running_queries: u64,
+        }
+        let url = self.trino_url("/v1/cluster");
+        let resp = self.apply_cluster_auth(self.http_client.get(&url)).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        resp.json::<ClusterInfo>().await.ok().map(|c| c.running_queries)
+    }
+
     // --- Catalog discovery ---
 
     async fn list_catalogs(&self) -> Result<Vec<String>> {
@@ -196,11 +334,11 @@ impl EngineAdapterTrait for TrinoAdapter {
     }
 
     async fn list_databases(&self, catalog: &str) -> Result<Vec<String>> {
-        self.run_show_query(&format!("SHOW SCHEMAS IN {}", catalog)).await
+        self.run_show_query(&format!("SHOW SCHEMAS IN {catalog}")).await
     }
 
     async fn list_tables(&self, catalog: &str, database: &str) -> Result<Vec<String>> {
-        self.run_show_query(&format!("SHOW TABLES IN {}.{}", catalog, database)).await
+        self.run_show_query(&format!("SHOW TABLES IN {catalog}.{database}")).await
     }
 
     async fn describe_table(
@@ -209,7 +347,7 @@ impl EngineAdapterTrait for TrinoAdapter {
         database: &str,
         table: &str,
     ) -> Result<Option<TableSchema>> {
-        let sql = format!("DESCRIBE {}.{}.{}", catalog, database, table);
+        let sql = format!("DESCRIBE {catalog}.{database}.{table}");
         let session = SessionContext::TrinoHttp {
             headers: HashMap::from([
                 ("x-trino-user".to_string(), "queryflux-catalog-discovery".to_string()),
@@ -248,6 +386,209 @@ impl TrinoAdapter {
             }
         }
         Ok(vec![])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Arrow conversion helpers for execute_as_arrow
+// ---------------------------------------------------------------------------
+
+/// Parse a raw Trino response body and yield a RecordBatch if the page has data.
+/// Builds/reuses the Arrow schema from column metadata on the first data page.
+fn trino_body_to_batch(
+    body: &[u8],
+    schema: &mut Option<Arc<ArrowSchema>>,
+) -> Result<Option<RecordBatch>> {
+    let resp: TrinoResponse = serde_json::from_slice(body)
+        .map_err(|e| QueryFluxError::Engine(format!("Trino parse failed: {e}")))?;
+
+    if let Some(err) = &resp.error {
+        return Err(QueryFluxError::Engine(err.message.clone()));
+    }
+
+    // Build schema from the first page that has column metadata.
+    if schema.is_none() {
+        if let Some(cols) = &resp.columns {
+            let fields = trino_columns_to_fields(cols)?;
+            *schema = Some(Arc::new(ArrowSchema::new(fields)));
+        }
+    }
+
+    let data = match &resp.data {
+        None => return Ok(None),
+        Some(d) => d,
+    };
+    let rows = match data.as_array() {
+        None => return Ok(None),
+        Some(r) if r.is_empty() => return Ok(None),
+        Some(r) => r,
+    };
+
+    let schema = match schema.as_ref() {
+        None => return Ok(None), // No schema yet (pending page with data — shouldn't happen)
+        Some(s) => s.clone(),
+    };
+
+    let batch = trino_rows_to_batch(&schema, rows)?;
+    Ok(Some(batch))
+}
+
+/// Parse Trino column metadata JSON → Arrow Fields.
+fn trino_columns_to_fields(cols: &serde_json::Value) -> Result<Vec<Field>> {
+    let arr = cols.as_array().ok_or_else(|| {
+        QueryFluxError::Engine("Trino columns is not an array".into())
+    })?;
+    arr.iter()
+        .map(|col| {
+            let name = col["name"].as_str().unwrap_or("?").to_string();
+            let type_str = col["type"].as_str().unwrap_or("varchar");
+            Ok(Field::new(name, trino_type_to_arrow(type_str), true))
+        })
+        .collect()
+}
+
+/// Map a Trino type string to an Arrow DataType.
+/// Complex types (array, map, row) degrade to Utf8 (JSON string representation).
+fn trino_type_to_arrow(type_str: &str) -> DataType {
+    let lower = type_str.to_lowercase();
+    match lower.as_str() {
+        "boolean" => DataType::Boolean,
+        "tinyint" => DataType::Int8,
+        "smallint" => DataType::Int16,
+        "integer" | "int" => DataType::Int32,
+        "bigint" => DataType::Int64,
+        "real" => DataType::Float32,
+        "double" => DataType::Float64,
+        "date" => DataType::Utf8, // store as ISO string for simplicity
+        "varbinary" => DataType::Utf8,
+        _ if lower.starts_with("varchar") => DataType::Utf8,
+        _ if lower.starts_with("char(") => DataType::Utf8,
+        _ if lower.starts_with("decimal") => DataType::Utf8,
+        _ if lower.starts_with("timestamp") => DataType::Utf8,
+        _ if lower.starts_with("time") => DataType::Utf8,
+        _ if lower.starts_with("interval") => DataType::Utf8,
+        _ if lower.starts_with("array") => DataType::Utf8,
+        _ if lower.starts_with("map") => DataType::Utf8,
+        _ if lower.starts_with("row") => DataType::Utf8,
+        "json" | "uuid" | "ipaddress" | "hyperloglog" => DataType::Utf8,
+        _ => DataType::Utf8,
+    }
+}
+
+/// Build a RecordBatch from Trino JSON rows given an Arrow schema.
+fn trino_rows_to_batch(
+    schema: &Arc<ArrowSchema>,
+    rows: &[serde_json::Value],
+) -> Result<RecordBatch> {
+    let num_cols = schema.fields().len();
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(num_cols);
+
+    for (col_idx, field) in schema.fields().iter().enumerate() {
+        let col = build_trino_column(field.data_type(), rows, col_idx)?;
+        columns.push(col);
+    }
+
+    RecordBatch::try_new(schema.clone(), columns)
+        .map_err(|e| QueryFluxError::Engine(format!("RecordBatch build failed: {e}")))
+}
+
+fn build_trino_column(
+    dt: &DataType,
+    rows: &[serde_json::Value],
+    col_idx: usize,
+) -> Result<ArrayRef> {
+    match dt {
+        DataType::Boolean => {
+            let mut b = BooleanBuilder::with_capacity(rows.len());
+            for row in rows {
+                match row.as_array().and_then(|r| r.get(col_idx)) {
+                    None | Some(serde_json::Value::Null) => b.append_null(),
+                    Some(v) => b.append_value(v.as_bool().unwrap_or(false)),
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        DataType::Int8 => {
+            let mut b = Int8Builder::with_capacity(rows.len());
+            for row in rows {
+                match row.as_array().and_then(|r| r.get(col_idx)) {
+                    None | Some(serde_json::Value::Null) => b.append_null(),
+                    Some(v) => b.append_value(v.as_i64().unwrap_or(0) as i8),
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        DataType::Int16 => {
+            let mut b = Int16Builder::with_capacity(rows.len());
+            for row in rows {
+                match row.as_array().and_then(|r| r.get(col_idx)) {
+                    None | Some(serde_json::Value::Null) => b.append_null(),
+                    Some(v) => b.append_value(v.as_i64().unwrap_or(0) as i16),
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        DataType::Int32 => {
+            let mut b = Int32Builder::with_capacity(rows.len());
+            for row in rows {
+                match row.as_array().and_then(|r| r.get(col_idx)) {
+                    None | Some(serde_json::Value::Null) => b.append_null(),
+                    Some(v) => b.append_value(v.as_i64().unwrap_or(0) as i32),
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        DataType::Int64 => {
+            let mut b = Int64Builder::with_capacity(rows.len());
+            for row in rows {
+                match row.as_array().and_then(|r| r.get(col_idx)) {
+                    None | Some(serde_json::Value::Null) => b.append_null(),
+                    Some(v) => b.append_value(v.as_i64().unwrap_or(0)),
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        DataType::Float32 => {
+            let mut b = Float32Builder::with_capacity(rows.len());
+            for row in rows {
+                match row.as_array().and_then(|r| r.get(col_idx)) {
+                    None | Some(serde_json::Value::Null) => b.append_null(),
+                    Some(v) => b.append_value(v.as_f64().unwrap_or(0.0) as f32),
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        DataType::Float64 => {
+            let mut b = Float64Builder::with_capacity(rows.len());
+            for row in rows {
+                match row.as_array().and_then(|r| r.get(col_idx)) {
+                    None | Some(serde_json::Value::Null) => b.append_null(),
+                    Some(v) => b.append_value(v.as_f64().unwrap_or(0.0)),
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        // Utf8 and all other types: stringify the JSON value.
+        _ => {
+            let mut b = StringBuilder::with_capacity(rows.len(), rows.len() * 16);
+            for row in rows {
+                match row.as_array().and_then(|r| r.get(col_idx)) {
+                    None | Some(serde_json::Value::Null) => b.append_null(),
+                    Some(v) => b.append_value(json_value_to_string(v)),
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+    }
+}
+
+fn json_value_to_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        other => other.to_string(), // Array/Object → JSON string
     }
 }
 

@@ -2,11 +2,47 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+// ---------------------------------------------------------------------------
+// Cluster selection strategies
+// ---------------------------------------------------------------------------
+
+/// How the cluster manager picks a cluster within a group.
+/// Default when omitted: `RoundRobin`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum StrategyConfig {
+    /// Rotate through eligible clusters in order.
+    #[serde(rename = "roundRobin")]
+    RoundRobin,
+    /// Pick the cluster with the most remaining capacity.
+    #[serde(rename = "leastLoaded")]
+    LeastLoaded,
+    /// Try clusters in member order; use later ones only when earlier ones are full/unhealthy.
+    #[serde(rename = "failover")]
+    Failover,
+    /// For mixed-engine groups: prefer engines in the given order, fall back when full.
+    #[serde(rename = "engineAffinity")]
+    EngineAffinity {
+        /// Engine types in preference order (e.g. ["trino", "starRocks", "duckDb"]).
+        preference: Vec<EngineConfig>,
+    },
+    /// Route traffic proportionally by weight.
+    #[serde(rename = "weighted")]
+    Weighted {
+        /// cluster_name → relative weight (e.g. { "trino-1": 3, "trino-2": 1 }).
+        weights: HashMap<String, u32>,
+    },
+}
+
 /// Root configuration for a QueryFlux deployment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyConfig {
     pub queryflux: QueryFluxConfig,
+    /// Top-level cluster definitions. Each key is the cluster name.
+    /// A cluster can be a member of multiple groups.
+    #[serde(default)]
+    pub clusters: HashMap<String, ClusterConfig>,
     pub cluster_groups: HashMap<String, ClusterGroupConfig>,
     pub routers: Vec<RouterConfig>,
     pub routing_fallback: String,
@@ -39,6 +75,8 @@ pub struct FrontendsConfig {
     pub mysql_wire: Option<FrontendConfig>,
     #[serde(default)]
     pub clickhouse_http: Option<FrontendConfig>,
+    #[serde(default)]
+    pub flight_sql: Option<FrontendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,19 +95,14 @@ impl Default for FrontendConfig {
 
 fn default_true() -> bool { true }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum PersistenceConfig {
+    #[default]
     #[serde(rename = "inMemory")]
     InMemory,
     Redis { url: String },
     Postgres { url: String },
-}
-
-impl Default for PersistenceConfig {
-    fn default() -> Self {
-        PersistenceConfig::InMemory
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,11 +125,17 @@ impl Default for AdminApiConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterGroupConfig {
-    pub engine: EngineConfig,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Cluster names that belong to this group (references top-level `clusters` map).
+    pub members: Vec<String>,
+    /// Selection strategy for picking a cluster within the group.
+    /// Defaults to `RoundRobin` when omitted.
+    #[serde(default)]
+    pub strategy: Option<StrategyConfig>,
     pub max_running_queries: u64,
     #[serde(default)]
     pub max_queued_queries: Option<u64>,
-    pub clusters: Vec<ClusterConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,13 +150,30 @@ pub enum EngineConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterConfig {
-    pub name: String,
+    pub engine: Option<EngineConfig>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// HTTP(S) endpoint for Trino / ClickHouse / StarRocks FE.
     pub endpoint: Option<String>,
     /// Local file path for DuckDB.
     pub database_path: Option<String>,
     #[serde(default)]
     pub tls: Option<TlsConfig>,
+    #[serde(default)]
+    pub auth: Option<ClusterAuth>,
+}
+
+/// Authentication credentials for a backend cluster.
+///
+/// - `basic`: HTTP Basic auth (Trino, ClickHouse) or MySQL username+password (StarRocks).
+/// - `bearer`: HTTP Bearer token (Trino with JWT / OAuth2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ClusterAuth {
+    #[serde(rename_all = "camelCase")]
+    Basic { username: String, password: String },
+    #[serde(rename_all = "camelCase")]
+    Bearer { token: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +187,7 @@ pub struct TlsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum RouterConfig {
+    #[serde(rename_all = "camelCase")]
     ProtocolBased {
         #[serde(default)]
         trino_http: Option<String>,
@@ -141,19 +198,23 @@ pub enum RouterConfig {
         #[serde(default)]
         clickhouse_http: Option<String>,
     },
+    #[serde(rename_all = "camelCase")]
     Header {
         header_name: String,
         header_value_to_group: HashMap<String, String>,
     },
+    #[serde(rename_all = "camelCase")]
     UserGroup {
         user_to_group: HashMap<String, String>,
     },
     QueryRegex {
         rules: Vec<QueryRegexRule>,
     },
+    #[serde(rename_all = "camelCase")]
     ClientTags {
         tag_to_group: HashMap<String, String>,
     },
+    #[serde(rename_all = "camelCase")]
     PythonScript {
         script: String,
         script_file: Option<String>,

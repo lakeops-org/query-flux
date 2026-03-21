@@ -19,6 +19,8 @@ pub struct ProtocolBasedRouter {
 
 #[async_trait]
 impl RouterTrait for ProtocolBasedRouter {
+    fn type_name(&self) -> &'static str { "ProtocolBased" }
+
     async fn route(
         &self,
         _sql: &str,
@@ -30,6 +32,7 @@ impl RouterTrait for ProtocolBasedRouter {
             FrontendProtocol::PostgresWire => self.postgres_wire.clone(),
             FrontendProtocol::MySqlWire => self.mysql_wire.clone(),
             FrontendProtocol::ClickHouseHttp => self.clickhouse_http.clone(),
+            FrontendProtocol::FlightSql => None,
         };
         Ok(group)
     }

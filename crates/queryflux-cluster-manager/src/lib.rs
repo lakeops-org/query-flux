@@ -1,5 +1,6 @@
 pub mod cluster_state;
 pub mod simple;
+pub mod strategy;
 
 use async_trait::async_trait;
 use queryflux_core::{
@@ -32,4 +33,14 @@ pub trait ClusterGroupManager: Send + Sync {
 
     /// Get state for all clusters across all groups.
     async fn all_cluster_states(&self) -> Result<Vec<ClusterStateSnapshot>>;
+
+    /// Update mutable configuration for a specific cluster at runtime.
+    /// Returns `true` if the cluster was found and updated, `false` if not found.
+    async fn update_cluster(
+        &self,
+        group: &ClusterGroupName,
+        cluster: &ClusterName,
+        enabled: Option<bool>,
+        max_running_queries: Option<u64>,
+    ) -> Result<bool>;
 }

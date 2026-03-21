@@ -1,0 +1,42 @@
+[package]
+name = "queryflux-e2e-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "queryflux_e2e_tests"
+path = "src/lib.rs"
+
+[dependencies]
+# Internal crates — same set main.rs uses to build AppState
+queryflux-frontend = { workspace = true }
+queryflux-engine-adapters = { workspace = true }
+queryflux-cluster-manager = { workspace = true }
+queryflux-core = { workspace = true }
+queryflux-persistence = { workspace = true }
+queryflux-translation = { workspace = true }
+queryflux-metrics = { workspace = true }
+queryflux-routing = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+axum = { workspace = true }
+
+# HTTP client for Trino protocol
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Tracing (silenced in tests, but needed to initialise once)
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Async trait
+async-trait = { workspace = true }
+

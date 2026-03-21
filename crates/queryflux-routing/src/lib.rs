@@ -14,6 +14,9 @@ use queryflux_core::{
 /// If all routers return `None`, the routing fallback group from config is used.
 #[async_trait]
 pub trait RouterTrait: Send + Sync {
+    /// Short name used in routing traces (e.g. `"Header"`, `"QueryRegex"`).
+    fn type_name(&self) -> &'static str;
+
     async fn route(
         &self,
         sql: &str,

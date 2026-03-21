@@ -6,8 +6,14 @@ license.workspace = true
 
 [dependencies]
 queryflux-core = { workspace = true }
+queryflux-persistence = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 chrono = { workspace = true }
+prometheus = { workspace = true }
+tracing = { workspace = true }
+sqlx = { workspace = true }
+utoipa = { workspace = true }

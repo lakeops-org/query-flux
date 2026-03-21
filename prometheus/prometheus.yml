@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: queryflux
+    # QueryFlux runs on the host; host.docker.internal resolves to the host IP.
+    # On Linux this requires extra_hosts: ["host.docker.internal:host-gateway"] in docker-compose.
+    static_configs:
+      - targets: ["host.docker.internal:9000"]
+    metrics_path: /metrics

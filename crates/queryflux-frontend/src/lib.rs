@@ -1,3 +1,9 @@
+pub mod admin;
+pub mod dispatch;
+pub mod flight_sql;
+pub mod mysql_wire;
+pub mod postgres_wire;
+pub mod state;
 pub mod trino_http;
 
 use async_trait::async_trait;

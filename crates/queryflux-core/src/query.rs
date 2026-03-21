@@ -66,6 +66,7 @@ pub enum FrontendProtocol {
     PostgresWire,
     MySqlWire,
     ClickHouseHttp,
+    FlightSql,
 }
 
 impl FrontendProtocol {
@@ -76,6 +77,7 @@ impl FrontendProtocol {
             FrontendProtocol::PostgresWire => SqlDialect::Postgres,
             FrontendProtocol::MySqlWire => SqlDialect::MySql,
             FrontendProtocol::ClickHouseHttp => SqlDialect::ClickHouse,
+            FrontendProtocol::FlightSql => SqlDialect::Generic,
         }
     }
 }
@@ -113,6 +115,17 @@ pub enum SqlDialect {
 }
 
 impl SqlDialect {
+    /// Returns true if translating between these two dialects is a no-op.
+    /// MySql and StarRocks share the same wire protocol and SQL syntax.
+    pub fn is_compatible_with(&self, other: &SqlDialect) -> bool {
+        self == other
+            || matches!(
+                (self, other),
+                (SqlDialect::MySql, SqlDialect::StarRocks)
+                    | (SqlDialect::StarRocks, SqlDialect::MySql)
+            )
+    }
+
     /// The dialect name as sqlglot expects it.
     pub fn sqlglot_name(&self) -> &'static str {
         match self {
@@ -159,8 +172,13 @@ pub struct ExecutingQuery {
     pub translated_sql: Option<String>,
     pub cluster_group: ClusterGroupName,
     pub cluster_name: ClusterName,
-    pub backend_query_id: Option<BackendQueryId>,
-    pub next_uri: Option<String>,
+    /// The backend engine's query ID (e.g. Trino's `20260319_084733_00386_kqwci`).
+    /// Used as the persistence key and embedded in the client-facing poll URL.
+    pub backend_query_id: BackendQueryId,
+    /// The Trino cluster base URL (e.g. `http://trino:8080`).
+    /// Used to reconstruct the Trino poll URL from the client-supplied path.
+    /// Never changes after submit — no updates needed between polls.
+    pub trino_endpoint: String,
     pub creation_time: DateTime<Utc>,
     pub last_accessed: DateTime<Utc>,
 }
@@ -181,8 +199,8 @@ pub struct QueuedQuery {
     pub sequence: u64,
 }
 
-/// Returned by `EngineAdapterTrait::submit_query`.
-/// Sync engines return the result immediately; async engines return a handle to poll.
+/// Returned by `EngineAdapterTrait::submit_query` for async (Trino) backends.
+/// Sync backends (DuckDB, StarRocks) use `execute_as_arrow` instead.
 #[derive(Debug)]
 pub enum QueryExecution {
     Async {
@@ -193,55 +211,31 @@ pub enum QueryExecution {
         /// When present, the frontend rewrites nextUri and returns this directly.
         initial_body: Option<Bytes>,
     },
-    Sync {
-        result: QueryPollResult,
-    },
 }
 
-/// Returned by `EngineAdapterTrait::poll_query` or embedded in `QueryExecution::Sync`.
+/// Returned by `EngineAdapterTrait::poll_query` for async (Trino) backends.
 #[derive(Debug)]
 pub enum QueryPollResult {
     Pending {
         progress: Option<f32>,
         next_uri: Option<String>,
     },
-    Complete {
-        columns: Vec<ColumnDef>,
-        data: Vec<Vec<QueryValue>>,
-        stats: QueryStats,
-    },
     Failed {
         message: String,
         error_code: Option<String>,
     },
-    /// Raw response bytes for transparent protocol forwarding (e.g. Trino → Trino).
+    /// Raw response bytes for transparent protocol forwarding (Trino → Trino).
     /// The frontend rewrites nextUri and returns the bytes directly to the client.
     Raw {
         body: Bytes,
         /// The backend's next polling URL (None means query is complete).
         next_uri: Option<String>,
+        /// Engine stats extracted from the final response (only set when next_uri is None).
+        engine_stats: Option<QueryEngineStats>,
     },
 }
 
-// --- Result value types ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum QueryValue {
-    Null,
-    Bool(bool),
-    Int64(i64),
-    Float64(f64),
-    String(String),
-    Bytes(Vec<u8>),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnDef {
-    pub name: String,
-    pub data_type: String,
-    pub nullable: bool,
-}
+// --- Query stats ---
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryStats {
@@ -249,6 +243,29 @@ pub struct QueryStats {
     pub execution_duration_ms: u64,
     pub rows_returned: u64,
     pub bytes_returned: Option<u64>,
+}
+
+/// Engine-level execution statistics captured from the final query response.
+/// Fields are optional since different engines expose different metrics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QueryEngineStats {
+    /// Elapsed (wall-clock) time as reported by the engine (ms).
+    /// Comparing this against QueryFlux's own `execution_duration_ms` gives the proxy overhead.
+    pub engine_elapsed_time_ms: Option<u64>,
+    /// CPU time consumed by the query across all workers (ms).
+    pub cpu_time_ms: Option<u64>,
+    /// Number of rows read/processed by the engine.
+    pub processed_rows: Option<u64>,
+    /// Logical bytes processed (in-memory representation).
+    pub processed_bytes: Option<u64>,
+    /// Physical bytes read from storage (I/O cost).
+    pub physical_input_bytes: Option<u64>,
+    /// Peak memory usage across all workers (bytes).
+    pub peak_memory_bytes: Option<u64>,
+    /// Data spilled to disk during execution (bytes).
+    pub spilled_bytes: Option<u64>,
+    /// Number of execution splits/tasks.
+    pub total_splits: Option<u32>,
 }
 
 // --- Query status (for metrics) ---

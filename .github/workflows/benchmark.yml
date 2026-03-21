@@ -1,0 +1,58 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # needed to push results to gh-pages
+      pull-requests: write  # needed to post PR comments
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+
+      - name: Build queryflux and bench binaries
+        run: cargo build --bin queryflux --bin queryflux-bench
+
+      - name: Run benchmark
+        run: cargo run --bin queryflux-bench > benchmark-results.json
+
+      - name: Store / compare benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: QueryFlux overhead
+          tool: customSmallerIsBetter
+          output-file-path: benchmark-results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Push new baseline to gh-pages only on merges to main.
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # Comment on PRs with a before/after comparison table.
+          comment-on-alert: true
+          comment-always: true
+          # Fail the PR if any metric regresses more than 50% vs the stored baseline.
+          alert-threshold: "150%"
+          fail-on-alert: true
+          # Where results are stored in the gh-pages branch.
+          benchmark-data-dir-path: dev/bench

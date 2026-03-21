@@ -1,17 +1,41 @@
+pub mod cluster_config;
 pub mod in_memory;
+pub mod metrics_store;
+pub mod postgres;
+pub mod query_history;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use queryflux_core::{
     error::Result,
-    query::{ExecutingQuery, ProxyQueryId, QueuedQuery},
+    query::{BackendQueryId, ExecutingQuery, ProxyQueryId, QueuedQuery},
 };
 
+use crate::{
+    cluster_config::{
+        ClusterConfigRecord, ClusterGroupConfigRecord, UpsertClusterConfig,
+        UpsertClusterGroupConfig,
+    },
+    query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
+};
+
+// Re-export so callers can do `queryflux_persistence::MetricsStore` etc.
+pub use metrics_store::{ClusterSnapshot, MetricsStore, QueryRecord};
+
+// ---------------------------------------------------------------------------
+// Persistence — in-flight query state
+// ---------------------------------------------------------------------------
+
+/// Handles short-lived query state: queries currently executing on a backend
+/// engine, and queries waiting in the proxy's queue for cluster capacity.
+///
+/// Every persistence backend (Postgres, Redis, in-memory) must implement this.
 #[async_trait]
 pub trait Persistence: Send + Sync {
     // --- Executing queries (submitted to an engine backend) ---
     async fn upsert(&self, query: ExecutingQuery) -> Result<()>;
-    async fn get(&self, id: &ProxyQueryId) -> Result<Option<ExecutingQuery>>;
-    async fn delete(&self, id: &ProxyQueryId) -> Result<()>;
+    async fn get(&self, id: &BackendQueryId) -> Result<Option<ExecutingQuery>>;
+    async fn delete(&self, id: &BackendQueryId) -> Result<()>;
     async fn list_all(&self) -> Result<Vec<ExecutingQuery>>;
 
     // --- Queued queries (waiting for cluster capacity) ---
@@ -19,4 +43,113 @@ pub trait Persistence: Send + Sync {
     async fn get_queued(&self, id: &ProxyQueryId) -> Result<Option<QueuedQuery>>;
     async fn delete_queued(&self, id: &ProxyQueryId) -> Result<()>;
     async fn list_queued(&self) -> Result<Vec<QueuedQuery>>;
+
+    /// Delete all queued queries whose `last_accessed` is older than `cutoff`.
+    async fn delete_queued_not_accessed_since(&self, cutoff: DateTime<Utc>) -> Result<u64>;
+}
+
+// ---------------------------------------------------------------------------
+// MetricsStore — write-side query history (re-exported from metrics_store mod)
+// ---------------------------------------------------------------------------
+//
+// `MetricsStore`, `QueryRecord`, and `ClusterSnapshot` live in
+// `queryflux_persistence::metrics_store` and are re-exported above.
+// `queryflux-metrics` re-exports them from here so existing call sites
+// (`use queryflux_metrics::MetricsStore`) continue to compile unchanged.
+
+// ---------------------------------------------------------------------------
+// QueryHistoryStore — read-side analytics for the admin UI
+// ---------------------------------------------------------------------------
+
+/// Read access to the historical query record log.
+///
+/// Any persistence backend that wants to power the admin Studio UI (query
+/// history page, dashboard stats, engine/group breakdowns) must implement this.
+#[async_trait]
+pub trait QueryHistoryStore: Send + Sync {
+    /// Paginated, filterable list of past queries — newest first.
+    async fn list_queries(&self, filters: &QueryFilters) -> Result<Vec<QuerySummary>>;
+
+    /// Aggregated stats for the last hour (used by the dashboard).
+    async fn get_dashboard_stats(&self) -> Result<DashboardStats>;
+
+    /// Per-engine aggregated stats over the last `hours` hours.
+    async fn get_engine_stats(&self, hours: i64) -> Result<Vec<EngineStatRow>>;
+
+    /// Per-cluster-group aggregated stats over the last `hours` hours.
+    async fn get_group_stats(&self, hours: i64) -> Result<Vec<GroupStatRow>>;
+
+    /// Distinct engine type strings that appear in the query log.
+    async fn list_engines(&self) -> Result<Vec<String>>;
+}
+
+// ---------------------------------------------------------------------------
+// ClusterConfigStore — persisted cluster / group configuration CRUD
+// ---------------------------------------------------------------------------
+
+/// Full CRUD for cluster and cluster-group configuration records.
+///
+/// When Postgres persistence is configured, QueryFlux reads cluster/group
+/// config from this store instead of the YAML file.  The YAML is only used to
+/// seed on the very first run (when both tables are empty).
+///
+/// Any persistence backend that wants to support runtime config management
+/// must implement this.
+#[async_trait]
+pub trait ClusterConfigStore: Send + Sync {
+    // --- Cluster configs ---
+    async fn list_cluster_configs(&self) -> Result<Vec<ClusterConfigRecord>>;
+    async fn get_cluster_config(&self, name: &str) -> Result<Option<ClusterConfigRecord>>;
+    async fn upsert_cluster_config(&self, name: &str, cfg: &UpsertClusterConfig) -> Result<ClusterConfigRecord>;
+    async fn delete_cluster_config(&self, name: &str) -> Result<bool>;
+    /// Returns the number of stored cluster configs (used for first-run seeding).
+    async fn cluster_configs_count(&self) -> Result<i64>;
+
+    // --- Cluster group configs ---
+    async fn list_group_configs(&self) -> Result<Vec<ClusterGroupConfigRecord>>;
+    async fn get_group_config(&self, name: &str) -> Result<Option<ClusterGroupConfigRecord>>;
+    async fn upsert_group_config(&self, name: &str, cfg: &UpsertClusterGroupConfig) -> Result<ClusterGroupConfigRecord>;
+    async fn delete_group_config(&self, name: &str) -> Result<bool>;
+    /// Returns the number of stored group configs (used for first-run seeding).
+    async fn group_configs_count(&self) -> Result<i64>;
+}
+
+// ---------------------------------------------------------------------------
+// AdminStore — combined super-trait used by the admin frontend
+// ---------------------------------------------------------------------------
+
+/// Combined interface required by the admin REST API.
+///
+/// Any persistence backend that wants to fully power the Studio admin UI must
+/// implement both `QueryHistoryStore` and `ClusterConfigStore`.  Using a
+/// supertrait here means `AdminFrontend` only needs one `Arc<dyn AdminStore>`
+/// and the compiler enforces that every method group is present.
+pub trait AdminStore: QueryHistoryStore + ClusterConfigStore + Send + Sync {}
+
+/// Blanket implementation: any type that satisfies both component traits
+/// automatically satisfies `AdminStore`, so implementors only need the two.
+impl<T: QueryHistoryStore + ClusterConfigStore + Send + Sync> AdminStore for T {}
+
+// ---------------------------------------------------------------------------
+// BackendStore — full contract for a complete persistence backend
+// ---------------------------------------------------------------------------
+
+/// The complete interface a persistence backend must satisfy to replace Postgres.
+///
+/// Covers all four responsibilities:
+/// - `Persistence`        — in-flight query state (executing + queued)
+/// - `MetricsStore`       — writing completed query records and cluster snapshots
+/// - `QueryHistoryStore`  — reading analytics for the admin UI
+/// - `ClusterConfigStore` — CRUD for cluster / cluster-group configuration
+///
+/// The blanket impl below means you only need to implement the four component
+/// traits and you automatically satisfy `BackendStore` — no extra code required.
+pub trait BackendStore:
+    Persistence + MetricsStore + QueryHistoryStore + ClusterConfigStore + Send + Sync
+{
+}
+
+impl<T: Persistence + MetricsStore + QueryHistoryStore + ClusterConfigStore + Send + Sync>
+    BackendStore for T
+{
 }

@@ -1,12 +1,21 @@
+pub mod duckdb;
+pub mod starrocks;
 pub mod trino;
 
+use std::pin::Pin;
+
+use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use futures::Stream;
 use queryflux_core::{
     catalog::TableSchema,
-    error::Result,
+    error::{QueryFluxError, Result},
     query::{BackendQueryId, EngineType, QueryExecution, QueryPollResult},
     session::SessionContext,
 };
+
+/// A stream of Arrow RecordBatches — the universal output type for all adapters.
+pub type ArrowStream = Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send>>;
 
 /// Implemented by each query engine backend (Trino, DuckDB, StarRocks, ClickHouse, ...).
 ///
@@ -46,6 +55,42 @@ pub trait EngineAdapterTrait: Send + Sync {
     /// Whether this engine supports async polling.
     /// Sync engines always return false; their `poll_query` impl is unreachable.
     fn supports_async(&self) -> bool;
+
+    /// The base URL of this engine instance (e.g. `http://trino:8080`).
+    /// Used to reconstruct Trino poll URLs from the client-supplied path.
+    /// Returns empty string for sync engines that don't have an HTTP endpoint.
+    fn base_url(&self) -> &str {
+        ""
+    }
+
+    /// Fetch the number of queries currently running on this engine instance,
+    /// as reported by the engine itself. Used by the background reconciler to
+    /// correct the in-memory `running_queries` counter after crashes or client disconnects.
+    ///
+    /// Return `None` if the engine does not expose this information.
+    /// Default: `None` (unsupported). Engines that support it should override this.
+    async fn fetch_running_query_count(&self) -> Option<u64> {
+        None
+    }
+
+    /// Execute a query and return results as a stream of Arrow RecordBatches.
+    ///
+    /// This is the primary execution path for all non-Trino-HTTP frontends.
+    /// Each adapter owns its type mapping (engine types → Arrow DataType) internally.
+    /// The caller (execute_to_sink) feeds the stream to a ResultSink without
+    /// inspecting individual types.
+    ///
+    /// Default: returns an error. Adapters that support Arrow execution override this.
+    async fn execute_as_arrow(
+        &self,
+        _sql: &str,
+        _session: &SessionContext,
+    ) -> Result<ArrowStream> {
+        Err(QueryFluxError::Engine(format!(
+            "Arrow execution not implemented for {:?} adapter",
+            self.engine_type()
+        )))
+    }
 
     // --- Catalog discovery ---
 

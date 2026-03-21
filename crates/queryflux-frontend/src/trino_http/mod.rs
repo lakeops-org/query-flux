@@ -1,4 +1,5 @@
 pub mod handlers;
+pub mod result_sink;
 pub mod state;
 
 use std::sync::Arc;
@@ -28,9 +29,12 @@ impl TrinoHttpFrontend {
     pub fn router(&self) -> Router {
         Router::new()
             .route("/v1/statement", post(post_statement))
-            .route("/v1/statement/qf/queued/:id/:seq", get(get_queued_statement))
-            .route("/v1/statement/qf/executing/:id", get(get_executing_statement))
-            .route("/v1/statement/qf/executing/:id", delete(delete_executing_statement))
+            .route("/v1/statement/qf/queued/{id}/{seq}", get(get_queued_statement))
+            // Catch all Trino statement poll URLs: /v1/statement/queued/{id}/...
+            // and /v1/statement/executing/{id}/... — both use the same handler.
+            // axum gives /v1/statement/qf/... (static "qf") higher priority than this wildcard.
+            .route("/v1/statement/{*trino_path}", get(get_executing_statement))
+            .route("/v1/statement/{*trino_path}", delete(delete_executing_statement))
             .with_state(self.state.clone())
     }
 }

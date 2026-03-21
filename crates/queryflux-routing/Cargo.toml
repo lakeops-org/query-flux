@@ -10,3 +10,6 @@ async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
+regex = { workspace = true }
+pyo3 = { workspace = true }
+tracing = { workspace = true }

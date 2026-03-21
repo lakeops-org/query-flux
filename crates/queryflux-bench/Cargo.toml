@@ -1,0 +1,16 @@
+[package]
+name = "queryflux-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "queryflux-bench"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

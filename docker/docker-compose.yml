@@ -1,0 +1,245 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # Query engines
+  # ---------------------------------------------------------------------------
+
+  trino:
+    image: trinodb/trino:latest
+    environment:
+      - CATALOG_MANAGEMENT=dynamic   # allows CREATE CATALOG at runtime
+    ports:
+      - "8081:8080"   # Trino on 8081 so QueryFlux can use 8080
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  starrocks:
+    image: starrocks/allin1-ubuntu:latest
+    ports:
+      - "9030:9030"   # MySQL wire protocol (FE query port)
+      - "8030:8030"   # FE HTTP API
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8030/api/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s   # all-in-one takes ~60s to start FE+BE
+
+  # ---------------------------------------------------------------------------
+  # QueryFlux persistence
+  # ---------------------------------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"   # 5433 to avoid conflicting with a local Postgres
+    environment:
+      POSTGRES_DB: queryflux
+      POSTGRES_USER: queryflux
+      POSTGRES_PASSWORD: queryflux
+    volumes:
+      - queryflux-pg:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queryflux"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Iceberg catalog stack (Lakekeeper + MinIO)
+  # ---------------------------------------------------------------------------
+
+  lakekeeper-db:
+    image: postgres:17
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -p 5432 -d postgres"]
+      interval: 2s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+
+  minio:
+    image: minio/minio
+    environment:
+      - MINIO_ROOT_USER=minio-root-user
+      - MINIO_ROOT_PASSWORD=minio-root-password
+    command: ["server", "--console-address", ":9001", "/data"]
+    ports:
+      - "19000:9000"
+      - "19001:9001"  # MinIO console
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+
+  createbuckets:
+    image: minio/minio
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: on-failure
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 minio-root-user minio-root-password;
+      /usr/bin/mc mb --ignore-existing local/warehouse;
+      exit 0;
+      "
+
+  migrate:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: always
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=dev-key-not-secure
+      - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://postgres:postgres@lakekeeper-db:5432/postgres
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=postgresql://postgres:postgres@lakekeeper-db:5432/postgres
+    restart: "no"
+    command: ["migrate"]
+    depends_on:
+      lakekeeper-db:
+        condition: service_healthy
+
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: always
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=dev-key-not-secure
+      - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://postgres:postgres@lakekeeper-db:5432/postgres
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=postgresql://postgres:postgres@lakekeeper-db:5432/postgres
+    command: ["serve"]
+    ports:
+      - "8181:8181"   # Iceberg REST catalog
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      lakekeeper-db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      createbuckets:
+        condition: service_completed_successfully
+
+  bootstrap:
+    image: curlimages/curl
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >
+        curl -sv -X POST http://lakekeeper:8181/management/v1/bootstrap
+        -H 'Content-Type: application/json'
+        --data '{"accept-terms-of-use": true}';
+        exit 0
+
+  initialwarehouse:
+    image: curlimages/curl
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >
+        curl -sv -X POST http://lakekeeper:8181/management/v1/warehouse
+        -H 'Content-Type: application/json'
+        --data @/config/create-warehouse.json;
+        exit 0
+    volumes:
+      - ./test-data/create-warehouse.json:/config/create-warehouse.json
+
+  # Stays running after all init containers finish so `up --wait` has a stable
+  # healthy service to watch instead of the one-shot containers.
+  sentinel:
+    image: alpine
+    command: ["tail", "-f", "/dev/null"]
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      initialwarehouse:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 1s
+      retries: 1
+      start_period: 0s
+
+  # Load TPC-H data into Lakekeeper Iceberg tables via Trino.
+  # Run separately: `docker compose run --rm -T data-loader`
+  data-loader:
+    image: trinodb/trino:476
+    profiles: ["loader"]
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["trino --server http://trino:8080 --user loader --file /test-data/init.sql"]
+    volumes:
+      - ./test-data/init.sql:/test-data/init.sql
+
+  # Register the Lakekeeper Iceberg external catalog in StarRocks.
+  # Run separately: `docker compose run --rm -T starrocks-catalog-setup`
+  starrocks-catalog-setup:
+    image: mysql:8.0
+    profiles: ["loader"]
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["mysql -h starrocks -P 9030 -u root --connect-timeout=30 < /setup/starrocks-setup.sql"]
+    volumes:
+      - ./test-data/starrocks-setup.sql:/setup/starrocks-setup.sql
+
+  # ---------------------------------------------------------------------------
+  # Observability
+  # ---------------------------------------------------------------------------
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    # Reach QueryFlux running on the host via host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  queryflux-pg:
+  prometheus-data:
+  grafana-data:

@@ -1,34 +1,97 @@
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::RwLock;
+
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use queryflux_core::{
     error::Result,
-    query::{ExecutingQuery, ProxyQueryId, QueuedQuery},
+    query::{BackendQueryId, ExecutingQuery, ProxyQueryId, QueuedQuery},
 };
 
-use crate::Persistence;
+use crate::{
+    cluster_config::{
+        ClusterConfigRecord, ClusterGroupConfigRecord, UpsertClusterConfig,
+        UpsertClusterGroupConfig,
+    },
+    metrics_store::{ClusterSnapshot, MetricsStore, QueryRecord},
+    query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
+    ClusterConfigStore, Persistence, QueryHistoryStore,
+};
 
 #[derive(Default)]
 pub struct InMemoryPersistence {
+    // --- in-flight state ---
+    /// Keyed by BackendQueryId (Trino's query ID) — matches the client poll URL.
     executing: DashMap<String, ExecutingQuery>,
     queued: DashMap<String, QueuedQuery>,
+
+    // --- query history (write side) ---
+    next_id: AtomicI64,
+    query_records: RwLock<Vec<QuerySummary>>,
+    // cluster snapshots are accepted but not surfaced in read queries for now
+    _snapshots: RwLock<Vec<ClusterSnapshot>>,
+
+    // --- cluster / group config ---
+    cluster_configs: DashMap<String, ClusterConfigRecord>,
+    group_configs: DashMap<String, ClusterGroupConfigRecord>,
 }
 
 impl InMemoryPersistence {
     pub fn new() -> Self {
         Self::default()
     }
+
+    fn record_to_summary(&self, record: QueryRecord) -> QuerySummary {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let stats = record.engine_stats.as_ref();
+        QuerySummary {
+            id,
+            proxy_query_id: record.proxy_query_id,
+            backend_query_id: record.backend_query_id,
+            cluster_group: record.cluster_group.to_string(),
+            cluster_name: record.cluster_name.to_string(),
+            engine_type: format!("{:?}", record.engine_type),
+            protocol: format!("{:?}", record.frontend_protocol),
+            username: record.user,
+            sql_preview: record.sql_preview,
+            translated_sql: record.translated_sql,
+            status: format!("{:?}", record.status),
+            was_translated: record.was_translated,
+            source_dialect: format!("{:?}", record.source_dialect),
+            target_dialect: format!("{:?}", record.target_dialect),
+            routing_trace: record.routing_trace,
+            queue_duration_ms: record.queue_duration_ms as i64,
+            execution_duration_ms: record.execution_duration_ms as i64,
+            rows_returned: record.rows_returned.map(|v| v as i64),
+            error_message: record.error_message,
+            created_at: record.created_at,
+            engine_elapsed_time_ms: stats.and_then(|s| s.engine_elapsed_time_ms).map(|v| v as i64),
+            cpu_time_ms: stats.and_then(|s| s.cpu_time_ms).map(|v| v as i64),
+            processed_rows: stats.and_then(|s| s.processed_rows).map(|v| v as i64),
+            processed_bytes: stats.and_then(|s| s.processed_bytes).map(|v| v as i64),
+            physical_input_bytes: stats.and_then(|s| s.physical_input_bytes).map(|v| v as i64),
+            peak_memory_bytes: stats.and_then(|s| s.peak_memory_bytes).map(|v| v as i64),
+            spilled_bytes: stats.and_then(|s| s.spilled_bytes).map(|v| v as i64),
+            total_splits: stats.and_then(|s| s.total_splits).map(|v| v as i32),
+        }
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Persistence — in-flight query state
+// ---------------------------------------------------------------------------
 
 #[async_trait]
 impl Persistence for InMemoryPersistence {
     async fn upsert(&self, query: ExecutingQuery) -> Result<()> {
-        self.executing.insert(query.id.0.clone(), query);
+        self.executing.insert(query.backend_query_id.0.clone(), query);
         Ok(())
     }
-    async fn get(&self, id: &ProxyQueryId) -> Result<Option<ExecutingQuery>> {
+    async fn get(&self, id: &BackendQueryId) -> Result<Option<ExecutingQuery>> {
         Ok(self.executing.get(&id.0).map(|e| e.value().clone()))
     }
-    async fn delete(&self, id: &ProxyQueryId) -> Result<()> {
+    async fn delete(&self, id: &BackendQueryId) -> Result<()> {
         self.executing.remove(&id.0);
         Ok(())
     }
@@ -50,4 +113,310 @@ impl Persistence for InMemoryPersistence {
     async fn list_queued(&self) -> Result<Vec<QueuedQuery>> {
         Ok(self.queued.iter().map(|e| e.value().clone()).collect())
     }
+
+    async fn delete_queued_not_accessed_since(&self, cutoff: DateTime<Utc>) -> Result<u64> {
+        let mut removed = 0u64;
+        self.queued.retain(|_, q| {
+            if q.last_accessed >= cutoff {
+                true
+            } else {
+                removed += 1;
+                false
+            }
+        });
+        Ok(removed)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MetricsStore — write completed query records and cluster snapshots
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl MetricsStore for InMemoryPersistence {
+    async fn record_query(&self, record: QueryRecord) -> Result<()> {
+        let summary = self.record_to_summary(record);
+        self.query_records.write().unwrap().push(summary);
+        Ok(())
+    }
+
+    async fn record_cluster_snapshot(&self, snapshot: ClusterSnapshot) -> Result<()> {
+        self._snapshots.write().unwrap().push(snapshot);
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// QueryHistoryStore — read analytics for the admin UI
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl QueryHistoryStore for InMemoryPersistence {
+    async fn list_queries(&self, filters: &QueryFilters) -> Result<Vec<QuerySummary>> {
+        let records = self.query_records.read().unwrap();
+        let mut results: Vec<&QuerySummary> = records
+            .iter()
+            .filter(|r| {
+                if let Some(s) = &filters.status {
+                    if !r.status.eq_ignore_ascii_case(s) {
+                        return false;
+                    }
+                }
+                if let Some(g) = &filters.cluster_group {
+                    if !r.cluster_group.eq_ignore_ascii_case(g) {
+                        return false;
+                    }
+                }
+                if let Some(e) = &filters.engine {
+                    if !r.engine_type.eq_ignore_ascii_case(e) {
+                        return false;
+                    }
+                }
+                if let Some(search) = &filters.search {
+                    let needle = search.to_lowercase();
+                    if !r.sql_preview.to_lowercase().contains(&needle) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
+
+        // Newest first
+        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+        Ok(results
+            .into_iter()
+            .skip(filters.offset as usize)
+            .take(filters.limit as usize)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_dashboard_stats(&self) -> Result<DashboardStats> {
+        let cutoff = Utc::now() - chrono::Duration::hours(1);
+        let records = self.query_records.read().unwrap();
+        let recent: Vec<&QuerySummary> =
+            records.iter().filter(|r| r.created_at >= cutoff).collect();
+
+        let total = recent.len() as i64;
+        if total == 0 {
+            return Ok(DashboardStats::default());
+        }
+
+        let failed = recent.iter().filter(|r| r.status == "Failed").count() as f64;
+        let translated = recent.iter().filter(|r| r.was_translated).count() as f64;
+        let avg_ms = recent.iter().map(|r| r.execution_duration_ms as f64).sum::<f64>()
+            / total as f64;
+
+        Ok(DashboardStats {
+            queries_last_hour: total,
+            error_rate_last_hour: failed / total as f64,
+            avg_duration_ms_last_hour: avg_ms,
+            translation_rate_last_hour: translated / total as f64,
+        })
+    }
+
+    async fn get_engine_stats(&self, hours: i64) -> Result<Vec<EngineStatRow>> {
+        let cutoff = Utc::now() - chrono::Duration::hours(hours);
+        let records = self.query_records.read().unwrap();
+
+        let mut map: std::collections::HashMap<String, Vec<&QuerySummary>> =
+            std::collections::HashMap::new();
+        for r in records.iter().filter(|r| r.created_at >= cutoff) {
+            map.entry(r.engine_type.clone()).or_default().push(r);
+        }
+
+        Ok(map
+            .into_iter()
+            .map(|(engine_type, rows)| engine_stat_row(engine_type, &rows))
+            .collect())
+    }
+
+    async fn get_group_stats(&self, hours: i64) -> Result<Vec<GroupStatRow>> {
+        let cutoff = Utc::now() - chrono::Duration::hours(hours);
+        let records = self.query_records.read().unwrap();
+
+        let mut map: std::collections::HashMap<(String, String), Vec<&QuerySummary>> =
+            std::collections::HashMap::new();
+        for r in records.iter().filter(|r| r.created_at >= cutoff) {
+            map.entry((r.cluster_group.clone(), r.engine_type.clone()))
+                .or_default()
+                .push(r);
+        }
+
+        Ok(map
+            .into_iter()
+            .map(|((cluster_group, engine_type), rows)| {
+                group_stat_row(cluster_group, engine_type, &rows)
+            })
+            .collect())
+    }
+
+    async fn list_engines(&self) -> Result<Vec<String>> {
+        let records = self.query_records.read().unwrap();
+        let mut engines: Vec<String> = records
+            .iter()
+            .map(|r| r.engine_type.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        engines.sort();
+        Ok(engines)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ClusterConfigStore — in-memory CRUD for cluster / group config
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl ClusterConfigStore for InMemoryPersistence {
+    async fn list_cluster_configs(&self) -> Result<Vec<ClusterConfigRecord>> {
+        Ok(self.cluster_configs.iter().map(|e| e.value().clone()).collect())
+    }
+
+    async fn get_cluster_config(&self, name: &str) -> Result<Option<ClusterConfigRecord>> {
+        Ok(self.cluster_configs.get(name).map(|e| e.value().clone()))
+    }
+
+    async fn upsert_cluster_config(
+        &self,
+        name: &str,
+        cfg: &UpsertClusterConfig,
+    ) -> Result<ClusterConfigRecord> {
+        let now = Utc::now();
+        let existing_created_at = self
+            .cluster_configs
+            .get(name)
+            .map(|e| e.value().created_at);
+        let record = ClusterConfigRecord {
+            name: name.to_string(),
+            engine_key: cfg.engine_key.clone(),
+            endpoint: cfg.endpoint.clone(),
+            database_path: cfg.database_path.clone(),
+            auth_type: cfg.auth_type.clone(),
+            auth_username: cfg.auth_username.clone(),
+            auth_password: cfg.auth_password.clone(),
+            auth_token: cfg.auth_token.clone(),
+            tls_insecure_skip_verify: cfg.tls_insecure_skip_verify,
+            enabled: cfg.enabled,
+            created_at: existing_created_at.unwrap_or(now),
+            updated_at: now,
+        };
+        self.cluster_configs.insert(name.to_string(), record.clone());
+        Ok(record)
+    }
+
+    async fn delete_cluster_config(&self, name: &str) -> Result<bool> {
+        Ok(self.cluster_configs.remove(name).is_some())
+    }
+
+    async fn cluster_configs_count(&self) -> Result<i64> {
+        Ok(self.cluster_configs.len() as i64)
+    }
+
+    async fn list_group_configs(&self) -> Result<Vec<ClusterGroupConfigRecord>> {
+        Ok(self.group_configs.iter().map(|e| e.value().clone()).collect())
+    }
+
+    async fn get_group_config(&self, name: &str) -> Result<Option<ClusterGroupConfigRecord>> {
+        Ok(self.group_configs.get(name).map(|e| e.value().clone()))
+    }
+
+    async fn upsert_group_config(
+        &self,
+        name: &str,
+        cfg: &UpsertClusterGroupConfig,
+    ) -> Result<ClusterGroupConfigRecord> {
+        let now = Utc::now();
+        let existing_created_at =
+            self.group_configs.get(name).map(|e| e.value().created_at);
+        let record = ClusterGroupConfigRecord {
+            name: name.to_string(),
+            enabled: cfg.enabled,
+            members: cfg.members.clone(),
+            max_running_queries: cfg.max_running_queries,
+            max_queued_queries: cfg.max_queued_queries,
+            strategy: cfg.strategy.clone(),
+            created_at: existing_created_at.unwrap_or(now),
+            updated_at: now,
+        };
+        self.group_configs.insert(name.to_string(), record.clone());
+        Ok(record)
+    }
+
+    async fn delete_group_config(&self, name: &str) -> Result<bool> {
+        Ok(self.group_configs.remove(name).is_some())
+    }
+
+    async fn group_configs_count(&self) -> Result<i64> {
+        Ok(self.group_configs.len() as i64)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Aggregation helpers
+// ---------------------------------------------------------------------------
+
+fn engine_stat_row(engine_type: String, rows: &[&QuerySummary]) -> EngineStatRow {
+    let total = rows.len() as i64;
+    let successful = rows.iter().filter(|r| r.status == "Success").count() as i64;
+    let failed = rows.iter().filter(|r| r.status == "Failed").count() as i64;
+    let cancelled = rows.iter().filter(|r| r.status == "Cancelled").count() as i64;
+    let translated = rows.iter().filter(|r| r.was_translated).count() as i64;
+    let total_rows = rows.iter().filter_map(|r| r.rows_returned).sum::<i64>();
+    let exec_times: Vec<i64> = rows.iter().map(|r| r.execution_duration_ms).collect();
+    let queue_times: Vec<i64> = rows.iter().map(|r| r.queue_duration_ms).collect();
+
+    EngineStatRow {
+        engine_type,
+        total_queries: total,
+        successful_queries: successful,
+        failed_queries: failed,
+        cancelled_queries: cancelled,
+        avg_execution_ms: mean(&exec_times),
+        min_execution_ms: exec_times.iter().copied().min().unwrap_or(0),
+        max_execution_ms: exec_times.iter().copied().max().unwrap_or(0),
+        avg_queue_ms: mean(&queue_times),
+        translated_queries: translated,
+        total_rows_returned: total_rows,
+    }
+}
+
+fn group_stat_row(
+    cluster_group: String,
+    engine_type: String,
+    rows: &[&QuerySummary],
+) -> GroupStatRow {
+    let total = rows.len() as i64;
+    let successful = rows.iter().filter(|r| r.status == "Success").count() as i64;
+    let failed = rows.iter().filter(|r| r.status == "Failed").count() as i64;
+    let cancelled = rows.iter().filter(|r| r.status == "Cancelled").count() as i64;
+    let translated = rows.iter().filter(|r| r.was_translated).count() as i64;
+    let total_rows = rows.iter().filter_map(|r| r.rows_returned).sum::<i64>();
+    let exec_times: Vec<i64> = rows.iter().map(|r| r.execution_duration_ms).collect();
+    let queue_times: Vec<i64> = rows.iter().map(|r| r.queue_duration_ms).collect();
+
+    GroupStatRow {
+        cluster_group,
+        engine_type,
+        total_queries: total,
+        successful_queries: successful,
+        failed_queries: failed,
+        cancelled_queries: cancelled,
+        avg_execution_ms: mean(&exec_times),
+        min_execution_ms: exec_times.iter().copied().min().unwrap_or(0),
+        max_execution_ms: exec_times.iter().copied().max().unwrap_or(0),
+        avg_queue_ms: mean(&queue_times),
+        translated_queries: translated,
+        total_rows_returned: total_rows,
+    }
+}
+
+fn mean(values: &[i64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().sum::<i64>() as f64 / values.len() as f64
 }

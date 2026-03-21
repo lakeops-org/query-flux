@@ -1,0 +1,215 @@
+# Lean compose file for E2E tests.
+#
+# Always available: DuckDB (embedded), Trino, StarRocks.
+# Iceberg stack: Postgres (Lakekeeper backend), MinIO, Lakekeeper, data-loader.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   cargo test -p queryflux-e2e-tests -- --include-ignored
+#   docker compose -f docker-compose.test.yml down
+
+networks:
+  test_net:
+    driver: bridge
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Query engines
+  # ---------------------------------------------------------------------------
+
+  trino:
+    image: trinodb/trino:476
+    environment:
+      - CATALOG_MANAGEMENT=dynamic   # allows CREATE CATALOG at runtime
+    ports:
+      - "18081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - test_net
+
+  starrocks:
+    image: starrocks/allin1-ubuntu:latest
+    ports:
+      - "19030:9030"   # MySQL wire (FE query port)
+      - "18030:8030"   # FE HTTP API (health check)
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8030/api/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    networks:
+      - test_net
+
+  # ---------------------------------------------------------------------------
+  # Iceberg catalog stack (Lakekeeper + MinIO + Postgres)
+  # ---------------------------------------------------------------------------
+
+  db:
+    image: postgres:17
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -p 5432 -d postgres"]
+      interval: 2s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+    networks:
+      - test_net
+
+  minio:
+    image: minio/minio
+    environment:
+      - MINIO_ROOT_USER=minio-root-user
+      - MINIO_ROOT_PASSWORD=minio-root-password
+    command: ["server", "--console-address", ":9001", "/data"]
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+    networks:
+      - test_net
+
+  createbuckets:
+    image: minio/minio
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: on-failure
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 minio-root-user minio-root-password;
+      /usr/bin/mc mb --ignore-existing local/warehouse;
+      exit 0;
+      "
+    networks:
+      - test_net
+
+  migrate:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: always
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=test-key-not-secure
+      - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://postgres:postgres@db:5432/postgres
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=postgresql://postgres:postgres@db:5432/postgres
+    restart: "no"
+    command: ["migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - test_net
+
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: always
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=test-key-not-secure
+      - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://postgres:postgres@db:5432/postgres
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=postgresql://postgres:postgres@db:5432/postgres
+    command: ["serve"]
+    ports:
+      - "18181:8181"
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      createbuckets:
+        condition: service_completed_successfully
+    networks:
+      - test_net
+
+  bootstrap:
+    image: curlimages/curl
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+    restart: "no"
+    # Accept ToU — ignore HTTP errors (latest-main may auto-bootstrap or return 409).
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >
+        curl -sv -X POST http://lakekeeper:8181/management/v1/bootstrap
+        -H 'Content-Type: application/json'
+        --data '{"accept-terms-of-use": true}';
+        exit 0
+    networks:
+      - test_net
+
+  initialwarehouse:
+    image: curlimages/curl
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+    # Create warehouse — ignore 409 (already exists on retry).
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >
+        curl -sv -X POST http://lakekeeper:8181/management/v1/warehouse
+        -H 'Content-Type: application/json'
+        --data @/config/create-warehouse.json;
+        exit 0
+    volumes:
+      - ./test-data/create-warehouse.json:/config/create-warehouse.json
+    networks:
+      - test_net
+
+  # Loads TPC-H data from Trino's built-in tpch connector into Iceberg tables.
+  # Trino persists the lakekeeper catalog (CATALOG_MANAGEMENT=dynamic) for the
+  # duration of the container lifetime — no per-test setup needed for Trino.
+  # Sentinel: stays running forever; only starts after all init containers finish.
+  # `--wait` watches this service instead of the one-shot containers so it
+  # doesn't fail when migrate/bootstrap/initialwarehouse exit.
+  sentinel:
+    image: alpine
+    command: ["tail", "-f", "/dev/null"]
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      initialwarehouse:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 1s
+      retries: 1
+      start_period: 0s
+    networks:
+      - test_net
+
+  # Run separately via `docker compose run --rm -T data-loader` after `up --wait`.
+  # Uses a profile so `up --wait` doesn't try to manage its lifecycle.
+  data-loader:
+    image: trinodb/trino:476
+    profiles: ["loader"]
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["trino --server http://trino:8080 --user loader --file /test-data/init.sql"]
+    volumes:
+      - ./test-data/init.sql:/test-data/init.sql
+    networks:
+      - test_net

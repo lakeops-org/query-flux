@@ -40,7 +40,7 @@ impl TrinoResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrinoStats {
     pub state: String,
@@ -71,6 +71,12 @@ pub struct TrinoStats {
     #[serde(default)]
     pub wall_time_millis: u64,
     #[serde(default)]
+    pub physical_input_bytes: u64,
+    #[serde(default)]
+    pub peak_user_memory_bytes: u64,
+    #[serde(default)]
+    pub spilled_bytes: u64,
+    #[serde(default)]
     pub progress_percentage: Option<f32>,
 }
 
@@ -93,7 +99,7 @@ pub fn queued_response(
     TrinoResponse {
         id: query_id.to_string(),
         next_uri: Some(next_uri),
-        info_uri: format!("http://queryflux/ui/query.html?{}", query_id),
+        info_uri: format!("http://queryflux/ui/query.html?{query_id}"),
         partial_cancel_uri: None,
         stats: TrinoStats {
             state: "QUEUED".to_string(),
@@ -106,6 +112,9 @@ pub fn queued_response(
             running_splits: 0,
             processed_rows: 0,
             processed_bytes: 0,
+            physical_input_bytes: 0,
+            peak_user_memory_bytes: 0,
+            spilled_bytes: 0,
             queued_time_millis: elapsed_ms,
             elapsed_time_millis: elapsed_ms,
             cpu_time_millis: 0,

@@ -16,6 +16,7 @@ pub struct TableSchema {
 impl TableSchema {
     /// Convert to the nested map format sqlglot's MappingSchema expects:
     /// `{ catalog: { db: { table: { col: "TYPE" } } } }`
+    #[allow(clippy::type_complexity)]
     pub fn to_sqlglot_schema(&self) -> HashMap<String, HashMap<String, HashMap<String, HashMap<String, String>>>> {
         let columns: HashMap<String, String> = self
             .columns

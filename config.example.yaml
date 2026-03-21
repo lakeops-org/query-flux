@@ -13,28 +13,25 @@ queryflux:
     port: 9000
 
 clusterGroups:
-  trino-default:
-    engine: Trino
-    maxRunningQueries: 100
-    clusters:
-      - name: trino-1
-        endpoint: http://localhost:8081
+  # trino-default:
+  #   engine: trino
+  #   maxRunningQueries: 100
+  #   clusters:
+  #     - name: trino-1
+  #       endpoint: http://localhost:8081
 
   duckdb-local:
-    engine: DuckDb
+    engine: duckDb
     maxRunningQueries: 4
     clusters:
       - name: duckdb-1
-        databasePath: /tmp/queryflux.duckdb
+        # databasePath: /tmp/queryflux.duckdb
 
 translation:
   errorOnUnsupported: false
-
-catalogProvider:
-  type: Null
 
 routers:
   - type: protocolBased
     postgresWire: trino-default
 
-routingFallback: trino-default
+routingFallback: duckdb-local
