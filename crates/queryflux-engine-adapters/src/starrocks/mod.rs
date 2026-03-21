@@ -304,7 +304,7 @@ fn mysql_column_type_to_arrow(ct: ColumnType) -> DataType {
     }
 }
 
-fn starrocks_build_column(dt: &DataType, rows: &mut Vec<Row>, col_idx: usize) -> Result<ArrayRef> {
+fn starrocks_build_column(dt: &DataType, rows: &mut [Row], col_idx: usize) -> Result<ArrayRef> {
     match dt {
         DataType::Boolean => {
             let mut b = BooleanBuilder::with_capacity(rows.len());
