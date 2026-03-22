@@ -189,7 +189,7 @@ impl TestHarness {
             std::env::var("MINIO_ENDPOINT").unwrap_or_else(|_| "localhost:19000".to_string());
 
         if is_lakekeeper_ready(&lakekeeper_url).await {
-            let catalog_endpoint = format!("{}/catalog", lakekeeper_url);
+            let catalog_endpoint = format!("{lakekeeper_url}/catalog");
 
             // DuckDB: install iceberg extension, create S3 secret, attach catalog.
             // sts-enabled=false in the warehouse so DuckDB uses static credentials.
@@ -198,13 +198,11 @@ impl TestHarness {
                  LOAD iceberg; \
                  CREATE OR REPLACE SECRET lakekeeper_minio ( \
                    TYPE S3, KEY_ID 'minio-root-user', SECRET 'minio-root-password', \
-                   ENDPOINT '{minio}', USE_SSL false, URL_STYLE 'path', REGION 'local' \
+                   ENDPOINT '{minio_endpoint}', USE_SSL false, URL_STYLE 'path', REGION 'local' \
                  ); \
                  ATTACH 'demo' AS lakekeeper ( \
-                   TYPE ICEBERG, ENDPOINT '{endpoint}', TOKEN '' \
+                   TYPE ICEBERG, ENDPOINT '{catalog_endpoint}', TOKEN '' \
                  );",
-                minio = minio_endpoint,
-                endpoint = catalog_endpoint,
             );
             duck_adapter.setup_batch(&duck_setup).await.ok();
 

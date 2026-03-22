@@ -13,18 +13,15 @@ use crate::{
     ClusterGroupManager,
 };
 
+type ManagedGroup = (Vec<Arc<ClusterState>>, Arc<dyn ClusterSelectionStrategy>);
+
 pub struct SimpleClusterGroupManager {
     /// group → (ordered cluster states, selection strategy)
-    groups: HashMap<ClusterGroupName, (Vec<Arc<ClusterState>>, Arc<dyn ClusterSelectionStrategy>)>,
+    groups: HashMap<ClusterGroupName, ManagedGroup>,
 }
 
 impl SimpleClusterGroupManager {
-    pub fn new(
-        groups: HashMap<
-            ClusterGroupName,
-            (Vec<Arc<ClusterState>>, Arc<dyn ClusterSelectionStrategy>),
-        >,
-    ) -> Self {
+    pub fn new(groups: HashMap<ClusterGroupName, ManagedGroup>) -> Self {
         Self { groups }
     }
 }

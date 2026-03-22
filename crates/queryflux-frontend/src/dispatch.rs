@@ -264,7 +264,7 @@ pub async fn execute_to_sink(
     session: SessionContext,
     protocol: FrontendProtocol,
     group: ClusterGroupName,
-    sink: &mut (impl ResultSink + Send),
+    sink: &mut impl ResultSink,
 ) -> Result<()> {
     let query_id = ProxyQueryId::new();
     // 1. Queue loop: wait for cluster capacity.

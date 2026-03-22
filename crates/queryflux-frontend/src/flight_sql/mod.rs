@@ -237,5 +237,5 @@ fn encode_empty_schema() -> bytes::Bytes {
     let schema = Schema::empty();
     let options = IpcWriteOptions::default();
     let ipc: arrow_flight::FlightData = SchemaAsIpc::new(&schema, &options).into();
-    ipc.data_header.into()
+    ipc.data_header
 }

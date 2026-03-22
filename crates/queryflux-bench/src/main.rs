@@ -214,8 +214,7 @@ fn find_queryflux_bin() -> anyhow::Result<std::path::PathBuf> {
     }
 
     anyhow::bail!(
-        "queryflux binary not found near {:?}. Build it first with: cargo build --bin queryflux",
-        bin_dir
+        "queryflux binary not found near {bin_dir:?}. Build it first with: cargo build --bin queryflux"
     )
 }
 
@@ -270,14 +269,8 @@ fn build_results(direct_ms: &[f64], proxy_ms: &[f64]) -> Value {
     // Print a human-readable summary to stderr so CI logs are easy to read.
     eprintln!("\n── QueryFlux overhead benchmark ────────────────────────────────────────");
     eprintln!("                  p50       p95       p99");
-    eprintln!(
-        "  Direct        {:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
-        d_p50, d_p95, d_p99
-    );
-    eprintln!(
-        "  Via QueryFlux {:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
-        p_p50, p_p95, p_p99
-    );
+    eprintln!("  Direct        {d_p50:>6.2} ms  {d_p95:>6.2} ms  {d_p99:>6.2} ms");
+    eprintln!("  Via QueryFlux {p_p50:>6.2} ms  {p_p95:>6.2} ms  {p_p99:>6.2} ms");
     eprintln!(
         "  Overhead      {:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
         p_p50 - d_p50,

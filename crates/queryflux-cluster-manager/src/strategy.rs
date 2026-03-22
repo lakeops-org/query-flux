@@ -38,6 +38,12 @@ impl RoundRobinStrategy {
     }
 }
 
+impl Default for RoundRobinStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClusterSelectionStrategy for RoundRobinStrategy {
     fn pick(&self, candidates: &[ClusterCandidate<'_>]) -> Option<usize> {
         if candidates.is_empty() {
@@ -150,14 +156,14 @@ impl ClusterSelectionStrategy for WeightedStrategy {
         let weighted: Vec<(usize, u32)> = candidates
             .iter()
             .enumerate()
-            .filter_map(|(i, c)| {
+            .map(|(i, c)| {
                 let w = self
                     .weights
                     .iter()
                     .find(|(name, _)| name == c.name)
                     .map(|(_, w)| *w)
                     .unwrap_or(1);
-                Some((i, w))
+                (i, w)
             })
             .collect();
 
