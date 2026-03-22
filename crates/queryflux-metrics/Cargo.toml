@@ -15,5 +15,4 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 prometheus = { workspace = true }
 tracing = { workspace = true }
-sqlx = { workspace = true }
 utoipa = { workspace = true }

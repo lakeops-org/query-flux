@@ -26,7 +26,10 @@ jobs:
           components: clippy, rustfmt
 
       # Smarter than a raw actions/cache on target/: keys per crate graph, fewer misses, smaller uploads.
+      # cache-on-failure: ensure duckdb/pyo3 C++ artifacts are cached even when clippy or tests fail.
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Check formatting
         run: cargo fmt --all -- --check
