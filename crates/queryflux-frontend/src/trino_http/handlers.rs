@@ -10,6 +10,7 @@ use axum::{
 use bytes::Bytes;
 use chrono::Utc;
 use queryflux_core::{
+    error::QueryFluxError,
     query::{BackendQueryId, FrontendProtocol, ProxyQueryId, QueryPollResult, QueryStatus},
     session::SessionContext,
 };
@@ -195,20 +196,33 @@ pub async fn post_statement(
 
     // Trino backend: raw bytes forwarded, nextUri rewritten — zero Arrow.
     // Non-Trino backend (DuckDB, StarRocks): Arrow path → single-page Trino JSON response.
+    //
+    // `group_supports_async` is a group-level heuristic; `dispatch_query` may still return
+    // `SyncEngineRequired` if round-robin selects a sync cluster in a mixed-engine group.
+    // In that case fall through to `execute_to_sink` exactly as for pure-sync groups.
     if state.group_supports_async(&group.0) {
         match dispatch_query(
             &state,
             query_id.clone(),
-            sql,
-            session,
-            protocol,
-            group,
+            sql.clone(),
+            session.clone(),
+            protocol.clone(),
+            group.clone(),
             false,
             0,
         )
         .await
         {
             Ok(outcome) => outcome_to_response(&state, &query_id, outcome),
+            Err(QueryFluxError::SyncEngineRequired(_)) => {
+                let mut sink = TrinoHttpResultSink::new(&query_id.0);
+                if let Err(e) =
+                    execute_to_sink(&state, sql, session, protocol, group, &mut sink).await
+                {
+                    warn!(id = %query_id, "execute_to_sink error: {e}");
+                }
+                sink.into_response()
+            }
             Err(e) => {
                 warn!("Dispatch error: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -250,16 +264,26 @@ pub async fn get_queued_statement(
         match dispatch_query(
             &state,
             query_id.clone(),
-            sql,
-            session,
-            protocol,
-            group,
+            sql.clone(),
+            session.clone(),
+            protocol.clone(),
+            group.clone(),
             true,
             seq,
         )
         .await
         {
             Ok(outcome) => outcome_to_response(&state, &query_id, outcome),
+            Err(QueryFluxError::SyncEngineRequired(_)) => {
+                let _ = state.persistence.delete_queued(&query_id).await;
+                let mut sink = TrinoHttpResultSink::new(&query_id.0);
+                if let Err(e) =
+                    execute_to_sink(&state, sql, session, protocol, group, &mut sink).await
+                {
+                    warn!(id = %query_id, "execute_to_sink error: {e}");
+                }
+                sink.into_response()
+            }
             Err(e) => {
                 warn!("Dispatch error: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()

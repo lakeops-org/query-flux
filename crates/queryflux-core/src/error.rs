@@ -29,6 +29,11 @@ pub enum QueryFluxError {
     #[error("No cluster group available: {0}")]
     NoClusterGroupAvailable(String),
 
+    /// Returned by `dispatch_query` when the acquired cluster only supports Arrow (sync)
+    /// execution. The caller should retry via `execute_to_sink` instead.
+    #[error("Cluster {0} requires Arrow execution path")]
+    SyncEngineRequired(String),
+
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }

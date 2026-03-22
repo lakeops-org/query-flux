@@ -119,6 +119,18 @@ pub async fn dispatch_query(
         }
     };
 
+    // The group-level `group_supports_async` check is a heuristic that can be wrong for
+    // mixed-engine groups or stale DB state. Guard here so a sync cluster acquired via
+    // round-robin doesn't reach `submit_query` and fail at runtime.
+    if !adapter.supports_async() {
+        state.metrics.on_query_finished(&group.0, &cluster_name.0);
+        let _ = state
+            .cluster_manager
+            .release_cluster(&group, &cluster_name)
+            .await;
+        return Err(QueryFluxError::SyncEngineRequired(cluster_name.0.clone()));
+    }
+
     let src_dialect = protocol.default_dialect();
     let tgt_dialect = adapter.engine_type().dialect();
     let original_sql = sql.clone();

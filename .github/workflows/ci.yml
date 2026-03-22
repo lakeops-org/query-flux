@@ -8,6 +8,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Faster links on Linux (mold is installed below).
+  RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
 
 jobs:
   build-and-test:
@@ -15,19 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install mold linker
+        uses: rui314/setup-mold@v1
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      # Smarter than a raw actions/cache on target/: keys per crate graph, fewer misses, smaller uploads.
+      - uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -35,8 +34,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Build
-        run: cargo build --all
-
+      # No separate `cargo build`: clippy already compiled the workspace; tests reuse incremental artifacts.
       - name: Test
-        run: cargo test --all
+        run: cargo test --workspace
