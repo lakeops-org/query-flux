@@ -322,7 +322,6 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MockMysqlBac
                 .trim()
                 .strip_prefix("SELECT")
                 .unwrap_or("@@var")
-                .trim()
                 .split_whitespace()
                 .next()
                 .unwrap_or("@@var")

@@ -65,6 +65,7 @@ const CLIENT_PROTOCOL_41: u32 = 512;
 const CLIENT_TRANSACTIONS: u32 = 8192;
 const CLIENT_SECURE_CONNECTION: u32 = 32768;
 const CLIENT_PLUGIN_AUTH: u32 = 1 << 19;
+const CLIENT_SSL: u32 = 1 << 11;
 
 static CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -120,8 +121,27 @@ async fn handle_connection(
     // Send server handshake.
     write_packet(&mut writer, 0, &build_handshake(connection_id)).await?;
 
-    // Read client HandshakeResponse.
+    // Read client HandshakeResponse or SSLRequest.
     let (_, payload) = read_packet(&mut reader).await?;
+
+    if is_ssl_request(&payload) {
+        warn!(
+            conn_id = connection_id,
+            "MySQL wire: client requested TLS (SSLRequest); TLS is not supported — closing"
+        );
+        write_packet(
+            &mut writer,
+            1,
+            &build_err(
+                1105,
+                "QueryFlux MySQL wire does not support TLS. Disable SSL on the client \
+                 (e.g. mysql --ssl-mode=DISABLED, JDBC useSSL=false).",
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
     let (user, schema) = parse_handshake_response(&payload);
 
     // Accept any credentials — QueryFlux trusts the network here.
@@ -182,11 +202,11 @@ async fn handle_connection(
                     .trim_end_matches('\0')
                     .to_string();
                 debug!(conn_id = connection_id, sql = %sql, "MySQL wire: query");
-                handle_com_query(&mut writer, &state, &session, &sql, seq.wrapping_add(1)).await?;
+                handle_com_query(&mut writer, &state, &mut session, &sql, seq.wrapping_add(1))
+                    .await?;
             }
 
             COM_FIELD_LIST => {
-                // Used by some clients for tab-completion; respond with empty EOF.
                 write_packet(&mut writer, seq.wrapping_add(1), &build_eof()).await?;
             }
 
@@ -214,11 +234,13 @@ async fn handle_connection(
 async fn handle_com_query<W: AsyncWriteExt + Unpin>(
     writer: &mut W,
     state: &Arc<AppState>,
-    session: &SessionContext,
+    session: &mut SessionContext,
     sql: &str,
     start_seq: u8,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let sql_lower = sql.trim().to_lowercase();
+    // Unwrap MySQL conditional comments: /*!40101 SET ... */ → SET ...
+    let logical = strip_mysql_conditional_comment(sql);
+    let sql_lower = logical.trim().to_lowercase();
 
     // Fast-path: SET statements — acknowledge without dispatching.
     if sql_lower.starts_with("set ") || sql_lower.starts_with("set\t") {
@@ -226,9 +248,46 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
         return Ok(());
     }
 
-    // Fast-path: synthetic @@version queries sent by MySQL drivers on connect.
-    if sql_lower.contains("@@version") {
-        return write_string_result(writer, "@@version", "8.0.0-queryflux", start_seq).await;
+    // Fast-path: USE db sent as COM_QUERY text (mysql CLI does this).
+    if let Some(db) = try_parse_use(&sql_lower) {
+        if let SessionContext::MySqlWire {
+            user, session_vars, ..
+        } = session
+        {
+            *session = SessionContext::MySqlWire {
+                schema: if db.is_empty() { None } else { Some(db) },
+                user: user.clone(),
+                session_vars: session_vars.clone(),
+            };
+        }
+        write_packet(writer, start_seq, &build_ok(0, 0)).await?;
+        return Ok(());
+    }
+
+    // Fast-path: synthetic @@version / @@version_comment (single value, no comma).
+    if sql_lower.contains("@@version") && !sql_lower.contains(',') {
+        let col = if sql_lower.contains("version_comment") {
+            "@@version_comment"
+        } else {
+            "@@version"
+        };
+        return write_string_result(writer, col, "8.0.0-queryflux", start_seq).await;
+    }
+
+    // Fast-path: SELECT DATABASE()
+    if is_select_database(&sql_lower) {
+        return write_optional_string_result(writer, "DATABASE()", session.database(), start_seq)
+            .await;
+    }
+
+    // Fast-path: SHOW WARNINGS (empty result).
+    if sql_lower.starts_with("show warnings") {
+        return write_empty_show_warnings(writer, start_seq).await;
+    }
+
+    // Fast-path: SELECT @@session.auto_increment_increment, @@... (no FROM).
+    if let Some(labels) = try_parse_session_var_select(&sql_lower) {
+        return write_synthetic_multi_column_row(writer, &labels, start_seq).await;
     }
 
     let protocol = FrontendProtocol::MySqlWire;
@@ -290,6 +349,8 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
+// ── Synthetic result helpers ──────────────────────────────────────────────────
+
 /// Write a single-column single-row string result set directly to the writer.
 /// Used for synthetic responses (@@version, etc.) that bypass `execute_to_sink`.
 async fn write_string_result<W: AsyncWriteExt + Unpin>(
@@ -318,6 +379,109 @@ async fn write_string_result<W: AsyncWriteExt + Unpin>(
 
     let mut row = Vec::new();
     write_lenenc_str(&mut row, value.as_bytes());
+    write_packet(writer, seq, &row).await?;
+    seq = seq.wrapping_add(1);
+
+    write_packet(writer, seq, &build_eof()).await?;
+    Ok(())
+}
+
+/// Single string column; value may be SQL NULL (e.g. `SELECT DATABASE()` with no schema).
+async fn write_optional_string_result<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    col_name: &str,
+    value: Option<&str>,
+    start_seq: u8,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut seq = start_seq;
+
+    let mut count = Vec::new();
+    write_lenenc_int(&mut count, 1);
+    write_packet(writer, seq, &count).await?;
+    seq = seq.wrapping_add(1);
+
+    write_packet(
+        writer,
+        seq,
+        &build_column_def_named(col_name, MYSQL_TYPE_VAR_STRING),
+    )
+    .await?;
+    seq = seq.wrapping_add(1);
+
+    write_packet(writer, seq, &build_eof()).await?;
+    seq = seq.wrapping_add(1);
+
+    let mut row = Vec::new();
+    match value {
+        None => row.push(0xfb), // NULL marker
+        Some(v) => write_lenenc_str(&mut row, v.as_bytes()),
+    }
+    write_packet(writer, seq, &row).await?;
+    seq = seq.wrapping_add(1);
+
+    write_packet(writer, seq, &build_eof()).await?;
+    Ok(())
+}
+
+/// Empty `SHOW WARNINGS` result (three columns, zero rows).
+async fn write_empty_show_warnings<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    start_seq: u8,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut seq = start_seq;
+
+    let mut count = Vec::new();
+    write_lenenc_int(&mut count, 3);
+    write_packet(writer, seq, &count).await?;
+    seq = seq.wrapping_add(1);
+
+    for (name, ty) in [
+        ("Level", MYSQL_TYPE_VAR_STRING),
+        ("Code", MYSQL_TYPE_LONGLONG),
+        ("Message", MYSQL_TYPE_VAR_STRING),
+    ] {
+        write_packet(writer, seq, &build_column_def_named(name, ty)).await?;
+        seq = seq.wrapping_add(1);
+    }
+
+    write_packet(writer, seq, &build_eof()).await?;
+    seq = seq.wrapping_add(1);
+
+    // Zero rows — straight to the closing EOF.
+    write_packet(writer, seq, &build_eof()).await?;
+    Ok(())
+}
+
+/// Multi-column single-row of empty strings — for `SELECT @@session.auto_increment_increment, ...`.
+async fn write_synthetic_multi_column_row<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    column_labels: &[String],
+    start_seq: u8,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut seq = start_seq;
+
+    let mut count = Vec::new();
+    write_lenenc_int(&mut count, column_labels.len() as u64);
+    write_packet(writer, seq, &count).await?;
+    seq = seq.wrapping_add(1);
+
+    for label in column_labels {
+        write_packet(
+            writer,
+            seq,
+            &build_column_def_named(label, MYSQL_TYPE_VAR_STRING),
+        )
+        .await?;
+        seq = seq.wrapping_add(1);
+    }
+
+    write_packet(writer, seq, &build_eof()).await?;
+    seq = seq.wrapping_add(1);
+
+    let mut row = Vec::new();
+    for _ in column_labels {
+        write_lenenc_str(&mut row, b"");
+    }
     write_packet(writer, seq, &row).await?;
     seq = seq.wrapping_add(1);
 
@@ -588,7 +752,109 @@ fn write_lenenc_str(buf: &mut Vec<u8>, s: &[u8]) {
     buf.extend_from_slice(s);
 }
 
-// ── HandshakeResponse parsing ─────────────────────────────────────────────────
+// ── SQL classification helpers ────────────────────────────────────────────────
+
+/// Unwrap the leading `/*!40101 ... */` version-comment wrapper that the mysql CLI
+/// and MySQL connectors use for SET and other init statements.
+fn strip_mysql_conditional_comment(sql: &str) -> &str {
+    let t = sql.trim();
+    if !t.starts_with("/*!") {
+        return t;
+    }
+    if let Some(inner) = t.strip_prefix("/*!") {
+        if let Some((before_close, _)) = inner.split_once("*/") {
+            let skip = before_close
+                .char_indices()
+                .find(|(_, c)| !c.is_ascii_digit())
+                .map(|(i, _)| i)
+                .unwrap_or(before_close.len());
+            let body = before_close[skip..].trim();
+            if !body.is_empty() {
+                return body;
+            }
+        }
+    }
+    t
+}
+
+/// Parse `USE db` / `USE \`db\`` sent as COM_QUERY text. Returns the database name.
+fn try_parse_use(sql_lower: &str) -> Option<String> {
+    let s = sql_lower.trim().trim_end_matches(';');
+    let rest = if s == "use" {
+        ""
+    } else if let Some(r) = s.strip_prefix("use ") {
+        r
+    } else if let Some(r) = s.strip_prefix("use\t") {
+        r
+    } else {
+        return None;
+    };
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return Some(String::new());
+    }
+    Some(rest.trim_matches('`').to_string())
+}
+
+/// Detect `SELECT DATABASE()` (with optional whitespace variations).
+fn is_select_database(sql_lower: &str) -> bool {
+    let compact: String = sql_lower
+        .trim()
+        .trim_end_matches(';')
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    compact.starts_with("selectdatabase()") && !compact.contains("from")
+}
+
+/// Detect `SELECT @@session.auto_increment_increment, @@character_set_client, ...`
+/// (no FROM clause) and return the column labels. Common MySQL init query.
+fn try_parse_session_var_select(sql_lower: &str) -> Option<Vec<String>> {
+    let trimmed = sql_lower.trim().trim_end_matches(';');
+    let rest = trimmed.strip_prefix("select")?.trim_start();
+    if rest.contains(" from ") {
+        return None;
+    }
+    let main = if let Some(i) = rest.find(" limit ") {
+        &rest[..i]
+    } else {
+        rest
+    };
+    if !main.contains("@@") {
+        return None;
+    }
+    let parts: Vec<&str> = main.split(',').map(str::trim).collect();
+    if parts.iter().any(|p| !p.contains("@@")) {
+        return None;
+    }
+    Some(
+        parts
+            .iter()
+            .map(|p| {
+                let t = p.trim();
+                let lower = t.to_lowercase();
+                if let Some(pos) = lower.rfind(" as ") {
+                    t[pos + 4..].trim().to_string()
+                } else {
+                    t.to_string()
+                }
+            })
+            .collect(),
+    )
+}
+
+// ── HandshakeResponse / SSLRequest parsing ────────────────────────────────────
+
+/// SSLRequest is a 32-byte packet with CLIENT_SSL set but no username.
+/// If we mistake it for a login and send OK, the client starts TLS while
+/// we expect MySQL commands — both sides block indefinitely.
+fn is_ssl_request(payload: &[u8]) -> bool {
+    if payload.len() != 32 {
+        return false;
+    }
+    let caps = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    (caps & CLIENT_SSL) != 0
+}
 
 /// Extracts (username, optional database) from a MySQL 4.1+ HandshakeResponse packet.
 fn parse_handshake_response(payload: &[u8]) -> (String, Option<String>) {

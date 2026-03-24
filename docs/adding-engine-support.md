@@ -126,107 +126,123 @@ So persistence changes are **not** “because Postgres needs a JSON schema.” T
 
 Studio is the Next.js app under `ui/queryflux-studio/`. It does **not** run wire protocols; it calls the **Admin API** (`ADMIN_API_URL`, default `http://localhost:9000`) for clusters, groups, routing, and scripts.
 
-Today the **engine schema** is duplicated: forms use the static **`ENGINE_REGISTRY`** in TypeScript, while the proxy exposes the same shape at **`GET /admin/engine-registry`**. Keeping them aligned is manual until Studio loads descriptors from the API at runtime.
+Backend engines are registered in Studio through **`StudioEngineModule`** objects: one file per engine under **`lib/studio-engines/engines/`**, aggregated in **`lib/studio-engines/manifest.ts`**. That manifest drives **`ENGINE_REGISTRY`**, catalog slots for implemented backends, optional flat-form validation, engine-affinity dropdown entries, and extra **`findEngineByType`** aliases.
+
+The proxy still exposes descriptors at **`GET /admin/engine-registry`**. Studio does **not** load that at runtime yet, so **Rust `descriptor()` and each studio module’s `descriptor` field must stay aligned by hand** (same `engineKey`, `configFields` keys, auth shapes, etc.). Shared TypeScript types live in **`lib/engine-registry-types.ts`**; **`lib/engine-registry.ts`** only re-exports helpers and builds **`ENGINE_REGISTRY`** from the manifest.
 
 ### Where users see engines
 
 | User action | UI entrypoint | What must know your engine |
 |-------------|---------------|----------------------------|
-| Create cluster | **Clusters → Add cluster** (`components/add-cluster-dialog.tsx`) | `ENGINE_CATALOG` (picker) + `findEngineDescriptor` + `validateClusterConfig` / `validateEngineSpecific` + `toUpsertBody` |
-| Edit cluster | **Clusters** grid → cluster card → Edit (`app/clusters/clusters-grid.tsx`) | Same + `mergeClusterConfigFromFlat` / `buildClusterUpsertFromForm` + `EngineClusterConfig` |
-| View config | Cluster detail / engine config view in `clusters-grid.tsx` | `findEngineDescriptor` for labels; unknown key shows “add to engine registry” warning |
-| Group strategy **engine affinity** | **Engines →** group dialog → strategy (`components/group-form-dialog.tsx`) | `ENGINE_AFFINITY_OPTIONS` in `lib/cluster-group-strategy.ts` (allowed `preference` values) |
-| Live utilization cards | **Engines (Groups)** page (`app/engines/page.tsx`) | `findEngineByType` + **`ENGINE_TYPE_ALIASES`** in `engine-catalog.ts` so Rust `engine_type` debug strings map to catalog rows for icons |
+| Create cluster | **Clusters → Add cluster** (`components/add-cluster-dialog.tsx`) | Expanded **`ENGINE_CATALOG`** (includes studio slots) + **`findEngineDescriptor`** + **`validateClusterConfig`** / **`validateEngineSpecific`** + **`toUpsertBody`** |
+| Edit cluster | **Clusters** grid → cluster card → Edit (`app/clusters/clusters-grid.tsx`) | Same + **`mergeClusterConfigFromFlat`** / **`buildClusterUpsertFromForm`** + **`EngineClusterConfig`** |
+| View config | Cluster detail / engine config view in `clusters-grid.tsx` | **`findEngineDescriptor`** for labels; unknown key shows “add to engine registry” warning |
+| Group strategy **engine affinity** | **Engines →** group dialog → strategy (`components/group-form-dialog.tsx`) | **`ENGINE_AFFINITY_OPTIONS`** is built by **`buildEngineAffinityOptionsFromManifest()`** from each module’s **`engineAffinity`** field (omit label override, or set **`engineAffinity: false`** to exclude, e.g. Athena). |
+| Live utilization cards | **Engines (Groups)** page (`app/engines/page.tsx`) | **`findEngineByType`**; studio modules contribute aliases via **`extraTypeAliases`** (merged with static dialect aliases in **`components/engine-catalog.ts`**) |
 
-### 1. Engine registry (required for create/edit/validation)
+### 1. Studio engine module (primary registration)
 
-**File:** `ui/queryflux-studio/lib/engine-registry.ts`
+**Types:** `ui/queryflux-studio/lib/studio-engines/types.ts` — **`StudioEngineModule`**.
 
-- Append an **`EngineDescriptor`** to **`ENGINE_REGISTRY`** with the same **`engineKey`**, **`connectionType`**, **`supportedAuth`**, and **`configFields`** as Rust’s `EngineDescriptor` (`ConfigField.key` strings must match, including dotted paths like `auth.username`).
-- Extend **`ConnectionType`** / **`AuthType`** unions if Rust added a new variant.
-- **`findEngineDescriptor`** — No code change; it searches `ENGINE_REGISTRY` by `engineKey` (and normalizes case).
-- **`validateClusterConfig(clusterName, engineKey, payload, options?)`** — Add branches if your engine needs schema checks beyond generic “required fields from descriptor” (see existing patterns).
-- **`listImplementedEngines()`** / **`isClusterOnboardingSelectable`** — Driven by `implemented: true` on the descriptor and catalog entries; ensure catalog and registry agree.
+**Per engine:** `ui/queryflux-studio/lib/studio-engines/engines/<engine>.ts`
 
-### 2. Add-cluster wizard catalog (required for “pick engine” UX)
+Export a constant (e.g. **`trinoStudioEngine`**) with:
+
+- **`descriptor`** — Full **`EngineDescriptor`** (must match Rust: **`engineKey`**, **`connectionType`**, **`supportedAuth`**, **`configFields`**, **`implemented`**, branding **`hex`**, etc.). Extend **`ConnectionType`** / **`AuthType`** in **`lib/engine-registry-types.ts`** if Rust added a variant.
+- **`catalog`** — **`category`**, **`simpleIconSlug`**, **`catalogDescription`** for the engines grid / picker (display name and **`supported`** come from the descriptor when the catalog is expanded).
+- **`validateFlat`** (optional) — Cross-field checks before save (e.g. Trino basic vs bearer). Dispatched by **`validateEngineSpecific`** in **`lib/studio-engines/validate-flat.ts`** (re-exported from **`lib/cluster-persist-form.ts`**).
+- **`customFormId`** (optional) — String key; must match an entry in **`components/cluster-config/studio-engine-forms.tsx`** if the generic **`GenericEngineClusterConfig`** is not enough.
+- **`engineAffinity`** (optional) — **`false`** to omit from affinity, or **`{ label?: string }`** for a custom dropdown label (default label is **`displayName`**).
+- **`extraTypeAliases`** (optional) — Map of normalized API/type strings → canonical **`EngineDef.name`** for **`findEngineByType`** (e.g. alternate spellings).
+
+**Manifest:** `ui/queryflux-studio/lib/studio-engines/manifest.ts`
+
+- Import the new module and append it to **`STUDIO_ENGINE_MODULES`** (order affects **`ENGINE_AFFINITY_OPTIONS`** and registry iteration; catalog **card order** is separate — see below).
+
+**Derived registry:** `ui/queryflux-studio/lib/engine-registry.ts`
+
+- **`ENGINE_REGISTRY`** is **`STUDIO_ENGINE_MODULES.map((m) => m.descriptor)`**. Do not duplicate descriptor arrays here.
+- **`findEngineDescriptor`**, **`implementedEngines`**, **`isClusterOnboardingSelectable`**, **`validateClusterConfig`** — unchanged behavior; **`validateClusterConfig`** still uses generic required-field checks from **`configFields`** unless you extend the Rust/TS contract.
+
+### 2. Catalog layout (picker order and dialect-only rows)
 
 **File:** `ui/queryflux-studio/components/engine-catalog.ts`
 
-- Add an **`EngineDef`** row: **`name`**, **`simpleIconSlug`** (or `null` for initials fallback), **`hex`**, **`category`**, **`description`**, **`engineKey`** (same string as YAML/API), **`supported: true`** when the adapter ships.
-- **`isClusterOnboardingSelectable`** (in `engine-registry.ts`) requires `supported && engineKey` and a matching implemented descriptor — all three must line up.
-- **`ENGINE_TYPE_ALIASES`** — If the **live** `/admin/clusters` snapshot returns a new Rust `EngineType` debug string (e.g. `MyEngine`), add a lowercase alias → **`EngineDef.name`** so **Engines** page cluster rows resolve icons via `findEngineByType`.
+- Implemented backends appear as **studio slots**: **`{ k: "studio", engineKey: "<same key as descriptor>" }`** inside **`ENGINE_CATALOG_SLOTS`**, interleaved with static **`EngineDef`** rows (dialects with **`engineKey: null`**).
+- At runtime, **`expandCatalog`** replaces each studio slot with **`studioModuleToEngineDef`** from **`lib/studio-engines/catalog.ts`**.
+- Static **`STATIC_ENGINE_TYPE_ALIASES`** remains for dialects without a studio module; **`buildStudioTypeAliases()`** merges in per-module aliases and the lowercase **`engineKey`** → **`displayName`** mapping.
+
+**`isClusterOnboardingSelectable`** still requires a catalog row with **`supported`** and **`engineKey`**; for studio-backed engines, **`supported`** is **`descriptor.implemented`** after expansion.
 
 ### 3. Cluster config forms
 
 **Router:** `ui/queryflux-studio/components/cluster-config/engine-cluster-config.tsx`
 
-- Default: **`GenericEngineClusterConfig`** renders fields from the descriptor’s `configFields`.
-- Custom panel: add `if (engineKey === "myEngine") return <MyEngineClusterConfig … />` and a sibling file under `components/cluster-config/` (see `trino-cluster-config.tsx`, `athena-cluster-config.tsx`, …).
+- Resolves **`getStudioEngineModule(engineKey)`**; if **`customFormId`** is set and **`STUDIO_CUSTOM_CLUSTER_FORMS[id]`** exists, renders that component; otherwise **`GenericEngineClusterConfig`** (descriptor **`configFields`**).
 
-**Dedicated components (reference only):** `trino-cluster-config.tsx`, `starrocks-cluster-config.tsx`, `athena-cluster-config.tsx`, `generic-engine-cluster-config.tsx`, `config-field-row.tsx`.
+**Custom form registration:** `ui/queryflux-studio/components/cluster-config/studio-engine-forms.tsx` — map **`customFormId`** → component (see Trino / StarRocks / Athena).
+
+**Reference components:** `trino-cluster-config.tsx`, `starrocks-cluster-config.tsx`, `athena-cluster-config.tsx`, `generic-engine-cluster-config.tsx`, `config-field-row.tsx`.
 
 ### 4. Persisted JSON ↔ flat form (create + edit save path)
 
 **File:** `ui/queryflux-studio/lib/cluster-persist-form.ts`
 
-- **`MANAGED_CONFIG_JSON_KEYS`** — Include any new top-level keys inside `cluster_configs.config` JSON that edit mode should overwrite or clear when the user empties a field.
-- **`persistedClusterConfigToFlat`** — Seed flat state from DB (camelCase JSON keys like `authType`, `authUsername`, …).
-- **`flatToPersistedConfig`** — New-cluster path from add-cluster dialog.
-- **`mergeClusterConfigFromFlat`** — Edit path: merge onto existing `config` without dropping unknown keys.
-- **`buildValidateShape`** — Build the nested object passed into **`validateClusterConfig`** (must include `endpoint`, `auth`, `tls`, etc. as your engine expects).
-- **`validateEngineSpecific(engineKey, flat)`** — Cross-field rules (e.g. “basic auth requires username+password”) before PUT/PATCH.
+- Still shared across engines. If **`cluster_configs.config`** gains **new top-level JSON keys**, update:
+  - **`MANAGED_CONFIG_JSON_KEYS`**
+  - **`persistedClusterConfigToFlat`**, **`flatToPersistedConfig`**, **`mergeClusterConfigFromFlat`**
+  - **`buildValidateShape`** (shape expected by **`validateClusterConfig`**)
+- **`validateEngineSpecific`** is implemented in **`lib/studio-engines/validate-flat.ts`** (per-module **`validateFlat`**); this file re-exports it for call sites.
 
 ### 5. Clusters page (grid, dialog, validation)
 
 **File:** `ui/queryflux-studio/app/clusters/clusters-grid.tsx`
 
-- Uses **`findEngineDescriptor`**, **`validateClusterConfig`**, **`validateEngineSpecific`**, **`buildValidateShape`**, **`skipImplementedCheck`** for editing clusters that are in Postgres but not yet marked implemented in TS (if you use that flag during rollout).
-- No per-engine switch here beyond what **`EngineClusterConfig`** does.
+- Uses **`findEngineDescriptor`**, **`validateClusterConfig`**, **`validateEngineSpecific`**, **`buildValidateShape`**, **`skipImplementedCheck`** where needed. No per-engine branches beyond **`EngineClusterConfig`**.
 
 **File:** `ui/queryflux-studio/components/add-cluster-dialog.tsx`
 
-- Wires catalog → descriptor → `EngineClusterConfig` → `toUpsertBody` → `upsertClusterConfig` API.
+- Wires catalog → descriptor → **`EngineClusterConfig`** → **`toUpsertBody`** → **`upsertClusterConfig`**.
 
 ### 6. Group strategy (engine affinity)
 
 **File:** `ui/queryflux-studio/lib/cluster-group-strategy.ts`
 
-- **`ENGINE_AFFINITY_OPTIONS`** — If operators can target your backend via **`engineAffinity`** strategy (`preference` list of engine keys), add `{ value: "<engineKey>", label: "…" }`. **`buildStrategyPayload` / validation** only allow keys in this list (see **`ENGINE_SET`** and parse errors).
-
-If the new engine is never used in `engineAffinity`, you can skip this.
+- **`ENGINE_AFFINITY_OPTIONS`** = **`buildEngineAffinityOptionsFromManifest()`**. To exclude an engine, set **`engineAffinity: false`** on its **`StudioEngineModule`**. To customize the label, use **`engineAffinity: { label: "…" }`**.
 
 ### 7. Display helpers
 
 **File:** `ui/queryflux-studio/lib/merge-clusters-display.ts`
 
-- Merges live + persisted cluster rows; uses **`findEngineDescriptor(p.engineKey)`** for display name. Registry entry must exist.
+- Uses **`findEngineDescriptor(p.engineKey)`**; the descriptor must exist in the manifest.
 
 **File:** `ui/queryflux-studio/components/ui-helpers.tsx` (**`EngineBadge`**)
 
-- Uses **`ENGINE_CATALOG`** by **display name** for some badges; catalog entry should match.
+- Uses **`ENGINE_CATALOG`**; studio-expanded rows must match **`displayName`** where badges key off names.
 
 **File:** `ui/queryflux-studio/components/engine-icon.tsx`
 
-- Consumes **`EngineDef`** from the catalog (simple-icons path or initials). No change if the catalog row is complete.
+- Consumes **`EngineDef`** (re-exported from **`engine-catalog.ts`**; types in **`lib/engine-catalog-types.ts`**).
 
 ### 8. API types (usually unchanged)
 
 **File:** `ui/queryflux-studio/lib/api-types.ts`
 
-- **`ClusterConfigRecord`** / **`UpsertClusterConfig`** use generic **`config: Record<string, unknown>`** and **`engineKey: string`** — no new TypeScript types are required per engine unless you add strongly typed helpers.
+- **`ClusterConfigRecord`** / **`UpsertClusterConfig`** stay generic unless you add typed helpers.
 
 ### 9. Optional: fetch registry from the proxy
 
-To remove duplication, a follow-up could load **`GET /admin/engine-registry`** in a server component or hook and pass descriptors into add-cluster / edit forms. Until then, **Rust `descriptor()` and `ENGINE_REGISTRY` must stay in sync by hand.**
+A follow-up could load **`GET /admin/engine-registry`** at runtime and hydrate forms from the API. Until then, keep **Rust `descriptor()`** and **`StudioEngineModule.descriptor`** in sync manually.
 
 ### Studio checklist (copy-paste)
 
-- [ ] `lib/engine-registry.ts` — `ENGINE_REGISTRY` entry, auth/connection unions, `validateClusterConfig` if needed  
-- [ ] `components/engine-catalog.ts` — `EngineDef`, `supported` + `engineKey`, optional **`ENGINE_TYPE_ALIASES`** for live `engine_type` strings  
-- [ ] `components/cluster-config/engine-cluster-config.tsx` — custom form branch if not generic-only  
-- [ ] `lib/cluster-persist-form.ts` — managed keys, flat ↔ JSON, `buildValidateShape`, `validateEngineSpecific`  
-- [ ] `lib/cluster-group-strategy.ts` — `ENGINE_AFFINITY_OPTIONS` if engine affinity should list this engine  
-- [ ] Smoke-test: Add cluster → save → edit → save; create/edit group with engine affinity if applicable  
+- [ ] **`lib/studio-engines/engines/<engine>.ts`** — **`StudioEngineModule`** (`descriptor` aligned with Rust, **`catalog`**, optional **`validateFlat`**, **`customFormId`**, **`engineAffinity`**, **`extraTypeAliases`**)  
+- [ ] **`lib/studio-engines/manifest.ts`** — import + append to **`STUDIO_ENGINE_MODULES`**  
+- [ ] **`lib/engine-registry-types.ts`** — extend **`ConnectionType`** / **`AuthType`** if needed  
+- [ ] **`components/engine-catalog.ts`** — add **`{ k: "studio", engineKey: "…" }`** to **`ENGINE_CATALOG_SLOTS`** at the desired position  
+- [ ] **`components/cluster-config/studio-engine-forms.tsx`** — register component if **`customFormId`** is set  
+- [ ] **`lib/cluster-persist-form.ts`** — only if new persisted **`config`** JSON keys (managed keys + flat ↔ JSON + **`buildValidateShape`**)  
+- [ ] Smoke-test: Add cluster → save → edit → save; Engines page icons; group **engine affinity** if applicable  
 
 ---
 
@@ -266,12 +282,13 @@ Studio does **not** implement wire protocols; it only talks to the **Admin API**
 
 **Studio (UI)**
 
-- [ ] `lib/engine-registry.ts` — `ENGINE_REGISTRY`, unions, `validateClusterConfig` as needed  
-- [ ] `components/engine-catalog.ts` — `EngineDef` + `ENGINE_TYPE_ALIASES` for live metrics icons  
-- [ ] `components/cluster-config/engine-cluster-config.tsx` — custom form or generic-only  
-- [ ] `lib/cluster-persist-form.ts` — JSON ↔ flat, `validateEngineSpecific`, `buildValidateShape`  
-- [ ] `lib/cluster-group-strategy.ts` — `ENGINE_AFFINITY_OPTIONS` if strategy should mention the engine  
-- [ ] Verify add-cluster + edit-cluster flows and Engines page cluster icons  
+- [ ] `lib/studio-engines/engines/<engine>.ts` — `StudioEngineModule` (descriptor + catalog + options)  
+- [ ] `lib/studio-engines/manifest.ts` — register module in `STUDIO_ENGINE_MODULES`  
+- [ ] `lib/engine-registry-types.ts` — `ConnectionType` / `AuthType` if Rust added variants  
+- [ ] `components/engine-catalog.ts` — `{ k: "studio", engineKey }` slot in `ENGINE_CATALOG_SLOTS`  
+- [ ] `components/cluster-config/studio-engine-forms.tsx` — only if using `customFormId`  
+- [ ] `lib/cluster-persist-form.ts` — only if new `config` JSON keys need round-tripping  
+- [ ] Verify add-cluster + edit-cluster, Engines page icons / `findEngineByType`, and engine affinity if used  
 
 **New client protocol**
 

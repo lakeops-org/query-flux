@@ -34,16 +34,16 @@ services:
       - test_net
 
   starrocks:
-    image: starrocks/allin1-ubuntu:latest
+    image: starrocks/allin1-ubuntu:3.4.1
     ports:
       - "19030:9030"   # MySQL wire (FE query port)
       - "18030:8030"   # FE HTTP API (health check)
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8030/api/health"]
+      test: ["CMD-SHELL", "mysql -P 9030 -h 127.0.0.1 -u root --skip-column-names -e 'SHOW BACKENDS' 2>/dev/null | grep -q true"]
       interval: 15s
       timeout: 10s
-      retries: 20
-      start_period: 60s
+      retries: 40
+      start_period: 120s
     networks:
       - test_net
 

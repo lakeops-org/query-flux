@@ -353,6 +353,7 @@ pub async fn execute_to_sink(
     let tgt_dialect = adapter.engine_type().dialect();
     let engine_type = adapter.engine_type();
     let original_sql = sql.clone();
+    let start = Instant::now();
     let translated = match state
         .translation
         .maybe_translate(
@@ -367,7 +368,31 @@ pub async fn execute_to_sink(
         Ok(t) => t,
         Err(e) => {
             let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
-            return sink.on_error(&e.to_string()).await;
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            let err_msg = e.to_string();
+            state.record_query(
+                &query_id,
+                None,
+                &original_sql,
+                &session,
+                &protocol,
+                &group,
+                &cluster_name,
+                cluster_group_config_id,
+                cluster_config_id,
+                engine_type,
+                src_dialect.clone(),
+                tgt_dialect.clone(),
+                false,
+                None,
+                QueryStatus::Failed,
+                elapsed_ms,
+                None,
+                Some(err_msg.clone()),
+                None,
+                None,
+            );
+            return sink.on_error(&err_msg).await;
         }
     };
     let was_translated = translated != original_sql;
@@ -379,7 +404,6 @@ pub async fn execute_to_sink(
         .await;
 
     // 3. Execute as Arrow stream.
-    let start = Instant::now();
     let mut stream = match adapter
         .execute_as_arrow(&translated, &session, &credentials)
         .await
@@ -387,7 +411,35 @@ pub async fn execute_to_sink(
         Ok(s) => s,
         Err(e) => {
             let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
-            return sink.on_error(&e.to_string()).await;
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            let err_msg = e.to_string();
+            state.record_query(
+                &query_id,
+                None,
+                &original_sql,
+                &session,
+                &protocol,
+                &group,
+                &cluster_name,
+                cluster_group_config_id,
+                cluster_config_id,
+                engine_type,
+                src_dialect.clone(),
+                tgt_dialect.clone(),
+                was_translated,
+                if was_translated {
+                    Some(translated.clone())
+                } else {
+                    None
+                },
+                QueryStatus::Failed,
+                elapsed_ms,
+                None,
+                Some(err_msg.clone()),
+                None,
+                None,
+            );
+            return sink.on_error(&err_msg).await;
         }
     };
 

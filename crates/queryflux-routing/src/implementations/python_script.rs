@@ -136,6 +136,7 @@ fn build_routing_ctx<'py>(
             schema,
             user,
             session_vars,
+            ..
         } => {
             ctx.set_item(
                 "headers",
