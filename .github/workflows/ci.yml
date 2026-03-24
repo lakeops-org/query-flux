@@ -50,12 +50,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # Exclude queryflux-bench: it duplicates linking the main binary stack; benchmark.yml builds it.
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --exclude queryflux-bench -- -D warnings
 
       # Same as `make test`: PyO3 needs the venv; e2e runs separately with Docker.
       - name: Test (workspace excluding e2e)
-        run: cargo test --tests --workspace --exclude queryflux-e2e-tests
+        run: cargo test --tests --workspace --exclude queryflux-e2e-tests --exclude queryflux-bench
 
       - name: Start e2e Docker stack
         run: docker compose -f docker/docker-compose.test.yml --project-directory . up -d --wait trino starrocks sentinel

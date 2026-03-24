@@ -14,3 +14,6 @@ axum = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+async-trait = { workspace = true }
+mysql_async = { workspace = true }
+opensrv-mysql = { version = "0.7", default-features = false }
