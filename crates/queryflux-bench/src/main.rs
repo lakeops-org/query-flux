@@ -36,10 +36,7 @@ async fn main() -> anyhow::Result<()> {
     let trino_entries = bench_trino().await?;
     let starrocks_entries = bench_starrocks().await?;
 
-    let combined: Vec<Value> = trino_entries
-        .into_iter()
-        .chain(starrocks_entries)
-        .collect();
+    let combined: Vec<Value> = trino_entries.into_iter().chain(starrocks_entries).collect();
     println!("{}", serde_json::to_string_pretty(&json!(combined))?);
 
     Ok(())
@@ -218,9 +215,7 @@ routingFallback: bench-sr-group
 
 fn mysql_opts_mock(url: &str) -> anyhow::Result<Opts> {
     let base = Opts::from_url(url).map_err(|e| anyhow::anyhow!("invalid mysql url: {e}"))?;
-    let opts = OptsBuilder::from_opts(base)
-        .prefer_socket(false)
-        .into();
+    let opts = OptsBuilder::from_opts(base).prefer_socket(false).into();
     Ok(opts)
 }
 
