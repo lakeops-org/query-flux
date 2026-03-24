@@ -13,7 +13,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use queryflux_core::{
     catalog::TableSchema,
-    config::ClusterAuth,
+    config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
     query::{
         BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryEngineStats,
@@ -66,6 +66,32 @@ impl TrinoAdapter {
             http_client,
             auth,
         }
+    }
+
+    /// Build from persisted / YAML [`ClusterConfig`] (Trino-specific field usage).
+    pub fn try_from_cluster_config(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        cfg: &ClusterConfig,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': missing endpoint"
+            ))
+        })?;
+        let tls_skip = cfg
+            .tls
+            .as_ref()
+            .map(|t| t.insecure_skip_verify)
+            .unwrap_or(false);
+        Ok(Self::new(
+            cluster_name,
+            group_name,
+            endpoint,
+            tls_skip,
+            cfg.auth.clone(),
+        ))
     }
 
     /// Apply cluster-level auth credentials to a request builder.

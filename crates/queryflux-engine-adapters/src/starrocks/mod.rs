@@ -11,7 +11,7 @@ use futures::stream;
 use mysql_async::{consts::ColumnType, prelude::Queryable, Conn, Opts, OptsBuilder, Row, Value};
 use queryflux_core::{
     catalog::TableSchema,
-    config::ClusterAuth,
+    config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
     query::{
         BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
@@ -66,6 +66,31 @@ impl StarRocksAdapter {
             group_name,
             opts,
             endpoint,
+        })
+    }
+
+    /// Build from persisted / YAML [`ClusterConfig`].
+    pub fn try_from_cluster_config(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        cfg: &ClusterConfig,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': missing endpoint"
+            ))
+        })?;
+        Self::new(
+            cluster_name,
+            group_name,
+            endpoint,
+            cfg.auth.clone(),
+        )
+        .map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': failed to create StarRocks adapter ({e})"
+            ))
         })
     }
 

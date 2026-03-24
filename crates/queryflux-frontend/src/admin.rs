@@ -329,6 +329,7 @@ pub struct AdminFrontend {
 }
 
 impl AdminFrontend {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         prometheus: Arc<PrometheusMetrics>,
         live: Arc<tokio::sync::RwLock<LiveConfig>>,

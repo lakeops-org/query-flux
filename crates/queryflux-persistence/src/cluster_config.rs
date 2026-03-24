@@ -111,18 +111,13 @@ pub struct UpsertClusterGroupConfig {
 // Conversion helpers: core config types → Upsert types (for YAML seeding)
 // ---------------------------------------------------------------------------
 
-use queryflux_core::config::{ClusterAuth, ClusterConfig, ClusterGroupConfig, EngineConfig};
+use queryflux_core::config::{ClusterAuth, ClusterConfig, ClusterGroupConfig};
+use queryflux_core::engine_registry::{engine_key, parse_engine_key};
 
 impl UpsertClusterConfig {
     pub fn from_core(cfg: &ClusterConfig) -> Option<Self> {
-        let engine_key = match cfg.engine.as_ref()? {
-            EngineConfig::Trino => "trino",
-            EngineConfig::DuckDb => "duckDb",
-            EngineConfig::DuckDbHttp => "duckDbHttp",
-            EngineConfig::StarRocks => "starRocks",
-            EngineConfig::ClickHouse => "clickHouse",
-            EngineConfig::Athena => "athena",
-        };
+        let engine = cfg.engine.as_ref()?;
+        let engine_key = engine_key(engine);
 
         let mut config = serde_json::Map::new();
 
@@ -182,7 +177,7 @@ impl UpsertClusterConfig {
         }
 
         Some(Self {
-            engine_key: engine_key.to_string(),
+            engine_key: engine_key.to_owned(),
             enabled: cfg.enabled,
             max_running_queries: cfg.max_running_queries.map(|v| v as i64),
             config: serde_json::Value::Object(config),
@@ -219,19 +214,12 @@ impl ClusterConfigRecord {
         use queryflux_core::config::TlsConfig;
         use queryflux_core::error::QueryFluxError;
 
-        let engine = match self.engine_key.as_str() {
-            "trino" => EngineConfig::Trino,
-            "duckDb" => EngineConfig::DuckDb,
-            "duckDbHttp" => EngineConfig::DuckDbHttp,
-            "starRocks" => EngineConfig::StarRocks,
-            "clickHouse" => EngineConfig::ClickHouse,
-            "athena" => EngineConfig::Athena,
-            other => {
-                return Err(QueryFluxError::Engine(format!(
-                    "Unknown engine key in DB: '{other}'"
-                )))
-            }
-        };
+        let engine = parse_engine_key(&self.engine_key).map_err(|_| {
+            QueryFluxError::Engine(format!(
+                "Unknown engine key in DB: '{}'",
+                self.engine_key
+            ))
+        })?;
 
         // Helpers to extract typed values from the config JSON.
         let s = |key: &str| -> Option<String> {

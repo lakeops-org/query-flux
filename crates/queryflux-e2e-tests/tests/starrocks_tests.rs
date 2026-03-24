@@ -5,7 +5,7 @@
 use std::sync::OnceLock;
 
 use queryflux_e2e_tests::{
-    harness::{TestHarness, GROUP_DUCKDB, GROUP_STARROCKS, GROUP_TRINO},
+    harness::{TestHarness, GROUP_STARROCKS, GROUP_TRINO},
     trino_client::TrinoClient,
 };
 
@@ -68,39 +68,60 @@ async fn starrocks_select_multi_row() {
     assert_eq!(r.rows.len(), 3);
 }
 
+#[tokio::test]
+#[ignore = "requires StarRocks — run with: make test-e2e"]
+async fn starrocks_syntax_error_returns_error() {
+    require_group!(GROUP_STARROCKS);
+    let r = client()
+        .execute_on("THIS IS NOT VALID SQL FOR STARROCKS", GROUP_STARROCKS)
+        .await
+        .expect("query");
+    assert!(r.error.is_some(), "expected error for invalid SQL");
+}
+
+#[tokio::test]
+#[ignore = "requires StarRocks — run with: make test-e2e"]
+async fn starrocks_empty_result() {
+    require_group!(GROUP_STARROCKS);
+    let r = client()
+        .execute_on("SELECT 1 AS n WHERE 1 = 0", GROUP_STARROCKS)
+        .await
+        .expect("query");
+    assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
+    assert_eq!(r.rows.len(), 0);
+}
+
 // ---------------------------------------------------------------------------
 // Cross-engine routing
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore = "requires StarRocks — run with: make test-e2e"]
-async fn routing_same_sql_duckdb_and_starrocks() {
+#[ignore = "requires Trino + StarRocks — run with: make test-e2e"]
+async fn routing_same_sql_trino_and_starrocks() {
+    require_group!(GROUP_TRINO);
     require_group!(GROUP_STARROCKS);
     let c = client();
     let sql = "SELECT 1 + 1 AS result";
 
-    let duck = c.execute_on(sql, GROUP_DUCKDB).await.expect("duckdb");
+    let trino = c.execute_on(sql, GROUP_TRINO).await.expect("trino");
     let sr = c.execute_on(sql, GROUP_STARROCKS).await.expect("starrocks");
 
-    assert!(duck.error.is_none(), "duckdb error: {:?}", duck.error);
+    assert!(trino.error.is_none(), "trino error: {:?}", trino.error);
     assert!(sr.error.is_none(), "starrocks error: {:?}", sr.error);
-    assert_eq!(duck.rows.len(), 1);
+    assert_eq!(trino.rows.len(), 1);
     assert_eq!(sr.rows.len(), 1);
-    assert_eq!(
-        duck.rows[0][0], sr.rows[0][0],
-        "same SQL should return same value"
-    );
+    assert_eq!(trino.rows[0][0], sr.rows[0][0]);
 }
 
 #[tokio::test]
 #[ignore = "requires Trino + StarRocks — run with: make test-e2e"]
-async fn routing_all_three_engines() {
+async fn routing_literal_trino_and_starrocks() {
     require_group!(GROUP_TRINO);
     require_group!(GROUP_STARROCKS);
     let c = client();
     let sql = "SELECT 7 AS n";
 
-    for group in [GROUP_DUCKDB, GROUP_TRINO, GROUP_STARROCKS] {
+    for group in [GROUP_TRINO, GROUP_STARROCKS] {
         let r = c
             .execute_on(sql, group)
             .await

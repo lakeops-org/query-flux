@@ -28,6 +28,8 @@ pub struct ClusterState {
 }
 
 impl ClusterState {
+    /// Constructor mirrors persisted cluster row fields; arity tracks the struct.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cluster_name: ClusterName,
         group_name: ClusterGroupName,

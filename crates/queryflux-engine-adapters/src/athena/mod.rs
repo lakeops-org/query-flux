@@ -11,7 +11,7 @@ use aws_sdk_athena::types::{QueryExecutionState, ResultConfiguration, QueryExecu
 use futures::stream;
 use queryflux_core::{
     catalog::TableSchema,
-    config::ClusterAuth,
+    config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
     query::{BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult},
     session::SessionContext,
@@ -28,8 +28,7 @@ use queryflux_core::engine_registry::{
 /// Submits queries via `StartQueryExecution`, polls `GetQueryExecution` until complete,
 /// then pages through `GetQueryResults` and converts the response to Arrow RecordBatches.
 ///
-/// All non-Trino frontends (PostgresWire, MySqlWire, FlightSQL) go through `execute_as_arrow`.
-/// The Trino HTTP frontend is not supported for Athena.
+/// Sync engines use `execute_as_arrow` (Trino HTTP falls back to it when `supports_async` is false).
 ///
 /// Auth: set `auth.type: accessKey` for static credentials. When omitted the default
 /// AWS credential chain is used (env vars `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`,
@@ -122,7 +121,13 @@ impl AthenaAdapter {
             }
         };
 
-        let client = aws_sdk_athena::Client::new(&sdk_config);
+        let mut athena_builder = aws_sdk_athena::config::Builder::from(&sdk_config);
+        if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
+            if !endpoint.is_empty() {
+                athena_builder = athena_builder.endpoint_url(endpoint);
+            }
+        }
+        let client = aws_sdk_athena::Client::from_conf(athena_builder.build());
 
         Ok(Self {
             cluster_name,
@@ -132,6 +137,40 @@ impl AthenaAdapter {
             s3_output_location,
             workgroup: workgroup.unwrap_or_else(|| "primary".to_string()),
             catalog: catalog.unwrap_or_else(|| "AwsDataCatalog".to_string()),
+        })
+    }
+
+    /// Build from persisted / YAML [`ClusterConfig`].
+    pub async fn try_from_cluster_config(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        cfg: &ClusterConfig,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        let region = cfg.region.clone().ok_or_else(|| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': missing 'region' for Athena"
+            ))
+        })?;
+        let s3_output = cfg.s3_output_location.clone().ok_or_else(|| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': missing 's3OutputLocation' for Athena"
+            ))
+        })?;
+        Self::new(
+            cluster_name,
+            group_name,
+            region,
+            s3_output,
+            cfg.workgroup.clone(),
+            cfg.catalog.clone(),
+            cfg.auth.clone(),
+        )
+        .await
+        .map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': failed to create Athena adapter ({e})"
+            ))
         })
     }
 

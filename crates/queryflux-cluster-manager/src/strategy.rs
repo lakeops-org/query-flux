@@ -99,7 +99,7 @@ pub struct EngineAffinityStrategy {
 impl EngineAffinityStrategy {
     pub fn new(preference: Vec<EngineConfig>) -> Self {
         Self {
-            preference: preference.iter().map(engine_config_to_type).collect(),
+            preference: preference.iter().map(EngineType::from).collect(),
         }
     }
 }
@@ -214,13 +214,3 @@ pub fn strategy_from_config(
     }
 }
 
-fn engine_config_to_type(cfg: &EngineConfig) -> EngineType {
-    match cfg {
-        EngineConfig::Trino => EngineType::Trino,
-        EngineConfig::DuckDb => EngineType::DuckDb,
-        EngineConfig::DuckDbHttp => EngineType::DuckDbHttp,
-        EngineConfig::StarRocks => EngineType::StarRocks,
-        EngineConfig::ClickHouse => EngineType::ClickHouse,
-        EngineConfig::Athena => EngineType::Athena,
-    }
-}

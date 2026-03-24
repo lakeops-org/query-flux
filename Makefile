@@ -2,7 +2,7 @@ CARGO        := $(HOME)/.cargo/bin/cargo
 COMPOSE      := docker compose -f docker/docker-compose.yml --project-directory .
 COMPOSE_TEST := docker compose -f docker/docker-compose.test.yml --project-directory .
 
-.PHONY: dev stop logs build lint check test-e2e clean setup
+.PHONY: dev stop logs build lint clippy check test-e2e clean setup
 
 ## Create virtualenv and install Python dependencies (sqlglot etc.)
 setup:
@@ -39,7 +39,8 @@ build:
 	$(CARGO) build --release
 
 ## Run clippy lints (no external services needed).
-lint:
+lint: clippy
+clippy:
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
 ## Run unit/integration tests (no external services needed).
@@ -49,12 +50,9 @@ test:
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
 	$(CARGO) test --tests --workspace --exclude queryflux-e2e-tests
-	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
-	$(CARGO) test -p queryflux-e2e-tests --test duckdb_tests
 
 ## Run E2E tests. Spins up Trino + StarRocks + Lakekeeper via Docker.
-## DuckDB tests always run (embedded). Iceberg tests require all services.
+## Requires reachable engines; see docker/docker-compose.test.yml.
 test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
@@ -65,7 +63,6 @@ test-e2e:
 	STARROCKS_URL=mysql://root@localhost:19030 \
 	LAKEKEEPER_URL=http://localhost:18181 \
 	MINIO_ENDPOINT=localhost:19000 \
-	DUCKDB_HTTP_URL=http://localhost:19199 \
 	$(CARGO) test -p queryflux-e2e-tests --manifest-path Cargo.toml -- --include-ignored --nocapture
 	$(COMPOSE_TEST) down
 

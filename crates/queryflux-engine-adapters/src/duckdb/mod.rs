@@ -7,6 +7,7 @@ use duckdb::Connection;
 use futures::stream;
 use queryflux_core::{
     catalog::TableSchema,
+    config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
     query::{
         BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
@@ -62,6 +63,33 @@ impl DuckDbAdapter {
             cluster_name,
             group_name,
             conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
+    /// Build from persisted / YAML [`ClusterConfig`] (embedded path + optional MotherDuck bearer).
+    pub fn try_from_cluster_config(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        cfg: &ClusterConfig,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        let motherduck_token = cfg.auth.as_ref().and_then(|a| {
+            if let ClusterAuth::Bearer { token } = a {
+                Some(token.clone())
+            } else {
+                None
+            }
+        });
+        Self::new_with_token(
+            cluster_name,
+            group_name,
+            cfg.database_path.clone(),
+            motherduck_token,
+        )
+        .map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': failed to open DuckDB ({e})"
+            ))
         })
     }
 }

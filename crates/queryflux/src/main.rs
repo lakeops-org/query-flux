@@ -11,15 +11,7 @@ use queryflux_cluster_manager::{
     cluster_state::ClusterState, simple::SimpleClusterGroupManager, strategy::strategy_from_config,
 };
 use queryflux_config::{yaml::YamlFileConfigProvider, ConfigProvider};
-use queryflux_core::{
-    config::EngineConfig,
-    query::{ClusterGroupName, ClusterName, EngineType},
-};
-use queryflux_engine_adapters::athena::AthenaAdapter;
-use queryflux_engine_adapters::duckdb::http::DuckDbHttpAdapter;
-use queryflux_engine_adapters::duckdb::DuckDbAdapter;
-use queryflux_engine_adapters::starrocks::StarRocksAdapter;
-use queryflux_engine_adapters::trino::TrinoAdapter;
+use queryflux_core::query::{ClusterGroupName, ClusterName, EngineType};
 use queryflux_frontend::{
     admin::{AdminFrontend, RoutingConfigDto as AdminRoutingConfigDto, SecurityConfigDto as AdminSecurityConfigDto},
     flight_sql::FlightSqlFrontend,
@@ -49,6 +41,8 @@ use queryflux_routing::{
 };
 use queryflux_translation::TranslationService;
 use tracing::info;
+
+mod registered_engines;
 
 #[derive(Parser)]
 #[command(name = "queryflux", about = "Multi-engine SQL query proxy")]
@@ -251,13 +245,9 @@ async fn main() -> Result<()> {
     }
 
     // Build the engine registry up front so it can be used for validation and AppState.
-    let engine_registry = Arc::new(queryflux_core::engine_registry::EngineRegistry::new(vec![
-        TrinoAdapter::descriptor(),
-        DuckDbAdapter::descriptor(),
-        DuckDbHttpAdapter::descriptor(),
-        StarRocksAdapter::descriptor(),
-        AthenaAdapter::descriptor(),
-    ]));
+    let engine_registry = Arc::new(queryflux_core::engine_registry::EngineRegistry::new(
+        registered_engines::all_descriptors(),
+    ));
 
     // --- Validate cluster configs against the engine registry ---
     {
@@ -292,119 +282,15 @@ async fn main() -> Result<()> {
             continue;
         }
         let cluster_name = ClusterName(cluster_name_str.clone());
-        // Use a placeholder group for adapter construction (adapters don't use group_name at runtime).
         let placeholder_group = ClusterGroupName("_".to_string());
-        let engine = cluster_cfg.engine.as_ref().context(format!(
-            "cluster '{cluster_name_str}' missing required 'engine' field"
-        ))?;
-
-        let adapter: Arc<dyn queryflux_engine_adapters::EngineAdapterTrait> = match engine {
-            EngineConfig::Trino => {
-                let endpoint = cluster_cfg
-                    .endpoint
-                    .clone()
-                    .context(format!("cluster '{cluster_name_str}' missing endpoint"))?;
-                let tls_skip = cluster_cfg
-                    .tls
-                    .as_ref()
-                    .map(|t| t.insecure_skip_verify)
-                    .unwrap_or(false);
-                Arc::new(TrinoAdapter::new(
-                    cluster_name.clone(),
-                    placeholder_group,
-                    endpoint,
-                    tls_skip,
-                    cluster_cfg.auth.clone(),
-                ))
-            }
-            EngineConfig::DuckDb => {
-                // Extract bearer token for MotherDuck (md: connection strings).
-                let motherduck_token = cluster_cfg.auth.as_ref().and_then(|a| {
-                    if let queryflux_core::config::ClusterAuth::Bearer { token } = a {
-                        Some(token.clone())
-                    } else {
-                        None
-                    }
-                });
-                Arc::new(
-                    DuckDbAdapter::new_with_token(
-                        cluster_name.clone(),
-                        placeholder_group,
-                        cluster_cfg.database_path.clone(),
-                        motherduck_token,
-                    )
-                    .context(format!(
-                        "Failed to open DuckDB for cluster '{cluster_name_str}'"
-                    ))?,
-                )
-            }
-            EngineConfig::DuckDbHttp => {
-                let endpoint = cluster_cfg
-                    .endpoint
-                    .clone()
-                    .context(format!("cluster '{cluster_name_str}' missing endpoint"))?;
-                let tls_skip = cluster_cfg
-                    .tls
-                    .as_ref()
-                    .map(|t| t.insecure_skip_verify)
-                    .unwrap_or(false);
-                Arc::new(
-                    DuckDbHttpAdapter::new(
-                        cluster_name.clone(),
-                        placeholder_group,
-                        endpoint,
-                        tls_skip,
-                        cluster_cfg.auth.clone(),
-                    )
-                    .context(format!(
-                        "Failed to create DuckDB HTTP adapter for cluster '{cluster_name_str}'"
-                    ))?,
-                )
-            }
-            EngineConfig::StarRocks => {
-                let endpoint = cluster_cfg
-                    .endpoint
-                    .clone()
-                    .context(format!("cluster '{cluster_name_str}' missing endpoint"))?;
-                Arc::new(
-                    StarRocksAdapter::new(
-                        cluster_name.clone(),
-                        placeholder_group,
-                        endpoint,
-                        cluster_cfg.auth.clone(),
-                    )
-                    .context(format!(
-                        "Failed to create StarRocks adapter for cluster '{cluster_name_str}'"
-                    ))?,
-                )
-            }
-            EngineConfig::Athena => {
-                let region = cluster_cfg
-                    .region
-                    .clone()
-                    .context(format!("cluster '{cluster_name_str}' missing 'region' for Athena"))?;
-                let s3_output = cluster_cfg
-                    .s3_output_location
-                    .clone()
-                    .context(format!("cluster '{cluster_name_str}' missing 's3OutputLocation' for Athena"))?;
-                Arc::new(
-                    AthenaAdapter::new(
-                        cluster_name.clone(),
-                        placeholder_group,
-                        region,
-                        s3_output,
-                        cluster_cfg.workgroup.clone(),
-                        cluster_cfg.catalog.clone(),
-                        cluster_cfg.auth.clone(),
-                    )
-                    .await
-                    .context(format!(
-                        "Failed to create Athena adapter for cluster '{cluster_name_str}'"
-                    ))?,
-                )
-            }
-            other => anyhow::bail!("Engine {other:?} not yet implemented"),
-        };
+        let adapter = registered_engines::build_adapter(
+            cluster_name,
+            placeholder_group,
+            cluster_cfg,
+            cluster_name_str,
+        )
+        .await
+        .with_context(|| format!("Failed to build adapter for cluster '{cluster_name_str}'"))?;
 
         adapters.insert(cluster_name_str.clone(), adapter);
     }
@@ -443,7 +329,7 @@ async fn main() -> Result<()> {
                 "group '{group_name}' references unknown cluster '{member_name}'"
             ))?;
 
-            if adapters.get(member_name).is_none() {
+            if !adapters.contains_key(member_name.as_str()) {
                 // Cluster was disabled in Pass 1 — skip silently.
                 tracing::info!(group = %group_name, cluster = %member_name, "Skipping disabled cluster in group");
                 continue;
@@ -453,7 +339,7 @@ async fn main() -> Result<()> {
                 .engine
                 .as_ref()
                 .context(format!("cluster '{member_name}' missing engine"))?;
-            let engine_type = engine_type_from_config(engine);
+            let engine_type = EngineType::from(engine);
 
             let max_q = cluster_cfg
                 .max_running_queries
@@ -1027,17 +913,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn engine_type_from_config(cfg: &EngineConfig) -> EngineType {
-    match cfg {
-        EngineConfig::Trino => EngineType::Trino,
-        EngineConfig::DuckDb => EngineType::DuckDb,
-        EngineConfig::DuckDbHttp => EngineType::DuckDbHttp,
-        EngineConfig::StarRocks => EngineType::StarRocks,
-        EngineConfig::ClickHouse => EngineType::ClickHouse,
-        EngineConfig::Athena => EngineType::Athena,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Hot-reload helpers
 // ---------------------------------------------------------------------------
@@ -1067,7 +942,7 @@ fn health_targets_from_groups(
 ) -> Vec<(Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>, Arc<ClusterState>)> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
-    for (_g, (states, _)) in group_states {
+    for (states, _) in group_states.values() {
         for state in states {
             let name = state.cluster_name.0.clone();
             if seen.insert(name.clone()) {
@@ -1086,6 +961,7 @@ fn health_targets_from_groups(
 /// `cache` holds adapter instances from the previous generation. Adapters are reused
 /// only when the cluster's JSON-serialized config matches the previous reload; otherwise
 /// they are rebuilt (e.g. endpoint or password changed).
+#[allow(clippy::too_many_arguments)]
 async fn build_live_config(
     clusters: &std::collections::HashMap<String, queryflux_core::config::ClusterConfig>,
     cluster_groups: &std::collections::HashMap<
@@ -1109,7 +985,7 @@ async fn build_live_config(
             continue;
         }
         let cfg_json = serde_json::to_string(cluster_cfg).unwrap_or_default();
-        let reuse = cache.adapters.get(cluster_name_str).is_some()
+        let reuse = cache.adapters.contains_key(cluster_name_str.as_str())
             && cache
                 .config_json
                 .get(cluster_name_str)
@@ -1123,120 +999,17 @@ async fn build_live_config(
 
         let cluster_name = ClusterName(cluster_name_str.clone());
         let placeholder_group = ClusterGroupName("_".to_string());
-        let engine = match cluster_cfg.engine.as_ref() {
-            Some(e) => e,
-            None => {
-                tracing::warn!(cluster = %cluster_name_str, "Reload: cluster missing engine, skipping");
-                continue;
-            }
-        };
-        let adapter: Arc<dyn queryflux_engine_adapters::EngineAdapterTrait> = match engine {
-            EngineConfig::Trino => {
-                let endpoint = match cluster_cfg.endpoint.clone() {
-                    Some(e) => e,
-                    None => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: Trino cluster missing endpoint, skipping");
-                        continue;
-                    }
-                };
-                let tls_skip = cluster_cfg
-                    .tls
-                    .as_ref()
-                    .map(|t| t.insecure_skip_verify)
-                    .unwrap_or(false);
-                Arc::new(TrinoAdapter::new(
-                    cluster_name.clone(),
-                    placeholder_group,
-                    endpoint,
-                    tls_skip,
-                    cluster_cfg.auth.clone(),
-                ))
-            }
-            EngineConfig::DuckDb => {
-                let motherduck_token = cluster_cfg.auth.as_ref().and_then(|a| {
-                    if let queryflux_core::config::ClusterAuth::Bearer { token } = a {
-                        Some(token.clone())
-                    } else {
-                        None
-                    }
-                });
-                match DuckDbAdapter::new_with_token(cluster_name.clone(), placeholder_group, cluster_cfg.database_path.clone(), motherduck_token) {
-                    Ok(a) => Arc::new(a),
-                    Err(e) => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: DuckDB adapter failed: {e}");
-                        continue;
-                    }
-                }
-            }
-            EngineConfig::DuckDbHttp => {
-                let endpoint = match cluster_cfg.endpoint.clone() {
-                    Some(e) => e,
-                    None => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: DuckDB HTTP cluster missing endpoint, skipping");
-                        continue;
-                    }
-                };
-                let tls_skip = cluster_cfg.tls.as_ref().map(|t| t.insecure_skip_verify).unwrap_or(false);
-                match DuckDbHttpAdapter::new(cluster_name.clone(), placeholder_group, endpoint, tls_skip, cluster_cfg.auth.clone()) {
-                    Ok(a) => Arc::new(a),
-                    Err(e) => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: DuckDB HTTP adapter failed: {e}");
-                        continue;
-                    }
-                }
-            }
-            EngineConfig::StarRocks => {
-                let endpoint = match cluster_cfg.endpoint.clone() {
-                    Some(e) => e,
-                    None => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: StarRocks cluster missing endpoint, skipping");
-                        continue;
-                    }
-                };
-                match StarRocksAdapter::new(cluster_name.clone(), placeholder_group, endpoint, cluster_cfg.auth.clone()) {
-                    Ok(a) => Arc::new(a),
-                    Err(e) => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: StarRocks adapter failed: {e}");
-                        continue;
-                    }
-                }
-            }
-            EngineConfig::Athena => {
-                let region = match cluster_cfg.region.clone() {
-                    Some(r) => r,
-                    None => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: Athena cluster missing region, skipping");
-                        continue;
-                    }
-                };
-                let s3_output = match cluster_cfg.s3_output_location.clone() {
-                    Some(s) => s,
-                    None => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: Athena cluster missing s3OutputLocation, skipping");
-                        continue;
-                    }
-                };
-                let athena = match AthenaAdapter::new(
-                    cluster_name.clone(),
-                    placeholder_group,
-                    region,
-                    s3_output,
-                    cluster_cfg.workgroup.clone(),
-                    cluster_cfg.catalog.clone(),
-                    cluster_cfg.auth.clone(),
-                )
-                .await
-                {
-                    Ok(a) => a,
-                    Err(e) => {
-                        tracing::warn!(cluster = %cluster_name_str, "Reload: Athena adapter failed: {e}");
-                        continue;
-                    }
-                };
-                Arc::new(athena)
-            }
-            other => {
-                tracing::warn!(cluster = %cluster_name_str, "Reload: engine {other:?} not implemented, skipping");
+        let adapter = match registered_engines::build_adapter(
+            cluster_name,
+            placeholder_group,
+            cluster_cfg,
+            cluster_name_str,
+        )
+        .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(cluster = %cluster_name_str, "Reload: adapter build failed: {e:#}");
                 continue;
             }
         };
@@ -1277,7 +1050,7 @@ async fn build_live_config(
                     continue;
                 }
             };
-            if cache.adapters.get(member_name).is_none() {
+            if !cache.adapters.contains_key(member_name.as_str()) {
                 tracing::info!(group = %group_name, cluster = %member_name, "Reload: skipping disabled/missing cluster in group");
                 continue;
             }
@@ -1285,7 +1058,7 @@ async fn build_live_config(
                 Some(e) => e,
                 None => continue,
             };
-            let engine_type = engine_type_from_config(engine);
+            let engine_type = EngineType::from(engine);
             let max_q = cluster_cfg
                 .max_running_queries
                 .unwrap_or(group_config.max_running_queries);

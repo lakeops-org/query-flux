@@ -11,6 +11,7 @@
 use serde::Serialize;
 
 use crate::config::{ClusterAuth, ClusterConfig, EngineConfig};
+use crate::query::EngineType;
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -247,5 +248,31 @@ pub fn engine_key(engine: &EngineConfig) -> &'static str {
         EngineConfig::StarRocks => "starRocks",
         EngineConfig::ClickHouse => "clickHouse",
         EngineConfig::Athena => "athena",
+    }
+}
+
+/// Inverse of [`engine_key`]. Used when loading `engine_key` from Postgres / API.
+pub fn parse_engine_key(s: &str) -> Result<EngineConfig, String> {
+    match s {
+        "trino" => Ok(EngineConfig::Trino),
+        "duckDb" => Ok(EngineConfig::DuckDb),
+        "duckDbHttp" => Ok(EngineConfig::DuckDbHttp),
+        "starRocks" => Ok(EngineConfig::StarRocks),
+        "clickHouse" => Ok(EngineConfig::ClickHouse),
+        "athena" => Ok(EngineConfig::Athena),
+        other => Err(format!("Unknown engine key: '{other}'")),
+    }
+}
+
+impl From<&EngineConfig> for EngineType {
+    fn from(cfg: &EngineConfig) -> Self {
+        match cfg {
+            EngineConfig::Trino => EngineType::Trino,
+            EngineConfig::DuckDb => EngineType::DuckDb,
+            EngineConfig::DuckDbHttp => EngineType::DuckDbHttp,
+            EngineConfig::StarRocks => EngineType::StarRocks,
+            EngineConfig::ClickHouse => EngineType::ClickHouse,
+            EngineConfig::Athena => EngineType::Athena,
+        }
     }
 }

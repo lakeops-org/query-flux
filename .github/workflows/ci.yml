@@ -14,6 +14,7 @@ env:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -31,12 +32,41 @@ jobs:
         with:
           cache-on-failure: true
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python venv (sqlglot / PyO3)
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+          echo "PYO3_PYTHON=${GITHUB_WORKSPACE}/.venv/bin/python3" >> "$GITHUB_ENV"
+          echo "PYTHONPATH=$(.venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      # No separate `cargo build`: clippy already compiled the workspace; tests reuse incremental artifacts.
-      - name: Test
-        run: cargo test --workspace
+      # Same as `make test`: PyO3 needs the venv; e2e runs separately with Docker.
+      - name: Test (workspace excluding e2e)
+        run: cargo test --tests --workspace --exclude queryflux-e2e-tests
+
+      - name: Start e2e Docker stack
+        run: docker compose -f docker/docker-compose.test.yml --project-directory . up -d --wait trino starrocks sentinel
+
+      - name: Load Iceberg TPC-H (Trino data-loader)
+        run: docker compose -f docker/docker-compose.test.yml --project-directory . run --rm -T data-loader
+
+      - name: E2E tests
+        run: |
+          TRINO_URL=http://localhost:18081 \
+          STARROCKS_URL=mysql://root@localhost:19030 \
+          LAKEKEEPER_URL=http://localhost:18181 \
+          MINIO_ENDPOINT=localhost:19000 \
+          cargo test -p queryflux-e2e-tests -- --include-ignored
+
+      - name: Stop e2e Docker stack
+        if: always()
+        run: docker compose -f docker/docker-compose.test.yml --project-directory . down

@@ -10,6 +10,7 @@ use futures::stream;
 use queryflux_auth::QueryCredentials;
 use queryflux_core::{
     catalog::TableSchema,
+    config::ClusterConfig,
     error::{QueryFluxError, Result},
     query::{BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult},
     session::SessionContext,
@@ -127,6 +128,37 @@ impl DuckDbHttpAdapter {
 
         let endpoint = endpoint.trim_end_matches('/').to_string();
         Ok(Self { cluster_name, group_name, endpoint, client })
+    }
+
+    /// Build from persisted / YAML [`ClusterConfig`].
+    pub fn try_from_cluster_config(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        cfg: &ClusterConfig,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': missing endpoint"
+            ))
+        })?;
+        let tls_skip = cfg
+            .tls
+            .as_ref()
+            .map(|t| t.insecure_skip_verify)
+            .unwrap_or(false);
+        Self::new(
+            cluster_name,
+            group_name,
+            endpoint,
+            tls_skip,
+            cfg.auth.clone(),
+        )
+        .map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': failed to create DuckDB HTTP adapter ({e})"
+            ))
+        })
     }
 
     async fn run_query(&self, sql: &str) -> Result<HttpQueryResponse> {
@@ -307,20 +339,20 @@ fn response_to_record_batch(response: HttpQueryResponse) -> Result<RecordBatch> 
 
 /// Infer an Arrow DataType from the first non-null JSON value in a column.
 fn infer_arrow_type(values: &[Option<&serde_json::Value>]) -> DataType {
-    for v in values.iter().flatten() {
-        return match v {
-            serde_json::Value::Bool(_) => DataType::Boolean,
-            serde_json::Value::Number(n) => {
-                if n.is_f64() && n.as_i64().is_none() {
-                    DataType::Float64
-                } else {
-                    DataType::Int64
-                }
+    let Some(v) = values.iter().flatten().next() else {
+        return DataType::Utf8;
+    };
+    match v {
+        serde_json::Value::Bool(_) => DataType::Boolean,
+        serde_json::Value::Number(n) => {
+            if n.is_f64() && n.as_i64().is_none() {
+                DataType::Float64
+            } else {
+                DataType::Int64
             }
-            _ => DataType::Utf8,
-        };
+        }
+        _ => DataType::Utf8,
     }
-    DataType::Utf8
 }
 
 /// Build an Arrow array from a column of JSON values.

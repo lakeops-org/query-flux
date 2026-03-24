@@ -4,11 +4,10 @@
 /// or: cargo test -p queryflux-e2e-tests --test trino_tests -- --include-ignored
 ///
 /// TPC-H tests use Trino's built-in `tpch` connector (`tpch.tiny.*`).
-/// SF tiny = SF 0.01 equivalent — same row counts as DuckDB dbgen(sf=0.01).
 use std::sync::OnceLock;
 
 use queryflux_e2e_tests::{
-    harness::{TestHarness, GROUP_DUCKDB_TPCH, GROUP_TRINO},
+    harness::{TestHarness, GROUP_TRINO},
     trino_client::TrinoClient,
 };
 
@@ -116,30 +115,4 @@ async fn tpch_trino_orders_count() {
         .expect("query");
     assert!(r.error.is_none(), "error: {:?}", r.error);
     assert_eq!(first_i64(&r), 15000, "tpch.tiny.orders should have 15000 rows");
-}
-
-/// Trino (tpch.tiny connector) and DuckDB (CALL dbgen sf=0.01) should agree
-/// on the customer row count — both are TPC-H SF 0.01.
-#[tokio::test]
-#[ignore = "requires Trino — run with: make test-e2e"]
-async fn tpch_trino_duckdb_customer_count_matches() {
-    require_group!(GROUP_TRINO);
-    let c = client();
-
-    let trino = c
-        .execute_on("SELECT COUNT(*) AS n FROM tpch.tiny.customer", GROUP_TRINO)
-        .await
-        .expect("trino query");
-    let duck = c
-        .execute_on("SELECT COUNT(*) AS n FROM customer", GROUP_DUCKDB_TPCH)
-        .await
-        .expect("duckdb query");
-
-    assert!(trino.error.is_none(), "trino error: {:?}", trino.error);
-    assert!(duck.error.is_none(), "duckdb error: {:?}", duck.error);
-    assert_eq!(
-        first_i64(&trino),
-        first_i64(&duck),
-        "trino tpch.tiny and duckdb dbgen should agree on customer count"
-    );
 }
