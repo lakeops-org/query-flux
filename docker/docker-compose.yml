@@ -17,6 +17,7 @@ services:
       retries: 15
       start_period: 30s
 
+ 
   starrocks:
     image: starrocks/allin1-ubuntu:latest
     ports:

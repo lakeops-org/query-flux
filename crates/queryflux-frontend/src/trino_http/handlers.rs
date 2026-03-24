@@ -9,6 +9,7 @@ use axum::{
 };
 use bytes::Bytes;
 use chrono::Utc;
+use queryflux_auth::{AuthContext, Credentials};
 use queryflux_core::{
     error::QueryFluxError,
     query::{BackendQueryId, FrontendProtocol, ProxyQueryId, QueryPollResult, QueryStatus},
@@ -179,11 +180,27 @@ pub async fn post_statement(
     let session = extract_session(&headers);
     let protocol = FrontendProtocol::TrinoHttp;
 
-    let (group, _trace) = match state
-        .router_chain
-        .route_with_trace(&sql, &session, &protocol)
-        .await
-    {
+    // 1. Authenticate — derive AuthContext from request credentials.
+    // Phase 1: NoneAuthProvider derives identity from X-Trino-User header (no crypto).
+    let creds = extract_credentials(&headers);
+    let auth_ctx = match state.auth_provider.authenticate(&creds).await {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            warn!("Authentication failed: {e}");
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+    };
+
+    // 2. Route — first matching router wins.
+    // `route_with_trace` is CPU-bound (regex match, header lookup); holding the read lock
+    // across this call is fine since it's brief and read-locks don't block each other.
+    let routing_result = {
+        let live = state.live.read().await;
+        live.router_chain
+            .route_with_trace(&sql, &session, &protocol, Some(&auth_ctx))
+            .await
+    };
+    let (group, trace) = match routing_result {
         Ok(r) => r,
         Err(e) => {
             warn!("Routing error: {e}");
@@ -191,8 +208,16 @@ pub async fn post_statement(
         }
     };
 
+    // 3. Authorization-aware first-fit when router chain fell back to static default.
+    // If the user is authorized for a more specific group, use it instead.
+    let group = if trace.used_fallback {
+        resolve_group_for_user(&state, &auth_ctx, group).await
+    } else {
+        group
+    };
+
     let query_id = ProxyQueryId::new();
-    info!(id = %query_id, group = %group, "New query submitted");
+    info!(id = %query_id, group = %group, user = %auth_ctx.user, "New query submitted");
 
     // Trino backend: raw bytes forwarded, nextUri rewritten — zero Arrow.
     // Non-Trino backend (DuckDB, StarRocks): Arrow path → single-page Trino JSON response.
@@ -200,7 +225,7 @@ pub async fn post_statement(
     // `group_supports_async` is a group-level heuristic; `dispatch_query` may still return
     // `SyncEngineRequired` if round-robin selects a sync cluster in a mixed-engine group.
     // In that case fall through to `execute_to_sink` exactly as for pure-sync groups.
-    if state.group_supports_async(&group.0) {
+    if state.group_supports_async(&group.0).await {
         match dispatch_query(
             &state,
             query_id.clone(),
@@ -210,6 +235,7 @@ pub async fn post_statement(
             group.clone(),
             false,
             0,
+            &auth_ctx,
         )
         .await
         {
@@ -217,11 +243,16 @@ pub async fn post_statement(
             Err(QueryFluxError::SyncEngineRequired(_)) => {
                 let mut sink = TrinoHttpResultSink::new(&query_id.0);
                 if let Err(e) =
-                    execute_to_sink(&state, sql, session, protocol, group, &mut sink).await
+                    execute_to_sink(&state, sql, session, protocol, group, &mut sink, &auth_ctx)
+                        .await
                 {
                     warn!(id = %query_id, "execute_to_sink error: {e}");
                 }
                 sink.into_response()
+            }
+            Err(QueryFluxError::Unauthorized(msg)) => {
+                warn!(id = %query_id, "Unauthorized: {msg}");
+                StatusCode::FORBIDDEN.into_response()
             }
             Err(e) => {
                 warn!("Dispatch error: {e}");
@@ -230,11 +261,125 @@ pub async fn post_statement(
         }
     } else {
         let mut sink = TrinoHttpResultSink::new(&query_id.0);
-        if let Err(e) = execute_to_sink(&state, sql, session, protocol, group, &mut sink).await {
+        if let Err(e) =
+            execute_to_sink(&state, sql, session, protocol, group, &mut sink, &auth_ctx).await
+        {
             warn!(id = %query_id, "execute_to_sink error: {e}");
         }
         sink.into_response()
     }
+}
+
+/// Extract raw credentials from Trino HTTP headers for authentication.
+/// Supports `Authorization: Basic` and `Authorization: Bearer`.
+/// Falls back to `X-Trino-User` as username when no Authorization header is present.
+fn extract_credentials(headers: &HeaderMap) -> Credentials {
+    use axum::http::header::AUTHORIZATION;
+
+    if let Some(auth) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(encoded) = auth.strip_prefix("Basic ") {
+            if let Ok(decoded) = base64_decode(encoded) {
+                if let Some((user, pass)) = decoded.split_once(':') {
+                    return Credentials {
+                        username: Some(user.to_string()),
+                        password: Some(pass.to_string()),
+                        bearer_token: None,
+                    };
+                }
+            }
+        }
+        if let Some(token) = auth.strip_prefix("Bearer ") {
+            return Credentials {
+                username: None,
+                password: None,
+                bearer_token: Some(token.to_string()),
+            };
+        }
+    }
+
+    // No Authorization header — fall back to X-Trino-User (NoneAuthProvider path).
+    let username = headers
+        .get("x-trino-user")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    Credentials {
+        username,
+        password: None,
+        bearer_token: None,
+    }
+}
+
+/// Decode standard base64 without a dependency — sufficient for Phase 1 Basic auth parsing.
+/// Returns the decoded string on success, or Err(()) on invalid input.
+fn base64_decode(encoded: &str) -> Result<String, ()> {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut lookup = [0xffu8; 256];
+    for (i, &b) in TABLE.iter().enumerate() {
+        lookup[b as usize] = i as u8;
+    }
+    let encoded = encoded.trim_end_matches('=');
+    let mut out = Vec::with_capacity((encoded.len() * 3) / 4 + 1);
+    let bytes: Vec<u8> = encoded.bytes().collect();
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        let (a, b, c, d) = (
+            lookup[bytes[i] as usize],
+            lookup[bytes[i + 1] as usize],
+            lookup[bytes[i + 2] as usize],
+            lookup[bytes[i + 3] as usize],
+        );
+        if a == 0xff || b == 0xff || c == 0xff || d == 0xff {
+            return Err(());
+        }
+        out.push((a << 2) | (b >> 4));
+        out.push((b << 4) | (c >> 2));
+        out.push((c << 6) | d);
+        i += 4;
+    }
+    match bytes.len() - i {
+        2 => {
+            let (a, b) = (lookup[bytes[i] as usize], lookup[bytes[i + 1] as usize]);
+            if a == 0xff || b == 0xff {
+                return Err(());
+            }
+            out.push((a << 2) | (b >> 4));
+        }
+        3 => {
+            let (a, b, c) = (
+                lookup[bytes[i] as usize],
+                lookup[bytes[i + 1] as usize],
+                lookup[bytes[i + 2] as usize],
+            );
+            if a == 0xff || b == 0xff || c == 0xff {
+                return Err(());
+            }
+            out.push((a << 2) | (b >> 4));
+            out.push((b << 4) | (c >> 2));
+        }
+        _ => {}
+    }
+    String::from_utf8(out).map_err(|_| ())
+}
+
+/// When the router chain fell back to the static default, check if the authenticated user
+/// is authorized for any specific group and return the first match.
+/// Falls back to the static `routingFallback` group if no authorized group found.
+async fn resolve_group_for_user(
+    state: &AppState,
+    auth_ctx: &AuthContext,
+    fallback: queryflux_core::query::ClusterGroupName,
+) -> queryflux_core::query::ClusterGroupName {
+    // Snapshot the group order under the read lock, then drop the lock before
+    // calling authorization.check (which may do async I/O, e.g. OpenFGA).
+    let group_order = state.live.read().await.group_order.clone();
+    for group_name in &group_order {
+        let group = queryflux_core::query::ClusterGroupName(group_name.clone());
+        if state.authorization.check(auth_ctx, group_name).await {
+            return group;
+        }
+    }
+    fallback
 }
 
 /// GET /v1/statement/qf/queued/{id}/{seq} — poll a query queued in QueryFlux.
@@ -260,7 +405,20 @@ pub async fn get_queued_statement(
     let protocol = queued.frontend_protocol.clone();
     let group = queued.cluster_group.clone();
 
-    if state.group_supports_async(&group.0) {
+    // Re-derive AuthContext from the stored session (Phase 1: NoneAuthProvider).
+    let creds = Credentials {
+        username: session.user().map(|s| s.to_string()),
+        ..Default::default()
+    };
+    let auth_ctx = match state.auth_provider.authenticate(&creds).await {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            warn!("Authentication failed for queued query: {e}");
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+    };
+
+    if state.group_supports_async(&group.0).await {
         match dispatch_query(
             &state,
             query_id.clone(),
@@ -270,6 +428,7 @@ pub async fn get_queued_statement(
             group.clone(),
             true,
             seq,
+            &auth_ctx,
         )
         .await
         {
@@ -278,7 +437,8 @@ pub async fn get_queued_statement(
                 let _ = state.persistence.delete_queued(&query_id).await;
                 let mut sink = TrinoHttpResultSink::new(&query_id.0);
                 if let Err(e) =
-                    execute_to_sink(&state, sql, session, protocol, group, &mut sink).await
+                    execute_to_sink(&state, sql, session, protocol, group, &mut sink, &auth_ctx)
+                        .await
                 {
                     warn!(id = %query_id, "execute_to_sink error: {e}");
                 }
@@ -292,7 +452,9 @@ pub async fn get_queued_statement(
     } else {
         let _ = state.persistence.delete_queued(&query_id).await;
         let mut sink = TrinoHttpResultSink::new(&query_id.0);
-        if let Err(e) = execute_to_sink(&state, sql, session, protocol, group, &mut sink).await {
+        if let Err(e) =
+            execute_to_sink(&state, sql, session, protocol, group, &mut sink, &auth_ctx).await
+        {
             warn!(id = %query_id, "execute_to_sink error: {e}");
         }
         sink.into_response()
@@ -330,7 +492,7 @@ pub async fn get_executing_statement(
         }
     };
 
-    let adapter = match state.adapter(&executing.cluster_name.0) {
+    let adapter = match state.adapter(&executing.cluster_name.0).await {
         Some(a) => a,
         None => {
             warn!(
@@ -362,6 +524,10 @@ pub async fn get_executing_statement(
         let _ = state.persistence.upsert(refreshed).await;
     }
 
+    // Clone the cluster manager out of the live lock before awaiting poll_query
+    // (which can block on network I/O to the backend).
+    let cluster_manager = state.live.read().await.cluster_manager.clone();
+
     let poll_result = match adapter.poll_query(&backend_id, Some(&trino_url)).await {
         Ok(r) => r,
         Err(e) => {
@@ -369,8 +535,7 @@ pub async fn get_executing_statement(
             state
                 .metrics
                 .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
-            let _ = state
-                .cluster_manager
+            let _ = cluster_manager
                 .release_cluster(&executing.cluster_group, &executing.cluster_name)
                 .await;
             let _ = state.persistence.delete(&backend_id).await;
@@ -402,6 +567,8 @@ pub async fn get_executing_statement(
                     &FrontendProtocol::TrinoHttp,
                     &executing.cluster_group,
                     &executing.cluster_name,
+                    executing.cluster_group_config_id,
+                    executing.cluster_config_id,
                     adapter.engine_type(),
                     FrontendProtocol::TrinoHttp.default_dialect(),
                     adapter.engine_type().dialect(),
@@ -421,8 +588,7 @@ pub async fn get_executing_statement(
                 state
                     .metrics
                     .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
-                let _ = state
-                    .cluster_manager
+                let _ = cluster_manager
                     .release_cluster(&executing.cluster_group, &executing.cluster_name)
                     .await;
                 let _ = state.persistence.delete(&backend_id).await;
@@ -451,6 +617,8 @@ pub async fn get_executing_statement(
                 &FrontendProtocol::TrinoHttp,
                 &executing.cluster_group,
                 &executing.cluster_name,
+                executing.cluster_group_config_id,
+                executing.cluster_config_id,
                 adapter.engine_type(),
                 FrontendProtocol::TrinoHttp.default_dialect(),
                 adapter.engine_type().dialect(),
@@ -467,8 +635,7 @@ pub async fn get_executing_statement(
                 None,
                 None,
             );
-            let _ = state
-                .cluster_manager
+            let _ = cluster_manager
                 .release_cluster(&executing.cluster_group, &executing.cluster_name)
                 .await;
             warn!(id = %executing.id, "Query failed: {message}");
@@ -538,8 +705,8 @@ pub async fn delete_executing_statement(
         state
             .metrics
             .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
-        let _ = state
-            .cluster_manager
+        let cluster_manager = state.live.read().await.cluster_manager.clone();
+        let _ = cluster_manager
             .release_cluster(&executing.cluster_group, &executing.cluster_name)
             .await;
         let _ = state.persistence.delete(&backend_id).await;

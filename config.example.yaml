@@ -11,6 +11,11 @@ queryflux:
     type: inMemory
   adminApi:
     port: 9000
+  # When persistence.type is postgres: how often (seconds) to poll the DB and refresh the in-memory
+  # RouterChain + cluster/group state (default 30 if omitted). Set to 0 to disable polling only;
+  # config still reloads immediately after routing/cluster/group writes via the admin API.
+  # configReloadIntervalSecs: 60
+  # queryHistoryRetentionDays: 90
 
 clusterGroups:
   # trino-default:
@@ -29,9 +34,29 @@ clusterGroups:
 
 translation:
   errorOnUnsupported: false
+  # Optional Python scripts run after every sqlglot translation.
+  # Locals: `ast` (sqlglot AST), `src` (source dialect), `dst` (target dialect),
+  #         `exp` (sqlglot.expressions). Mutate `ast` in-place — re-serialized automatically.
+  # pythonScripts:
+  #   - |
+  #     # Athena has no catalog layer — strip catalog from 3-part table references.
+  #     # hive.my_db.my_table  →  my_db.my_table
+  #     if dst == "athena":
+  #         for table in ast.find_all(exp.Table):
+  #             table.set("catalog", None)
 
 routers:
   - type: protocolBased
     postgresWire: trino-default
+  # Example: route only when ALL conditions match (AND)
+  # - type: compound
+  #   combine: all
+  #   conditions:
+  #     - type: protocol
+  #       protocol: mysqlWire
+  #     - type: header
+  #       headerName: X-Env
+  #       headerValue: prod
+  #   targetGroup: duckdb-local
 
 routingFallback: duckdb-local

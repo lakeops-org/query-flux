@@ -22,6 +22,10 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::Router;
+use queryflux_auth::{
+    AllowAllAuthorization, AuthorizationChecker, AuthProvider, BackendIdentityResolver,
+    NoneAuthProvider,
+};
 use queryflux_cluster_manager::{
     cluster_state::ClusterState, simple::SimpleClusterGroupManager, strategy::strategy_from_config,
 };
@@ -30,9 +34,12 @@ use queryflux_core::{
     query::{ClusterGroupName, ClusterName, EngineType},
 };
 use queryflux_engine_adapters::{
-    duckdb::DuckDbAdapter, starrocks::StarRocksAdapter, trino::TrinoAdapter, EngineAdapterTrait,
+    duckdb::{http::DuckDbHttpAdapter, DuckDbAdapter},
+    starrocks::StarRocksAdapter,
+    trino::TrinoAdapter,
+    EngineAdapterTrait,
 };
-use queryflux_frontend::trino_http::{state::AppState, TrinoHttpFrontend};
+use queryflux_frontend::{state::LiveConfig, trino_http::{state::AppState, TrinoHttpFrontend}};
 use queryflux_metrics::{ClusterSnapshot, MetricsStore, QueryRecord};
 use queryflux_persistence::in_memory::InMemoryPersistence;
 use queryflux_routing::{chain::RouterChain, implementations::header::HeaderRouter, RouterTrait};
@@ -66,6 +73,15 @@ pub const GROUP_STARROCKS: &str = "starrocks";
 /// been set up in at least one engine. Tests that also need a specific engine
 /// should combine: require_group!(GROUP_LAKEKEEPER) + require_group!(GROUP_TRINO).
 pub const GROUP_LAKEKEEPER: &str = "lakekeeper";
+/// DuckDB with TPC-H data pre-loaded via `CALL dbgen(sf=0.01)`.
+/// Always available — no external services required.
+pub const GROUP_DUCKDB_TPCH: &str = "duckdb-tpch";
+/// Remote DuckDB HTTP server (community httpserver extension).
+/// Requires DUCKDB_HTTP_URL env var or http://localhost:19199 to be reachable.
+pub const GROUP_DUCKDB_HTTP: &str = "duckdb-http";
+/// MotherDuck cloud DuckDB.
+/// Requires MOTHERDUCK_TOKEN env var to be set.
+pub const GROUP_MOTHERDUCK: &str = "motherduck";
 
 // ---------------------------------------------------------------------------
 // TestHarness
@@ -96,6 +112,7 @@ impl TestHarness {
         let mut group_states: HashMap<ClusterGroupName, GroupEntry> = HashMap::new();
         let mut adapters: HashMap<String, Arc<dyn EngineAdapterTrait>> = HashMap::new();
         let mut group_members: HashMap<String, Vec<String>> = HashMap::new();
+        let mut group_order: Vec<String> = Vec::new();
         let mut available_groups: Vec<String> = Vec::new();
         let mut routers: Vec<Box<dyn RouterTrait>> = Vec::new();
         let mut header_map: HashMap<String, ClusterGroupName> = HashMap::new();
@@ -109,6 +126,8 @@ impl TestHarness {
             let state = Arc::new(ClusterState::new(
                 duck_cluster.clone(),
                 duck_group.clone(),
+                None,
+                None,
                 EngineType::DuckDb,
                 None,
                 8,
@@ -119,8 +138,105 @@ impl TestHarness {
                 (vec![state], strategy_from_config(None)),
             );
             group_members.insert(GROUP_DUCKDB.to_string(), vec![duck_cluster.0.clone()]);
+            group_order.push(GROUP_DUCKDB.to_string());
             available_groups.push(GROUP_DUCKDB.to_string());
             header_map.insert(GROUP_DUCKDB.to_string(), duck_group.clone());
+        }
+
+        // --- DuckDB TPC-H (always available — separate in-memory instance, CALL dbgen) ---
+        let tpch_cluster = ClusterName("duckdb-tpch-1".to_string());
+        let tpch_group = ClusterGroupName(GROUP_DUCKDB_TPCH.to_string());
+        let tpch_adapter = DuckDbAdapter::new(tpch_cluster.clone(), tpch_group.clone(), None)
+            .expect("Failed to create DuckDB TPC-H adapter");
+        tpch_adapter
+            .setup_batch("INSTALL tpch; LOAD tpch; CALL dbgen(sf=0.01)")
+            .await
+            .expect("Failed to generate TPC-H data");
+        {
+            let state = Arc::new(ClusterState::new(
+                tpch_cluster.clone(),
+                tpch_group.clone(),
+                None,
+                None,
+                EngineType::DuckDb,
+                None,
+                8,
+                true,
+            ));
+            group_states.insert(
+                tpch_group.clone(),
+                (vec![state], strategy_from_config(None)),
+            );
+            group_members.insert(GROUP_DUCKDB_TPCH.to_string(), vec![tpch_cluster.0.clone()]);
+            group_order.push(GROUP_DUCKDB_TPCH.to_string());
+            available_groups.push(GROUP_DUCKDB_TPCH.to_string());
+            header_map.insert(GROUP_DUCKDB_TPCH.to_string(), tpch_group.clone());
+        }
+
+        // --- DuckDB HTTP server (optional — needs DUCKDB_HTTP_URL or default port reachable) ---
+        let duckdb_http_url = std::env::var("DUCKDB_HTTP_URL")
+            .unwrap_or_else(|_| "http://localhost:19199".to_string());
+        if is_duckdb_http_ready(&duckdb_http_url).await {
+            let group = ClusterGroupName(GROUP_DUCKDB_HTTP.to_string());
+            let cluster = ClusterName("duckdb-http-1".to_string());
+            let state = Arc::new(ClusterState::new(
+                cluster.clone(),
+                group.clone(),
+                None,
+                None,
+                EngineType::DuckDbHttp,
+                Some(duckdb_http_url.clone()),
+                8,
+                true,
+            ));
+            let adapter = Arc::new(
+                DuckDbHttpAdapter::new(cluster.clone(), group.clone(), duckdb_http_url, false, None)
+                    .expect("Failed to create DuckDB HTTP adapter"),
+            ) as Arc<dyn EngineAdapterTrait>;
+
+            group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
+            group_members.insert(GROUP_DUCKDB_HTTP.to_string(), vec![cluster.0.clone()]);
+            group_order.push(GROUP_DUCKDB_HTTP.to_string());
+            adapters.insert(cluster.0.clone(), adapter);
+            available_groups.push(GROUP_DUCKDB_HTTP.to_string());
+            header_map.insert(GROUP_DUCKDB_HTTP.to_string(), group);
+        }
+
+        // --- MotherDuck (optional — needs MOTHERDUCK_TOKEN env var) ---
+        if let Ok(md_token) = std::env::var("MOTHERDUCK_TOKEN") {
+            let group = ClusterGroupName(GROUP_MOTHERDUCK.to_string());
+            let cluster = ClusterName("motherduck-1".to_string());
+            match DuckDbAdapter::new_with_token(
+                cluster.clone(),
+                group.clone(),
+                Some("md:".to_string()),
+                Some(md_token),
+            ) {
+                Ok(adapter) if adapter.health_check().await => {
+                    let state = Arc::new(ClusterState::new(
+                        cluster.clone(),
+                        group.clone(),
+                        None,
+                        None,
+                        EngineType::DuckDb,
+                        None,
+                        4,
+                        true,
+                    ));
+                    group_states
+                        .insert(group.clone(), (vec![state], strategy_from_config(None)));
+                    group_members
+                        .insert(GROUP_MOTHERDUCK.to_string(), vec![cluster.0.clone()]);
+                    group_order.push(GROUP_MOTHERDUCK.to_string());
+                    adapters.insert(
+                        cluster.0.clone(),
+                        Arc::new(adapter) as Arc<dyn EngineAdapterTrait>,
+                    );
+                    available_groups.push(GROUP_MOTHERDUCK.to_string());
+                    header_map.insert(GROUP_MOTHERDUCK.to_string(), group);
+                }
+                _ => {}
+            }
         }
 
         // --- Trino (optional — needs TRINO_URL or default test port reachable) ---
@@ -133,6 +249,8 @@ impl TestHarness {
             let state = Arc::new(ClusterState::new(
                 cluster.clone(),
                 group.clone(),
+                None,
+                None,
                 EngineType::Trino,
                 Some(trino_url.clone()),
                 20,
@@ -148,6 +266,7 @@ impl TestHarness {
 
             group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
             group_members.insert(GROUP_TRINO.to_string(), vec![cluster.0.clone()]);
+            group_order.push(GROUP_TRINO.to_string());
             adapters.insert(cluster.0.clone(), adapter);
             available_groups.push(GROUP_TRINO.to_string());
             header_map.insert(GROUP_TRINO.to_string(), group);
@@ -163,6 +282,8 @@ impl TestHarness {
             let state = Arc::new(ClusterState::new(
                 cluster.clone(),
                 group.clone(),
+                None,
+                None,
                 EngineType::StarRocks,
                 Some(sr_url.clone()),
                 8,
@@ -175,6 +296,7 @@ impl TestHarness {
 
             group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
             group_members.insert(GROUP_STARROCKS.to_string(), vec![cluster.0.clone()]);
+            group_order.push(GROUP_STARROCKS.to_string());
             available_groups.push(GROUP_STARROCKS.to_string());
             header_map.insert(GROUP_STARROCKS.to_string(), group);
             Some((cluster, adapter))
@@ -239,6 +361,11 @@ impl TestHarness {
             duck_cluster.0.clone(),
             Arc::new(duck_adapter) as Arc<dyn EngineAdapterTrait>,
         );
+        // Register DuckDB TPC-H adapter.
+        adapters.insert(
+            tpch_cluster.0.clone(),
+            Arc::new(tpch_adapter) as Arc<dyn EngineAdapterTrait>,
+        );
 
         // Router: X-Qf-Group header → cluster group
         routers.push(Box::new(HeaderRouter::new(
@@ -262,15 +389,25 @@ impl TestHarness {
         let port = tmp.local_addr()?.port();
         drop(tmp);
 
-        let state = Arc::new(AppState {
-            external_address: format!("http://127.0.0.1:{port}"),
+        let live_config = LiveConfig {
+            router_chain,
             cluster_manager,
             adapters,
+            health_check_targets: vec![],
+            cluster_configs: std::collections::HashMap::new(),
             group_members,
+            group_order,
+            group_translation_scripts: std::collections::HashMap::new(),
+        };
+        let state = Arc::new(AppState {
+            external_address: format!("http://127.0.0.1:{port}"),
+            live: Arc::new(tokio::sync::RwLock::new(live_config)),
             persistence: Arc::new(InMemoryPersistence::new()),
-            router_chain,
             translation,
             metrics: Arc::new(NoOpMetrics),
+            auth_provider: Arc::new(NoneAuthProvider::new(false)) as Arc<dyn AuthProvider>,
+            authorization: Arc::new(AllowAllAuthorization) as Arc<dyn AuthorizationChecker>,
+            identity_resolver: Arc::new(BackendIdentityResolver::new()),
         });
 
         let router: Router = TrinoHttpFrontend::new(state, port).router();
@@ -338,6 +475,15 @@ async fn is_starrocks_ready(url: &str) -> bool {
     };
     let host = parsed.host_str().unwrap_or("localhost");
     let port = parsed.port().unwrap_or(9030);
+    port_is_open(host, port).await
+}
+
+async fn is_duckdb_http_ready(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let host = parsed.host_str().unwrap_or("localhost");
+    let port = parsed.port().unwrap_or(9999);
     port_is_open(host, port).await
 }
 

@@ -43,13 +43,216 @@ pub struct ProxyConfig {
     /// A cluster can be a member of multiple groups.
     #[serde(default)]
     pub clusters: HashMap<String, ClusterConfig>,
+    /// Logical groups of clusters (routing targets). Omitted in YAML when using
+    /// persistence + Studio to define groups in the database.
+    #[serde(default)]
     pub cluster_groups: HashMap<String, ClusterGroupConfig>,
+    /// Routing rules evaluated in order. Omitted when defined via Studio / Postgres.
+    #[serde(default)]
     pub routers: Vec<RouterConfig>,
+    /// Default group when no router matches. Empty string is valid at parse time;
+    /// configure routing in Studio before serving traffic.
+    #[serde(default)]
     pub routing_fallback: String,
     #[serde(default)]
     pub translation: TranslationConfig,
     #[serde(default)]
     pub catalog_provider: CatalogProviderConfig,
+    /// Frontend authentication. Defaults to `NoneAuthProvider` (network-trust only).
+    #[serde(default)]
+    pub auth: AuthConfig,
+    /// Gateway-level authorization. Defaults to allow-all.
+    #[serde(default)]
+    pub authorization: AuthorizationConfig,
+}
+
+// ---------------------------------------------------------------------------
+// Auth / AuthZ configuration
+// ---------------------------------------------------------------------------
+
+/// Frontend authentication configuration.
+///
+/// Controls how QueryFlux verifies the identity of incoming clients.
+/// Default (`provider: none`) derives identity from session metadata with no
+/// cryptographic verification — suitable for trusted networks only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub provider: AuthProviderConfig,
+    /// When true, reject requests that carry no username.
+    /// With `provider: none` this is network-trust only (no JWT verification).
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub oidc: Option<OidcConfig>,
+    #[serde(default)]
+    pub ldap: Option<LdapConfig>,
+    #[serde(default)]
+    pub static_users: Option<StaticUsersConfig>,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            provider: AuthProviderConfig::None,
+            required: false,
+            oidc: None,
+            ldap: None,
+            static_users: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthProviderConfig {
+    /// No verification — identity from session username (network-trust only).
+    #[default]
+    #[serde(rename = "none")]
+    None,
+    /// User/password map in config (dev/simple deployments).
+    #[serde(rename = "static")]
+    Static,
+    /// JWT validation via JWKS endpoint (Keycloak, Auth0, etc.).
+    #[serde(rename = "oidc")]
+    Oidc,
+    /// LDAP bind + group membership lookup.
+    #[serde(rename = "ldap")]
+    Ldap,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OidcConfig {
+    pub issuer: String,
+    pub jwks_uri: String,
+    pub audience: Option<String>,
+    /// JWT claim name for group memberships (e.g. `"groups"`).
+    #[serde(default = "default_groups_claim")]
+    pub groups_claim: String,
+    /// JWT claim name for roles (e.g. `"realm_access.roles"` for Keycloak).
+    #[serde(default)]
+    pub roles_claim: Option<String>,
+}
+
+fn default_groups_claim() -> String {
+    "groups".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LdapConfig {
+    /// LDAP server URL, e.g. `ldap://ldap.internal:389` or `ldaps://ldap.internal:636`.
+    pub url: String,
+    /// Service account DN used to search for users, e.g. `cn=svc,ou=serviceaccounts,dc=example,dc=com`.
+    /// Leave empty to attempt an anonymous bind before searching.
+    #[serde(default)]
+    pub bind_dn: String,
+    /// Password for the service account `bindDn`. Optional for anonymous-bind servers.
+    #[serde(default)]
+    pub bind_password: Option<String>,
+    /// Base DN under which users are searched, e.g. `ou=users,dc=example,dc=com`.
+    pub user_search_base: String,
+    /// LDAP filter for locating a user by username. `{}` is replaced with the escaped username.
+    /// Default: `(uid={})`. For Active Directory use `(sAMAccountName={})`.
+    #[serde(default = "default_user_search_filter")]
+    pub user_search_filter: String,
+    /// Instead of searching, bind directly as this DN template.
+    /// `{}` is replaced with the username. E.g. `cn={},ou=users,dc=example,dc=com`.
+    /// When set, `bindDn` / `bindPassword` / `userSearchBase` are not used for auth.
+    #[serde(default)]
+    pub user_dn_template: Option<String>,
+    /// Base DN for group membership search. When set, groups are resolved by searching
+    /// here with `(member={user_dn})`. When absent, groups are read from the `memberOf`
+    /// attribute on the user entry (works for AD and most LDAP setups).
+    #[serde(default)]
+    pub group_search_base: Option<String>,
+    /// LDAP attribute used as the group name. Default: `cn`.
+    #[serde(default = "default_group_name_attribute")]
+    pub group_name_attribute: String,
+}
+
+fn default_user_search_filter() -> String {
+    "(uid={})".to_string()
+}
+
+fn default_group_name_attribute() -> String {
+    "cn".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StaticUsersConfig {
+    /// username → { password, groups }
+    pub users: HashMap<String, StaticUserEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StaticUserEntry {
+    pub password: String,
+    #[serde(default)]
+    pub groups: Vec<String>,
+    #[serde(default)]
+    pub roles: Vec<String>,
+}
+
+/// Gateway-level authorization configuration.
+///
+/// Controls which authenticated users/groups may access which cluster groups.
+/// Default (`provider: none`) uses `allowGroups`/`allowUsers` lists on each
+/// cluster group. If those are also absent, all authenticated users are allowed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorizationConfig {
+    #[serde(default)]
+    pub provider: AuthorizationProviderConfig,
+    #[serde(default)]
+    pub openfga: Option<OpenFgaConfig>,
+}
+
+impl Default for AuthorizationConfig {
+    fn default() -> Self {
+        Self {
+            provider: AuthorizationProviderConfig::None,
+            openfga: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthorizationProviderConfig {
+    /// Use `allowGroups`/`allowUsers` per cluster group, or allow-all if unset.
+    #[default]
+    #[serde(rename = "none")]
+    None,
+    /// OpenFGA Zanzibar-style fine-grained authorization.
+    #[serde(rename = "openfga")]
+    OpenFga,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenFgaConfig {
+    pub url: String,
+    pub store_id: String,
+    #[serde(default)]
+    pub credentials: Option<OpenFgaCredentials>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "method")]
+pub enum OpenFgaCredentials {
+    #[serde(rename = "api_key")]
+    ApiKey { api_key: String },
+    #[serde(rename = "client_credentials")]
+    ClientCredentials {
+        client_id: String,
+        client_secret: String,
+        token_endpoint: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +265,33 @@ pub struct QueryFluxConfig {
     pub persistence: PersistenceConfig,
     #[serde(default)]
     pub admin_api: AdminApiConfig,
+    /// How often (in seconds) to poll the DB for routing rules and cluster/group config changes.
+    /// Only takes effect when Postgres persistence is configured.
+    /// **Omitted → 30 seconds.** **`0` → disable polling** (no periodic refresh); config still reloads
+    /// when the admin API notifies after Studio or other writes.
+    #[serde(default)]
+    pub config_reload_interval_secs: Option<u64>,
+    /// Number of days to retain query history records. When set, a background task
+    /// runs hourly and deletes `query_records` rows older than this many days.
+    /// Only takes effect when Postgres persistence is configured.
+    /// Omit or set to `null` to keep history indefinitely.
+    #[serde(default)]
+    pub query_history_retention_days: Option<u64>,
+}
+
+impl QueryFluxConfig {
+    /// Interval for **periodic** background reload of routing rules and cluster/group config from Postgres.
+    ///
+    /// - [`None`](Option::None) (field omitted in YAML) → **Some(30)**.
+    /// - **Some(0)** → **None** (disable periodic polling; reload only via admin notify).
+    /// - **Some(n)** with n > 0 → poll every n seconds.
+    pub fn periodic_config_reload_interval_secs(&self) -> Option<u64> {
+        match self.config_reload_interval_secs {
+            None => Some(30),
+            Some(0) => None,
+            Some(n) => Some(n),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -147,6 +377,23 @@ pub struct ClusterGroupConfig {
     pub max_running_queries: u64,
     #[serde(default)]
     pub max_queued_queries: Option<u64>,
+    /// Simple authorization policy (used when `authorization.provider: none`).
+    /// If both lists are empty/absent, all authenticated users are allowed.
+    #[serde(default)]
+    pub authorization: ClusterGroupAuthorizationConfig,
+}
+
+/// Simple allow-list authorization for a cluster group.
+/// Used when `authorization.provider: none` (no OpenFGA).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterGroupAuthorizationConfig {
+    /// Group names (from `AuthContext.groups`) that may access this cluster group.
+    #[serde(default)]
+    pub allow_groups: Vec<String>,
+    /// Individual usernames (from `AuthContext.user`) that may access this cluster group.
+    #[serde(default)]
+    pub allow_users: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,8 +401,12 @@ pub struct ClusterGroupConfig {
 pub enum EngineConfig {
     Trino,
     DuckDb,
+    /// DuckDB running as a remote HTTP server (community `httpserver` extension).
+    DuckDbHttp,
     StarRocks,
     ClickHouse,
+    /// Amazon Athena — serverless SQL over S3 via the AWS SDK.
+    Athena,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,20 +415,43 @@ pub struct ClusterConfig {
     pub engine: Option<EngineConfig>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Max concurrent queries for this cluster. When `None`, the cluster group's
+    /// `maxRunningQueries` is used at runtime.
+    #[serde(default)]
+    pub max_running_queries: Option<u64>,
     /// HTTP(S) endpoint for Trino / ClickHouse / StarRocks FE.
     pub endpoint: Option<String>,
     /// Local file path for DuckDB.
     pub database_path: Option<String>,
+    /// AWS region for cloud backends (e.g. `us-east-1`). Required for Athena.
+    pub region: Option<String>,
+    /// S3 URI where Athena writes query results (e.g. `s3://my-bucket/athena-results/`).
+    /// Required when engine is `athena`.
+    pub s3_output_location: Option<String>,
+    /// Athena workgroup to submit queries to. Defaults to `"primary"` when omitted.
+    #[serde(default)]
+    pub workgroup: Option<String>,
+    /// Default Athena catalog. Defaults to `"AwsDataCatalog"` when omitted.
+    #[serde(default)]
+    pub catalog: Option<String>,
     #[serde(default)]
     pub tls: Option<TlsConfig>,
+    /// Type 1 credentials — service account used for health checks and (by default) query execution.
     #[serde(default)]
     pub auth: Option<ClusterAuth>,
+    /// Type 2 credentials — how to authenticate per-user queries to this cluster.
+    /// Default when omitted: `serviceAccount` (use Type 1 for all queries).
+    #[serde(default)]
+    pub query_auth: Option<QueryAuthConfig>,
 }
 
-/// Authentication credentials for a backend cluster.
+/// Authentication credentials for a backend cluster (Type 1 — service account).
 ///
 /// - `basic`: HTTP Basic auth (Trino, ClickHouse) or MySQL username+password (StarRocks).
 /// - `bearer`: HTTP Bearer token (Trino with JWT / OAuth2).
+/// - `keyPair`: RSA key-pair (Snowflake, Databricks — future adapters).
+/// - `accessKey`: AWS static access key (Athena and other AWS backends).
+/// - `roleArn`: AWS IAM role assumption via STS AssumeRole (Athena).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ClusterAuth {
@@ -185,6 +459,74 @@ pub enum ClusterAuth {
     Basic { username: String, password: String },
     #[serde(rename_all = "camelCase")]
     Bearer { token: String },
+    /// RSA key-pair authentication. Used for Snowflake service accounts.
+    /// `privateKeyPem` should be a PKCS#8 or PKCS#1 PEM string.
+    /// In production load via `secretRef`; inline only for dev/test.
+    #[serde(rename_all = "camelCase")]
+    KeyPair {
+        username: String,
+        private_key_pem: String,
+        #[serde(default)]
+        private_key_passphrase: Option<String>,
+    },
+    /// AWS static access key credentials. Used for Athena and other AWS backends.
+    /// When omitted, the default AWS credential chain is used (env vars, instance profile, etc.).
+    /// `session_token` is optional and required only for temporary/STS-vended credentials.
+    #[serde(rename_all = "camelCase")]
+    AccessKey {
+        access_key_id: String,
+        secret_access_key: String,
+        #[serde(default)]
+        session_token: Option<String>,
+    },
+    /// AWS IAM role assumption via STS `AssumeRole`.
+    /// The proxy's own credentials (from the credential chain) are used to assume `role_arn`.
+    /// `external_id` is optional and required only when the role trust policy mandates it.
+    #[serde(rename_all = "camelCase")]
+    RoleArn {
+        role_arn: String,
+        #[serde(default)]
+        external_id: Option<String>,
+    },
+}
+
+/// How QueryFlux authenticates a specific user's query to this backend cluster (Type 2).
+///
+/// Resolved per-request from `AuthContext` + this config. Default when omitted: `serviceAccount`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum QueryAuthConfig {
+    /// Use cluster service credentials (Type 1) for every query.
+    /// User identity is known to QueryFlux (audit/metrics) but backend sees only the service account.
+    #[serde(rename = "serviceAccount")]
+    ServiceAccount,
+    /// Service account authenticates to the backend; user identity injected via `X-Trino-User`.
+    /// **Trino only** — startup validation rejects this for other engines.
+    #[serde(rename = "impersonate")]
+    Impersonate,
+    /// Exchange the user's OIDC JWT for a backend-scoped OAuth token.
+    /// Requires `OidcAuthProvider` on the frontend (so `raw_token` is populated).
+    /// Falls back to `serviceAccount` when `raw_token` is absent.
+    #[serde(rename = "tokenExchange")]
+    TokenExchange(TokenExchangeConfig),
+}
+
+/// Configuration for the OAuth 2.0 token exchange flow (RFC 8693).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenExchangeConfig {
+    /// OAuth token endpoint, e.g. `https://keycloak.internal/realms/my-realm/protocol/openid-connect/token`.
+    pub token_endpoint: String,
+    /// Client ID registered in the IdP for QueryFlux.
+    pub client_id: String,
+    /// Client secret for the above client.
+    pub client_secret: String,
+    /// Target audience for the exchanged token (Keycloak: target client ID; Snowflake: omit).
+    #[serde(default)]
+    pub target_audience: Option<String>,
+    /// OAuth scope for the exchanged token (e.g. `session:role:ANALYST` for Snowflake).
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +572,13 @@ pub enum RouterConfig {
         script: String,
         script_file: Option<String>,
     },
+    /// Match when sub-conditions combine per `combine` (`all` = AND, `any` = OR).
+    #[serde(rename_all = "camelCase")]
+    Compound {
+        combine: CompoundCombineMode,
+        conditions: Vec<CompoundCondition>,
+        target_group: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,6 +586,41 @@ pub enum RouterConfig {
 pub struct QueryRegexRule {
     pub regex: String,
     pub target_group: String,
+}
+
+/// How sub-conditions are combined in a [`RouterConfig::Compound`] rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum CompoundCombineMode {
+    /// Every condition must match.
+    #[default]
+    All,
+    /// At least one condition must match.
+    Any,
+}
+
+/// One predicate inside a compound routing rule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum CompoundCondition {
+    /// Matches when the client used this frontend protocol (`trinoHttp`, `mysqlWire`, …).
+    #[serde(rename_all = "camelCase")]
+    Protocol { protocol: String },
+    /// Exact header match (Trino HTTP and ClickHouse HTTP only; case-insensitive header name).
+    #[serde(rename_all = "camelCase")]
+    Header {
+        header_name: String,
+        header_value: String,
+    },
+    /// Authenticated / session username equals this value (see `SessionContext::user`).
+    #[serde(rename_all = "camelCase")]
+    User { username: String },
+    /// Trino `X-Trino-Client-Tags` contains this tag.
+    #[serde(rename_all = "camelCase")]
+    ClientTag { tag: String },
+    /// SQL text matches this regex (same semantics as `QueryRegex` router).
+    #[serde(rename_all = "camelCase")]
+    QueryRegex { regex: String },
 }
 
 // --- Translation ---
@@ -248,9 +632,12 @@ pub struct TranslationConfig {
     /// If false (default), pass through best-effort.
     #[serde(default)]
     pub error_on_unsupported: bool,
-    /// Optional Python fixup scripts applied after sqlglot, keyed by "src_dialect_to_tgt_dialect".
+    /// Python scripts run after every sqlglot translation.
+    /// Each script must define `def transform(ast, src: str, dst: str) -> None:`.
+    /// Top-level imports and helper functions are supported.
+    /// Scripts mutate `ast` in-place; `src`/`dst` carry the dialect names.
     #[serde(default)]
-    pub python_scripts: HashMap<String, String>,
+    pub python_scripts: Vec<String>,
 }
 
 // --- Catalog provider ---
@@ -301,4 +688,101 @@ pub struct StaticColumnDef {
     pub data_type: String,
     #[serde(default = "default_true")]
     pub nullable: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProxyConfig, RouterConfig};
+
+    #[test]
+    fn router_config_deserializes_admin_style_json_routers_array() {
+        let j = r#"[
+            {"type":"header","headerName":"X-Env","headerValueToGroup":{"prod":"g-analytics"}},
+            {"type":"queryRegex","rules":[{"regex":"(?i)fact_","targetGroup":"g-facts"}]},
+            {"type":"pythonScript","script":"def route(q,c):\n return None\n","scriptFile":null}
+        ]"#;
+        let routers: Vec<RouterConfig> = serde_json::from_str(j).expect("routers JSON");
+        assert_eq!(routers.len(), 3);
+        match &routers[0] {
+            RouterConfig::Header {
+                header_name,
+                header_value_to_group,
+            } => {
+                assert_eq!(header_name, "X-Env");
+                assert_eq!(header_value_to_group.get("prod").map(String::as_str), Some("g-analytics"));
+            }
+            _ => panic!("expected header"),
+        }
+        match &routers[1] {
+            RouterConfig::QueryRegex { rules } => {
+                assert_eq!(rules.len(), 1);
+                assert_eq!(rules[0].regex, "(?i)fact_");
+                assert_eq!(rules[0].target_group, "g-facts");
+            }
+            _ => panic!("expected queryRegex"),
+        }
+        match &routers[2] {
+            RouterConfig::PythonScript { script, script_file } => {
+                assert!(script.contains("def route"));
+                assert!(script_file.is_none());
+            }
+            _ => panic!("expected pythonScript"),
+        }
+    }
+
+    #[test]
+    fn router_config_compound_deserializes() {
+        let j = r#"{
+            "type": "compound",
+            "combine": "all",
+            "conditions": [
+                {"type": "protocol", "protocol": "trinoHttp"},
+                {"type": "header", "headerName": "X-Tenant", "headerValue": "acme"}
+            ],
+            "targetGroup": "g1"
+        }"#;
+        let r: RouterConfig = serde_json::from_str(j).unwrap();
+        match r {
+            RouterConfig::Compound {
+                combine,
+                conditions,
+                target_group,
+            } => {
+                assert_eq!(target_group, "g1");
+                assert_eq!(conditions.len(), 2);
+                assert!(matches!(
+                    combine,
+                    super::CompoundCombineMode::All
+                ));
+            }
+            _ => panic!("expected compound"),
+        }
+    }
+
+    #[test]
+    fn periodic_config_reload_interval_secs_default_zero_and_explicit() {
+        let cfg_default: ProxyConfig = serde_yaml::from_str("queryflux: {}").unwrap();
+        assert_eq!(cfg_default.queryflux.periodic_config_reload_interval_secs(), Some(30));
+
+        let cfg_120: ProxyConfig =
+            serde_yaml::from_str("queryflux:\n  configReloadIntervalSecs: 120\n").unwrap();
+        assert_eq!(cfg_120.queryflux.periodic_config_reload_interval_secs(), Some(120));
+
+        let cfg_zero: ProxyConfig =
+            serde_yaml::from_str("queryflux:\n  configReloadIntervalSecs: 0\n").unwrap();
+        assert_eq!(cfg_zero.queryflux.periodic_config_reload_interval_secs(), None);
+    }
+
+    /// Studio-first / Postgres: YAML may omit clusters, clusterGroups, routers, routingFallback.
+    #[test]
+    fn proxy_config_minimal_yaml_omits_groups_and_routing() {
+        let yaml = r#"
+queryflux: {}
+"#;
+        let cfg: ProxyConfig = serde_yaml::from_str(yaml).expect("minimal YAML should parse");
+        assert!(cfg.clusters.is_empty());
+        assert!(cfg.cluster_groups.is_empty());
+        assert!(cfg.routers.is_empty());
+        assert!(cfg.routing_fallback.is_empty());
+    }
 }

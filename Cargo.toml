@@ -5,6 +5,7 @@ members = [
     "crates/queryflux-bench",
     "crates/queryflux-e2e-tests",
     "crates/queryflux-core",
+    "crates/queryflux-auth",
     "crates/queryflux-persistence",
     "crates/queryflux-routing",
     "crates/queryflux-translation",
@@ -66,6 +67,7 @@ parking_lot = "0.12"
 
 # Internal crates
 queryflux-core = { path = "crates/queryflux-core" }
+queryflux-auth = { path = "crates/queryflux-auth" }
 queryflux-persistence = { path = "crates/queryflux-persistence" }
 queryflux-routing = { path = "crates/queryflux-routing" }
 queryflux-translation = { path = "crates/queryflux-translation" }
@@ -78,13 +80,13 @@ queryflux-metrics = { path = "crates/queryflux-metrics" }
 # DuckDB embedded engine
 duckdb = { version = "1", features = ["bundled"] }
 
-# Arrow ecosystem — version must match what duckdb uses (57.x)
-arrow = { version = "57", features = ["ipc"] }
+# Arrow ecosystem — version must match what duckdb uses (bundled duckdb crate pins arrow)
+arrow = { version = "58", features = ["ipc"] }
 futures = "0.3"
 
 # Arrow Flight SQL (gRPC) — for Flight SQL frontend
-arrow-flight = { version = "57", features = ["flight-sql"] }
-arrow-ipc = "57"
+arrow-flight = { version = "58", features = ["flight-sql"] }
+arrow-ipc = "58"
 tonic = { version = "0.14", features = ["transport"] }
 prost = "0.14"
 
@@ -94,11 +96,24 @@ pyo3 = { version = "0.28.2", features = ["auto-initialize"] }
 # Regex for query routing
 regex = "1"
 
+# JWT validation (OIDC auth provider)
+jsonwebtoken = "9"
+
+# LDAP auth provider
+ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"] }
+
 # Postgres client (persistence + metrics)
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }
 
 # MySQL wire protocol client (StarRocks backend)
 mysql_async = { version = "0.36.1", default-features = false, features = ["default-rustls"] }
+
+# AWS SDK (Athena backend)
+aws-sdk-athena = "1"
+aws-sdk-sts = "1"
+aws-config = { version = "1", default-features = false, features = ["rustls"] }
+aws-credential-types = "1"
+aws-types = "1"
 
 # OpenAPI documentation
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }

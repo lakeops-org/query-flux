@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
+use queryflux_auth::AuthContext;
 use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{ClusterGroupName, FrontendProtocol},
@@ -11,12 +12,14 @@ use crate::RouterTrait;
 
 /// Routes queries using a user-supplied Python function.
 ///
-/// The script must define a function with this signature:
+/// The script must define:
 /// ```python
-/// def route(sql: str, user: str | None, protocol: str) -> str | None:
-///     # return a cluster group name, or None to pass to next router
+/// def route(query: str, ctx: dict) -> str | None:
+///     # return a cluster group name, or None to pass to the next router
 ///     return None
 /// ```
+///
+/// See `docs/routing-and-clusters.md` for the `ctx` schema.
 pub struct PythonScriptRouter {
     script: String,
 }
@@ -46,29 +49,130 @@ impl RouterTrait for PythonScriptRouter {
         sql: &str,
         session: &SessionContext,
         frontend_protocol: &FrontendProtocol,
+        auth_ctx: Option<&AuthContext>,
     ) -> Result<Option<ClusterGroupName>> {
         let sql = sql.to_string();
         let script = self.script.clone();
-        let user = session.user().map(|s| s.to_string());
-        let protocol = format!("{frontend_protocol:?}");
+        let session = session.clone();
+        let protocol = frontend_protocol.clone();
+        let auth = auth_ctx.cloned();
 
         tokio::task::spawn_blocking(move || {
-            call_python_router(&script, &sql, user.as_deref(), &protocol)
+            call_python_router(&script, &sql, &session, protocol, auth.as_ref())
         })
         .await
         .map_err(|e| QueryFluxError::Routing(format!("spawn_blocking error: {e}")))?
     }
 }
 
+fn protocol_camel(p: FrontendProtocol) -> &'static str {
+    match p {
+        FrontendProtocol::TrinoHttp => "trinoHttp",
+        FrontendProtocol::PostgresWire => "postgresWire",
+        FrontendProtocol::MySqlWire => "mysqlWire",
+        FrontendProtocol::ClickHouseHttp => "clickHouseHttp",
+        FrontendProtocol::FlightSql => "flightSql",
+    }
+}
+
+fn str_str_dict<'py>(
+    py: Python<'py>,
+    m: &std::collections::HashMap<String, String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    for (k, v) in m {
+        d.set_item(k, v.as_str())?;
+    }
+    Ok(d)
+}
+
+fn string_list<'py>(py: Python<'py>, items: &[String]) -> PyResult<Bound<'py, PyList>> {
+    let list = PyList::empty(py);
+    for s in items {
+        list.append(s.as_str())?;
+    }
+    Ok(list)
+}
+
+fn set_opt_str<'py>(
+    ctx: &Bound<'py, PyDict>,
+    py: Python<'py>,
+    key: &str,
+    v: &Option<String>,
+) -> PyResult<()> {
+    match v {
+        Some(s) => ctx.set_item(key, s.as_str()),
+        None => ctx.set_item(key, py.None()),
+    }
+}
+
+fn build_routing_ctx<'py>(
+    py: Python<'py>,
+    session: &SessionContext,
+    protocol: FrontendProtocol,
+    auth: Option<&AuthContext>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let ctx = PyDict::new(py);
+    ctx.set_item("protocol", protocol_camel(protocol))?;
+
+    match session {
+        SessionContext::TrinoHttp { headers } => {
+            ctx.set_item("headers", str_str_dict(py, headers)?)?;
+        }
+        SessionContext::PostgresWire {
+            database,
+            user,
+            session_params,
+        } => {
+            ctx.set_item(
+                "headers",
+                str_str_dict(py, &std::collections::HashMap::new())?,
+            )?;
+            set_opt_str(&ctx, py, "database", database)?;
+            set_opt_str(&ctx, py, "user", user)?;
+            ctx.set_item("sessionParams", str_str_dict(py, session_params)?)?;
+        }
+        SessionContext::MySqlWire {
+            schema,
+            user,
+            session_vars,
+        } => {
+            ctx.set_item(
+                "headers",
+                str_str_dict(py, &std::collections::HashMap::new())?,
+            )?;
+            set_opt_str(&ctx, py, "schema", schema)?;
+            set_opt_str(&ctx, py, "user", user)?;
+            ctx.set_item("sessionVars", str_str_dict(py, session_vars)?)?;
+        }
+        SessionContext::ClickHouseHttp {
+            headers,
+            query_params,
+        } => {
+            ctx.set_item("headers", str_str_dict(py, headers)?)?;
+            ctx.set_item("queryParams", str_str_dict(py, query_params)?)?;
+        }
+    }
+
+    if let Some(a) = auth {
+        let ad = PyDict::new(py);
+        ad.set_item("user", a.user.as_str())?;
+        ad.set_item("groups", string_list(py, &a.groups)?)?;
+        ad.set_item("roles", string_list(py, &a.roles)?)?;
+        ctx.set_item("auth", ad)?;
+    }
+
+    Ok(ctx)
+}
+
 fn call_python_router(
     script: &str,
     sql: &str,
-    user: Option<&str>,
-    protocol: &str,
+    session: &SessionContext,
+    protocol: FrontendProtocol,
+    auth: Option<&AuthContext>,
 ) -> Result<Option<ClusterGroupName>> {
     Python::attach(|py| {
-        // Execute the script to define the `route` function.
-        // PyO3 0.28 requires a CStr — convert via a temporary CString.
         let globals = PyDict::new(py);
         let cscript = std::ffi::CString::new(script)
             .map_err(|e| QueryFluxError::Routing(format!("Script contains null byte: {e}")))?;
@@ -80,9 +184,17 @@ fn call_python_router(
             .map_err(|e| QueryFluxError::Routing(format!("Script has no 'route' function: {e}")))?
             .ok_or_else(|| QueryFluxError::Routing("Script has no 'route' function".to_string()))?;
 
+        let ctx = build_routing_ctx(py, session, protocol, auth).map_err(|e| {
+            QueryFluxError::Routing(format!("Failed to build routing ctx for Python: {e}"))
+        })?;
+
         let result = route_fn
-            .call1((sql, user, protocol))
-            .map_err(|e| QueryFluxError::Routing(format!("route() call failed: {e}")))?;
+            .call1((sql, ctx))
+            .map_err(|e| {
+                QueryFluxError::Routing(format!(
+                    "route(query, ctx) call failed: {e} (expected def route(query: str, ctx: dict) -> str | None)"
+                ))
+            })?;
 
         if result.is_none() {
             return Ok(None);

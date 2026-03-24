@@ -218,7 +218,9 @@ fn engine_config_to_type(cfg: &EngineConfig) -> EngineType {
     match cfg {
         EngineConfig::Trino => EngineType::Trino,
         EngineConfig::DuckDb => EngineType::DuckDb,
+        EngineConfig::DuckDbHttp => EngineType::DuckDbHttp,
         EngineConfig::StarRocks => EngineType::StarRocks,
         EngineConfig::ClickHouse => EngineType::ClickHouse,
+        EngineConfig::Athena => EngineType::Athena,
     }
 }

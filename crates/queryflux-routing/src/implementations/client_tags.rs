@@ -33,6 +33,7 @@ impl RouterTrait for ClientTagsRouter {
         _sql: &str,
         session: &SessionContext,
         _frontend_protocol: &FrontendProtocol,
+        _auth_ctx: Option<&queryflux_auth::AuthContext>,
     ) -> Result<Option<ClusterGroupName>> {
         if let SessionContext::TrinoHttp { headers } = session {
             // X-Trino-Client-Tags is a comma-separated list of tags.

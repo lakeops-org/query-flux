@@ -18,6 +18,7 @@ queryflux-persistence = { workspace = true }
 queryflux-translation = { workspace = true }
 queryflux-metrics = { workspace = true }
 queryflux-routing = { workspace = true }
+queryflux-auth = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }

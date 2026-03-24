@@ -213,3 +213,32 @@ services:
       - ./test-data/init.sql:/test-data/init.sql
     networks:
       - test_net
+
+  # ---------------------------------------------------------------------------
+  # Remote DuckDB (Iceberg + DuckDB httpserver)
+  # ---------------------------------------------------------------------------
+  duckdb-http:
+    image: duckdb/duckdb:latest
+    platform: linux/amd64
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "19199:9999"
+    command:
+      [
+        "duckdb",
+        "-c",
+        "LOAD httpserver; INSTALL iceberg; LOAD iceberg; CREATE OR REPLACE SECRET lakekeeper_minio (TYPE S3, KEY_ID 'minio-root-user', SECRET 'minio-root-password', ENDPOINT 'minio:9000', USE_SSL false, URL_STYLE 'path', REGION 'local'); ATTACH 'demo' AS lakekeeper (TYPE ICEBERG, ENDPOINT 'http://lakekeeper:8181/catalog', TOKEN ''); SELECT httpserve_start('0.0.0.0', 9999, ''); SELECT sleep(9999999);"
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "http://localhost:9999/",
+             "-d", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - test_net

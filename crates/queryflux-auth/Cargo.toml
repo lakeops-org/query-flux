@@ -1,0 +1,18 @@
+[package]
+name = "queryflux-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+queryflux-core = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+jsonwebtoken = { workspace = true }
+ldap3 = { workspace = true }
+dashmap = { workspace = true }
+tokio = { workspace = true }

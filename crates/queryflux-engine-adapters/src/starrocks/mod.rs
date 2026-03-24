@@ -20,6 +20,9 @@ use queryflux_core::{
 };
 
 use crate::EngineAdapterTrait;
+use queryflux_core::engine_registry::{
+    AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
+};
 
 /// StarRocks adapter — connects over the MySQL wire protocol to a StarRocks FE node.
 ///
@@ -104,7 +107,12 @@ impl StarRocksAdapter {
 #[async_trait]
 impl EngineAdapterTrait for StarRocksAdapter {
     /// Not used — StarRocks queries go through `execute_as_arrow`.
-    async fn submit_query(&self, _sql: &str, _session: &SessionContext) -> Result<QueryExecution> {
+    async fn submit_query(
+        &self,
+        _sql: &str,
+        _session: &SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
+    ) -> Result<QueryExecution> {
         Err(QueryFluxError::Engine(
             "StarRocks requires execute_as_arrow; use the Arrow execution path".to_string(),
         ))
@@ -154,6 +162,7 @@ impl EngineAdapterTrait for StarRocksAdapter {
         &self,
         sql: &str,
         session: &SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
     ) -> Result<crate::ArrowStream> {
         let mut conn = self.connect().await?;
 
@@ -465,6 +474,56 @@ fn starrocks_build_column(dt: &DataType, rows: &mut [Row], col_idx: usize) -> Re
                 }
             }
             Ok(Arc::new(b.finish()))
+        }
+    }
+}
+
+impl StarRocksAdapter {
+    pub fn descriptor() -> EngineDescriptor {
+        EngineDescriptor {
+            engine_key: "starRocks",
+            display_name: "StarRocks",
+            description: "High-performance OLAP database. Connects via the MySQL wire protocol.",
+            hex: "EF4444",
+            connection_type: ConnectionType::MySqlWire,
+            default_port: Some(9030),
+            endpoint_example: Some("mysql://starrocks-fe:9030"),
+            supported_auth: vec![AuthType::Basic],
+            implemented: true,
+            config_fields: vec![
+                ConfigField {
+                    key: "endpoint",
+                    label: "Endpoint",
+                    description: "MySQL-protocol connection URL for the StarRocks front-end node.",
+                    field_type: FieldType::Url,
+                    required: true,
+                    example: Some("mysql://starrocks-fe:9030"),
+                },
+                ConfigField {
+                    key: "auth.type",
+                    label: "Auth type",
+                    description: "Must be 'basic' for StarRocks (username + password).",
+                    field_type: FieldType::Text,
+                    required: false,
+                    example: Some("basic"),
+                },
+                ConfigField {
+                    key: "auth.username",
+                    label: "Username",
+                    description: "MySQL username for the StarRocks connection.",
+                    field_type: FieldType::Text,
+                    required: false,
+                    example: Some("root"),
+                },
+                ConfigField {
+                    key: "auth.password",
+                    label: "Password",
+                    description: "MySQL password.",
+                    field_type: FieldType::Secret,
+                    required: false,
+                    example: None,
+                },
+            ],
         }
     }
 }

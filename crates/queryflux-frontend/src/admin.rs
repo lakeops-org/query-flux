@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -7,16 +8,23 @@ use axum::{
     routing::{get, patch},
     Json, Router,
 };
-use queryflux_cluster_manager::ClusterGroupManager;
 use queryflux_core::{
-    engine_registry,
+    config::{
+        AuthConfig, AuthorizationConfig, AuthorizationProviderConfig, AuthProviderConfig,
+        ClusterGroupConfig, OpenFgaCredentials, RouterConfig,
+    },
+    engine_registry::EngineRegistry,
     error::Result,
     query::{ClusterGroupName, ClusterName},
 };
 use queryflux_metrics::prometheus_store::PrometheusMetrics;
 use queryflux_persistence::{
-    cluster_config::{UpsertClusterConfig, UpsertClusterGroupConfig},
+    cluster_config::{
+        ClusterGroupConfigRecord, RenameConfigRequest, UpsertClusterConfig, UpsertClusterGroupConfig,
+    },
     query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
+    routing_json::{enrich_routers_for_api, resolve_routers_for_storage},
+    script_library::{UpsertUserScript, UserScriptRecord},
     AdminStore,
 };
 use serde::{Deserialize, Serialize};
@@ -25,7 +33,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 use utoipa::{OpenApi, ToSchema};
 
-use crate::FrontendListenerTrait;
+use crate::{state::LiveConfig, FrontendListenerTrait};
 
 // ---------------------------------------------------------------------------
 // OpenAPI spec
@@ -73,6 +81,8 @@ pub struct ClusterStateDto {
         DashboardStats,
         EngineStatRow,
         GroupStatRow,
+        UserScriptRecord,
+        UpsertUserScript,
     )),
     tags(
         (name = "admin", description = "Cluster and query management"),
@@ -82,15 +92,225 @@ pub struct ClusterStateDto {
 struct ApiDoc;
 
 // ---------------------------------------------------------------------------
+// Security & Routing config DTOs (sanitized — no secrets)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecurityConfigDto {
+    pub auth_provider: String,
+    pub auth_required: bool,
+    pub oidc: Option<OidcConfigDto>,
+    pub ldap: Option<LdapConfigDto>,
+    /// Number of users defined when provider = "static". Passwords are never exposed.
+    pub static_user_count: Option<usize>,
+    pub authorization_provider: String,
+    pub openfga: Option<OpenFgaConfigDto>,
+    /// Per-cluster-group simple allow-lists (used when authorization_provider = "none").
+    pub group_authorization: HashMap<String, GroupAuthzDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OidcConfigDto {
+    pub issuer: String,
+    pub jwks_uri: String,
+    pub audience: Option<String>,
+    pub groups_claim: String,
+    pub roles_claim: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LdapConfigDto {
+    pub url: String,
+    pub bind_dn: String,
+    pub user_search_base: String,
+    pub user_search_filter: String,
+    pub user_dn_template: Option<String>,
+    pub group_search_base: Option<String>,
+    pub group_name_attribute: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenFgaConfigDto {
+    pub url: String,
+    pub store_id: String,
+    /// Credential method: "api_key" | "client_credentials" | null
+    pub credentials_method: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GroupAuthzDto {
+    pub allow_groups: Vec<String>,
+    pub allow_users: Vec<String>,
+}
+
+impl Default for SecurityConfigDto {
+    fn default() -> Self {
+        Self {
+            auth_provider: "none".to_string(),
+            auth_required: false,
+            oidc: None,
+            ldap: None,
+            static_user_count: None,
+            authorization_provider: "none".to_string(),
+            openfga: None,
+            group_authorization: HashMap::new(),
+        }
+    }
+}
+
+impl SecurityConfigDto {
+    pub fn from_config(
+        auth: &AuthConfig,
+        authz: &AuthorizationConfig,
+        groups: &HashMap<String, ClusterGroupConfig>,
+    ) -> Self {
+        let auth_provider = match auth.provider {
+            AuthProviderConfig::None => "none",
+            AuthProviderConfig::Static => "static",
+            AuthProviderConfig::Oidc => "oidc",
+            AuthProviderConfig::Ldap => "ldap",
+        }
+        .to_string();
+
+        let oidc = auth.oidc.as_ref().map(|o| OidcConfigDto {
+            issuer: o.issuer.clone(),
+            jwks_uri: o.jwks_uri.clone(),
+            audience: o.audience.clone(),
+            groups_claim: o.groups_claim.clone(),
+            roles_claim: o.roles_claim.clone(),
+        });
+
+        let ldap = auth.ldap.as_ref().map(|l| LdapConfigDto {
+            url: l.url.clone(),
+            bind_dn: l.bind_dn.clone(),
+            user_search_base: l.user_search_base.clone(),
+            user_search_filter: l.user_search_filter.clone(),
+            user_dn_template: l.user_dn_template.clone(),
+            group_search_base: l.group_search_base.clone(),
+            group_name_attribute: l.group_name_attribute.clone(),
+        });
+
+        let static_user_count = auth
+            .static_users
+            .as_ref()
+            .map(|s| s.users.len());
+
+        let authorization_provider = match authz.provider {
+            AuthorizationProviderConfig::None => "none",
+            AuthorizationProviderConfig::OpenFga => "openfga",
+        }
+        .to_string();
+
+        let openfga = authz.openfga.as_ref().map(|o| {
+            let credentials_method = o.credentials.as_ref().map(|c| match c {
+                OpenFgaCredentials::ApiKey { .. } => "api_key".to_string(),
+                OpenFgaCredentials::ClientCredentials { .. } => "client_credentials".to_string(),
+            });
+            OpenFgaConfigDto {
+                url: o.url.clone(),
+                store_id: o.store_id.clone(),
+                credentials_method,
+            }
+        });
+
+        let group_authorization = groups
+            .iter()
+            .filter(|(_, g)| {
+                !g.authorization.allow_groups.is_empty()
+                    || !g.authorization.allow_users.is_empty()
+            })
+            .map(|(name, g)| {
+                (
+                    name.clone(),
+                    GroupAuthzDto {
+                        allow_groups: g.authorization.allow_groups.clone(),
+                        allow_users: g.authorization.allow_users.clone(),
+                    },
+                )
+            })
+            .collect();
+
+        Self {
+            auth_provider,
+            auth_required: auth.required,
+            oidc,
+            ldap,
+            static_user_count,
+            authorization_provider,
+            openfga,
+            group_authorization,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct RoutingConfigDto {
+    /// JSON key `routingFallback` — matches `ProxyConfig` / YAML camelCase.
+    #[serde(rename = "routingFallback")]
+    pub routing_fallback: String,
+    /// Stable DB id of the fallback cluster group (when known).
+    #[serde(rename = "routingFallbackGroupId", skip_serializing_if = "Option::is_none")]
+    pub routing_fallback_group_id: Option<i64>,
+    pub routers: Vec<serde_json::Value>,
+}
+
+impl RoutingConfigDto {
+    pub fn from_config(fallback: &str, routers: &[RouterConfig]) -> Self {
+        Self {
+            routing_fallback: fallback.to_string(),
+            routing_fallback_group_id: None,
+            routers: routers
+                .iter()
+                .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
+                .collect(),
+        }
+    }
+}
+
+/// Request body for PUT /admin/config/security
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UpsertSecurityConfig {
+    pub auth_provider: String,
+    pub auth_required: bool,
+    pub oidc: Option<serde_json::Value>,
+    pub ldap: Option<serde_json::Value>,
+    pub static_users: Option<serde_json::Value>,
+    pub authorization_provider: String,
+    pub openfga: Option<serde_json::Value>,
+}
+
+/// Request body for PUT /admin/config/routing
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UpsertRoutingConfig {
+    /// Accept `routingFallback` (canonical) or legacy `routing_fallback` from older clients.
+    #[serde(
+        rename = "routingFallback",
+        alias = "routing_fallback",
+        default
+    )]
+    pub routing_fallback: String,
+    #[serde(rename = "routingFallbackGroupId", default)]
+    pub routing_fallback_group_id: Option<i64>,
+    #[serde(default)]
+    pub routers: Vec<serde_json::Value>,
+}
+
+// ---------------------------------------------------------------------------
 // Shared state
 // ---------------------------------------------------------------------------
 
 struct AdminState {
     prometheus: Arc<PrometheusMetrics>,
-    cluster_manager: Arc<dyn ClusterGroupManager>,
+    /// Hot-reloadable live config — used to get the current cluster manager.
+    live: Arc<tokio::sync::RwLock<LiveConfig>>,
     /// Present when a full-featured persistence backend is configured (e.g. Postgres).
     /// None when running with in-memory persistence.
     admin_store: Option<Arc<dyn AdminStore>>,
+    security_config: Arc<SecurityConfigDto>,
+    routing_config: Arc<RoutingConfigDto>,
+    engine_registry: Arc<EngineRegistry>,
+    /// Wake the config reload task immediately after mutating persisted cluster/group/routing config.
+    config_reload_notify: Arc<tokio::sync::Notify>,
 }
 
 // ---------------------------------------------------------------------------
@@ -99,31 +319,47 @@ struct AdminState {
 
 pub struct AdminFrontend {
     prometheus: Arc<PrometheusMetrics>,
-    cluster_manager: Arc<dyn ClusterGroupManager>,
+    live: Arc<tokio::sync::RwLock<LiveConfig>>,
     admin_store: Option<Arc<dyn AdminStore>>,
     port: u16,
+    security_config: Arc<SecurityConfigDto>,
+    routing_config: Arc<RoutingConfigDto>,
+    engine_registry: Arc<EngineRegistry>,
+    config_reload_notify: Arc<tokio::sync::Notify>,
 }
 
 impl AdminFrontend {
     pub fn new(
         prometheus: Arc<PrometheusMetrics>,
-        cluster_manager: Arc<dyn ClusterGroupManager>,
+        live: Arc<tokio::sync::RwLock<LiveConfig>>,
         admin_store: Option<Arc<dyn AdminStore>>,
         port: u16,
+        security_config: Arc<SecurityConfigDto>,
+        routing_config: Arc<RoutingConfigDto>,
+        engine_registry: Arc<EngineRegistry>,
+        config_reload_notify: Arc<tokio::sync::Notify>,
     ) -> Self {
         Self {
             prometheus,
-            cluster_manager,
+            live,
             admin_store,
             port,
+            security_config,
+            routing_config,
+            engine_registry,
+            config_reload_notify,
         }
     }
 
     fn router(&self) -> Router {
         let state = Arc::new(AdminState {
             prometheus: self.prometheus.clone(),
-            cluster_manager: self.cluster_manager.clone(),
+            live: self.live.clone(),
             admin_store: self.admin_store.clone(),
+            security_config: self.security_config.clone(),
+            routing_config: self.routing_config.clone(),
+            engine_registry: self.engine_registry.clone(),
+            config_reload_notify: self.config_reload_notify.clone(),
         });
 
         let spec_json =
@@ -149,6 +385,7 @@ impl AdminFrontend {
                 "/admin/config/clusters/{name}",
                 get(get_cluster_config_handler)
                     .put(upsert_cluster_config_handler)
+                    .patch(rename_cluster_config_handler)
                     .delete(delete_cluster_config_handler),
             )
             // Persisted cluster group config CRUD
@@ -157,7 +394,27 @@ impl AdminFrontend {
                 "/admin/config/groups/{name}",
                 get(get_group_config_handler)
                     .put(upsert_group_config_handler)
+                    .patch(rename_group_config_handler)
                     .delete(delete_group_config_handler),
+            )
+            .route(
+                "/admin/config/scripts",
+                get(list_user_scripts_handler).post(create_user_script_handler),
+            )
+            .route(
+                "/admin/config/scripts/{id}",
+                get(get_user_script_handler)
+                    .put(update_user_script_handler)
+                    .delete(delete_user_script_handler),
+            )
+            // Security and routing config (read + write)
+            .route(
+                "/admin/config/security",
+                get(get_security_config_handler).put(put_security_config_handler),
+            )
+            .route(
+                "/admin/config/routing",
+                get(get_routing_config_handler).put(put_routing_config_handler),
             )
             .route(
                 "/openapi.json",
@@ -171,7 +428,14 @@ impl AdminFrontend {
             .layer(
                 CorsLayer::new()
                     .allow_origin(Any)
-                    .allow_methods([Method::GET, Method::PATCH, Method::OPTIONS])
+                    .allow_methods([
+                        Method::GET,
+                        Method::PATCH,
+                        Method::PUT,
+                        Method::POST,
+                        Method::DELETE,
+                        Method::OPTIONS,
+                    ])
                     .allow_headers(Any),
             )
     }
@@ -229,7 +493,8 @@ async fn health_handler() -> impl IntoResponse {
     )
 )]
 async fn clusters_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
-    match state.cluster_manager.all_cluster_states().await {
+    let cluster_manager = state.live.read().await.cluster_manager.clone();
+    match cluster_manager.all_cluster_states().await {
         Ok(snapshots) => {
             let dtos: Vec<ClusterStateDto> = snapshots
                 .into_iter()
@@ -432,8 +697,8 @@ async fn update_cluster_handler(
     let group = ClusterGroupName(group);
     let cluster_name = ClusterName(cluster);
 
-    match state
-        .cluster_manager
+    let cluster_manager = state.live.read().await.cluster_manager.clone();
+    match cluster_manager
         .update_cluster(
             &group,
             &cluster_name,
@@ -445,8 +710,7 @@ async fn update_cluster_handler(
         Ok(false) => (StatusCode::NOT_FOUND, "Cluster not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         Ok(true) => {
-            match state
-                .cluster_manager
+            match cluster_manager
                 .cluster_state(&group, &cluster_name)
                 .await
             {
@@ -490,6 +754,24 @@ macro_rules! require_pg {
     };
 }
 
+#[inline]
+fn notify_live_config_reload(state: &AdminState) {
+    state.config_reload_notify.notify_one();
+}
+
+fn rename_persistence_error_status(e: &queryflux_core::error::QueryFluxError) -> StatusCode {
+    let msg = e.to_string();
+    if msg.contains("not found") {
+        StatusCode::NOT_FOUND
+    } else if msg.contains("already in use") {
+        StatusCode::CONFLICT
+    } else if msg.contains("must not be empty") {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
 async fn list_cluster_configs_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
     let pg = require_pg!(state);
     match pg.list_cluster_configs().await {
@@ -517,8 +799,26 @@ async fn upsert_cluster_config_handler(
 ) -> impl IntoResponse {
     let pg = require_pg!(state);
     match pg.upsert_cluster_config(&name, &body).await {
-        Ok(r) => Json(r).into_response(),
+        Ok(r) => {
+            notify_live_config_reload(&state);
+            Json(r).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn rename_cluster_config_handler(
+    State(state): State<Arc<AdminState>>,
+    Path(name): Path<String>,
+    Json(body): Json<RenameConfigRequest>,
+) -> impl IntoResponse {
+    let pg = require_pg!(state);
+    match pg.rename_cluster_config(&name, &body.new_name).await {
+        Ok(r) => {
+            notify_live_config_reload(&state);
+            Json(r).into_response()
+        }
+        Err(e) => (rename_persistence_error_status(&e), e.to_string()).into_response(),
     }
 }
 
@@ -528,7 +828,10 @@ async fn delete_cluster_config_handler(
 ) -> impl IntoResponse {
     let pg = require_pg!(state);
     match pg.delete_cluster_config(&name).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            notify_live_config_reload(&state);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(false) => (StatusCode::NOT_FOUND, "Cluster config not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -565,8 +868,26 @@ async fn upsert_group_config_handler(
 ) -> impl IntoResponse {
     let pg = require_pg!(state);
     match pg.upsert_group_config(&name, &body).await {
-        Ok(r) => Json(r).into_response(),
+        Ok(r) => {
+            notify_live_config_reload(&state);
+            Json(r).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn rename_group_config_handler(
+    State(state): State<Arc<AdminState>>,
+    Path(name): Path<String>,
+    Json(body): Json<RenameConfigRequest>,
+) -> impl IntoResponse {
+    let pg = require_pg!(state);
+    match pg.rename_group_config(&name, &body.new_name).await {
+        Ok(r) => {
+            notify_live_config_reload(&state);
+            Json(r).into_response()
+        }
+        Err(e) => (rename_persistence_error_status(&e), e.to_string()).into_response(),
     }
 }
 
@@ -576,9 +897,240 @@ async fn delete_group_config_handler(
 ) -> impl IntoResponse {
     let pg = require_pg!(state);
     match pg.delete_group_config(&name).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            notify_live_config_reload(&state);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(false) => (StatusCode::NOT_FOUND, "Group config not found").into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = if msg.contains("still referenced by routing") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (code, msg).into_response()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// User script library (translation fixups + routing — reusable snippets)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct UserScriptListQuery {
+    kind: Option<String>,
+}
+
+async fn list_user_scripts_handler(
+    State(state): State<Arc<AdminState>>,
+    Query(q): Query<UserScriptListQuery>,
+) -> impl IntoResponse {
+    let pg = require_pg!(state);
+    let kind = q.kind.as_deref().filter(|s| !s.is_empty());
+    match pg.list_user_scripts(kind).await {
+        Ok(rows) => Json(rows).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn create_user_script_handler(
+    State(state): State<Arc<AdminState>>,
+    Json(body): Json<UpsertUserScript>,
+) -> impl IntoResponse {
+    let pg = require_pg!(state);
+    match pg.create_user_script(&body).await {
+        Ok(r) => {
+            notify_live_config_reload(&state);
+            (StatusCode::CREATED, Json(r)).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn get_user_script_handler(
+    State(state): State<Arc<AdminState>>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let pg = require_pg!(state);
+    match pg.get_user_script(id).await {
+        Ok(Some(r)) => Json(r).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "Script not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn update_user_script_handler(
+    State(state): State<Arc<AdminState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<UpsertUserScript>,
+) -> impl IntoResponse {
+    let pg = require_pg!(state);
+    match pg.update_user_script(id, &body).await {
+        Ok(r) => {
+            notify_live_config_reload(&state);
+            Json(r).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn delete_user_script_handler(
+    State(state): State<Arc<AdminState>>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let pg = require_pg!(state);
+    match pg.delete_user_script(id).await {
+        Ok(true) => {
+            notify_live_config_reload(&state);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "Script not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Security and routing config handlers
+// ---------------------------------------------------------------------------
+
+async fn get_security_config_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
+    if let Some(store) = &state.admin_store {
+        if let Ok(Some(v)) = store.get_proxy_setting("security_config").await {
+            return Json(v).into_response();
+        }
+    }
+    Json(state.security_config.as_ref()).into_response()
+}
+
+fn group_id_maps(
+    groups: &[ClusterGroupConfigRecord],
+) -> (HashMap<String, i64>, HashMap<i64, String>) {
+    let mut name_to_id = HashMap::with_capacity(groups.len());
+    let mut id_to_name = HashMap::with_capacity(groups.len());
+    for g in groups {
+        name_to_id.insert(g.name.clone(), g.id);
+        id_to_name.insert(g.id, g.name.clone());
+    }
+    (name_to_id, id_to_name)
+}
+
+async fn get_routing_config_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
+    if let Some(store) = &state.admin_store {
+        match store.load_routing_config().await {
+            Ok(Some(loaded)) => {
+                let enriched = match store.list_group_configs().await {
+                    Ok(groups) => {
+                        let (name_to_id, _) = group_id_maps(&groups);
+                        enrich_routers_for_api(&loaded.routers, &name_to_id)
+                    }
+                    Err(_) => loaded.routers.clone(),
+                };
+                return Json(RoutingConfigDto {
+                    routing_fallback: loaded.routing_fallback,
+                    routing_fallback_group_id: loaded.routing_fallback_group_id,
+                    routers: enriched,
+                })
+                .into_response();
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+            }
+        }
+        // Legacy monolithic blob (only if migration has not run yet).
+        if let Ok(Some(v)) = store.get_proxy_setting("routing_config").await {
+            return Json(v).into_response();
+        }
+    }
+    Json(state.routing_config.as_ref()).into_response()
+}
+
+async fn put_security_config_handler(
+    State(state): State<Arc<AdminState>>,
+    Json(body): Json<UpsertSecurityConfig>,
+) -> impl IntoResponse {
+    let Some(store) = &state.admin_store else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured").into_response();
+    };
+    let value = serde_json::to_value(&body).unwrap_or(serde_json::Value::Null);
+    match store.set_proxy_setting("security_config", value).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn put_routing_config_handler(
+    State(state): State<Arc<AdminState>>,
+    Json(body): Json<UpsertRoutingConfig>,
+) -> impl IntoResponse {
+    let Some(store) = &state.admin_store else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured").into_response();
+    };
+    let groups = match store.list_group_configs().await {
+        Ok(g) => g,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    };
+    let (name_to_id, id_to_name) = group_id_maps(&groups);
+
+    let fallback_name = if let Some(id) = body.routing_fallback_group_id {
+        match id_to_name.get(&id) {
+            Some(n) => n.clone(),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("routingFallbackGroupId {id} is not a known cluster group"),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        body.routing_fallback.clone()
+    };
+
+    if !fallback_name.is_empty() && !name_to_id.contains_key(&fallback_name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("routingFallback '{fallback_name}' is not a known cluster group"),
+        )
+            .into_response();
+    }
+
+    let fallback_gid = body.routing_fallback_group_id.or_else(|| {
+        if fallback_name.is_empty() {
+            None
+        } else {
+            name_to_id.get(&fallback_name).copied()
+        }
+    });
+
+    let resolved = match resolve_routers_for_storage(&body.routers, &id_to_name) {
+        Ok(v) => v,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
+        }
+    };
+
+    match store
+        .replace_routing_config(&fallback_name, fallback_gid, &resolved)
+        .await
+    {
+        Ok(()) => {
+            notify_live_config_reload(&state);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let code = if msg.contains("unknown cluster group") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (code, msg).into_response()
+        }
     }
 }
 
@@ -591,8 +1143,8 @@ async fn delete_group_config_handler(
         (status = 200, description = "List of engine descriptors", body = str),
     )
 )]
-async fn engine_registry_handler() -> impl IntoResponse {
-    Json(engine_registry::engine_descriptors())
+async fn engine_registry_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
+    Json(state.engine_registry.all().to_vec())
 }
 
 /// Swagger UI — interactive API explorer (loads spec from /openapi.json via CDN).

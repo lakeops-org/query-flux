@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+use std::collections::HashMap;
+
 use crate::{
     cluster_config::{
         ClusterConfigRecord, ClusterGroupConfigRecord, UpsertClusterConfig,
@@ -5,7 +8,12 @@ use crate::{
     },
     metrics_store::{ClusterSnapshot, MetricsStore, QueryRecord},
     query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
-    ClusterConfigStore, Persistence, QueryHistoryStore,
+    routing_slices::{collapse_rows_to_routers, expand_router_for_persistence, RoutingRulePersistRow},
+    script_library::{
+        is_valid_script_kind, UpsertUserScript, UserScriptRecord, KIND_TRANSLATION_FIXUP,
+    },
+    ClusterConfigStore, LoadedRoutingConfig, Persistence, ProxySettingsStore, QueryHistoryStore,
+    RoutingConfigStore, ScriptLibraryStore,
 };
 use async_trait::async_trait;
 use queryflux_core::{
@@ -13,6 +21,31 @@ use queryflux_core::{
     query::{BackendQueryId, ExecutingQuery, ProxyQueryId, QueuedQuery},
 };
 use sqlx::PgPool;
+
+/// Select group rows with `members` as cluster **names** (joined from `cluster_configs` by id).
+const CLUSTER_GROUP_CONFIG_SELECT: &str = r#"
+SELECT
+    g.id,
+    g.name,
+    g.enabled,
+    COALESCE(
+        (
+            SELECT array_agg(c.name ORDER BY u.ord)
+            FROM unnest(g.members) WITH ORDINALITY AS u(cid, ord)
+            JOIN cluster_configs c ON c.id = u.cid
+        ),
+        ARRAY[]::text[]
+    ) AS members,
+    g.max_running_queries,
+    g.max_queued_queries,
+    g.strategy,
+    g.allow_groups,
+    g.allow_users,
+    g.translation_script_ids,
+    g.created_at,
+    g.updated_at
+FROM cluster_group_configs g
+"#;
 
 /// Postgres backend — implements both `Persistence` (in-flight query state)
 /// and `MetricsStore` (historical query records + cluster snapshots).
@@ -49,19 +82,24 @@ impl PostgresStore {
 impl QueryHistoryStore for PostgresStore {
     async fn list_queries(&self, filters: &QueryFilters) -> Result<Vec<QuerySummary>> {
         sqlx::query_as::<_, QuerySummary>(
-            r#"SELECT id, proxy_query_id, backend_query_id, cluster_group, cluster_name,
-                      engine_type, frontend_protocol, username, sql_preview, translated_sql,
-                      status, was_translated,
-                      source_dialect, target_dialect, queue_duration_ms, execution_duration_ms,
-                      rows_returned, error_message, routing_trace, created_at,
-                      engine_elapsed_time_ms, cpu_time_ms, processed_rows, processed_bytes,
-                      physical_input_bytes, peak_memory_bytes, spilled_bytes, total_splits
-               FROM query_records
-               WHERE ($1::text IS NULL OR sql_preview ILIKE '%' || $1 || '%')
-                 AND ($2::text IS NULL OR status = $2)
-                 AND ($3::text IS NULL OR cluster_group = $3)
-                 AND ($4::text IS NULL OR engine_type = $4)
-               ORDER BY created_at DESC
+            r#"SELECT qr.id, qr.proxy_query_id, qr.backend_query_id,
+                      COALESCE(cg.name, qr.cluster_group) AS cluster_group,
+                      COALESCE(cc.name, qr.cluster_name) AS cluster_name,
+                      qr.cluster_group_id, qr.cluster_id,
+                      qr.engine_type, qr.frontend_protocol, qr.username, qr.sql_preview, qr.translated_sql,
+                      qr.status, qr.was_translated,
+                      qr.source_dialect, qr.target_dialect, qr.queue_duration_ms, qr.execution_duration_ms,
+                      qr.rows_returned, qr.error_message, qr.routing_trace, qr.created_at,
+                      qr.engine_elapsed_time_ms, qr.cpu_time_ms, qr.processed_rows, qr.processed_bytes,
+                      qr.physical_input_bytes, qr.peak_memory_bytes, qr.spilled_bytes, qr.total_splits
+               FROM query_records qr
+               LEFT JOIN cluster_group_configs cg ON cg.id = qr.cluster_group_id
+               LEFT JOIN cluster_configs cc ON cc.id = qr.cluster_id
+               WHERE ($1::text IS NULL OR qr.sql_preview ILIKE '%' || $1 || '%')
+                 AND ($2::text IS NULL OR qr.status = $2)
+                 AND ($3::text IS NULL OR COALESCE(cg.name, qr.cluster_group) = $3)
+                 AND ($4::text IS NULL OR qr.engine_type = $4)
+               ORDER BY qr.created_at DESC
                LIMIT $5 OFFSET $6"#,
         )
         .bind(&filters.search)
@@ -132,23 +170,32 @@ impl QueryHistoryStore for PostgresStore {
     }
 
     async fn get_group_stats(&self, hours: i64) -> Result<Vec<GroupStatRow>> {
+        // Group by stable id when present so renamed groups don't split into two buckets (denormalized
+        // `cluster_group` text vs joined current name). Legacy rows without `cluster_group_id` still
+        // group by stored name only.
         sqlx::query_as::<_, GroupStatRow>(
             r#"SELECT
-                cluster_group,
-                MAX(engine_type)                                                    AS engine_type,
+                MAX(COALESCE(cg.name, qr.cluster_group))                           AS cluster_group,
+                MAX(qr.engine_type)                                                 AS engine_type,
                 COUNT(*)::bigint                                                    AS total_queries,
-                COUNT(*) FILTER (WHERE status = 'Success')::bigint                 AS successful_queries,
-                COUNT(*) FILTER (WHERE status = 'Failed')::bigint                  AS failed_queries,
-                COUNT(*) FILTER (WHERE status = 'Cancelled')::bigint               AS cancelled_queries,
-                COALESCE(AVG(execution_duration_ms), 0)::float8                    AS avg_execution_ms,
-                COALESCE(MIN(execution_duration_ms), 0)::bigint                    AS min_execution_ms,
-                COALESCE(MAX(execution_duration_ms), 0)::bigint                    AS max_execution_ms,
-                COALESCE(AVG(queue_duration_ms), 0)::float8                        AS avg_queue_ms,
-                COUNT(*) FILTER (WHERE was_translated)::bigint                     AS translated_queries,
-                COALESCE(SUM(rows_returned), 0)::bigint                            AS total_rows_returned
-               FROM query_records
-               WHERE created_at > NOW() - ($1 * INTERVAL '1 hour')
-               GROUP BY cluster_group
+                COUNT(*) FILTER (WHERE qr.status = 'Success')::bigint               AS successful_queries,
+                COUNT(*) FILTER (WHERE qr.status = 'Failed')::bigint                AS failed_queries,
+                COUNT(*) FILTER (WHERE qr.status = 'Cancelled')::bigint             AS cancelled_queries,
+                COALESCE(AVG(qr.execution_duration_ms), 0)::float8                 AS avg_execution_ms,
+                COALESCE(MIN(qr.execution_duration_ms), 0)::bigint                  AS min_execution_ms,
+                COALESCE(MAX(qr.execution_duration_ms), 0)::bigint                AS max_execution_ms,
+                COALESCE(AVG(qr.queue_duration_ms), 0)::float8                      AS avg_queue_ms,
+                COUNT(*) FILTER (WHERE qr.was_translated)::bigint                   AS translated_queries,
+                COALESCE(SUM(qr.rows_returned), 0)::bigint                         AS total_rows_returned
+               FROM query_records qr
+               LEFT JOIN cluster_group_configs cg ON cg.id = qr.cluster_group_id
+               WHERE qr.created_at > NOW() - ($1 * INTERVAL '1 hour')
+               GROUP BY
+                   CASE
+                       WHEN qr.cluster_group_id IS NOT NULL
+                       THEN ('id:' || qr.cluster_group_id::text)
+                       ELSE ('name:' || qr.cluster_group)
+                   END
                ORDER BY total_queries DESC"#,
         )
         .bind(hours)
@@ -164,6 +211,38 @@ impl QueryHistoryStore for PostgresStore {
                 .await
                 .map_err(|e| QueryFluxError::Persistence(format!("list_engines: {e}")))?;
         Ok(rows.into_iter().map(|(e,)| e).collect())
+    }
+}
+
+impl PostgresStore {
+    /// Delete all `query_records` rows older than `older_than`. Returns the number of rows deleted.
+    pub async fn purge_old_query_records(&self, older_than: chrono::DateTime<chrono::Utc>) -> Result<u64> {
+        let r = sqlx::query("DELETE FROM query_records WHERE created_at < $1")
+            .bind(older_than)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("purge_old_query_records: {e}")))?;
+        Ok(r.rows_affected())
+    }
+
+    /// Ordered translation fixup bodies per cluster group name (for `LiveConfig`).
+    pub async fn load_group_translation_bodies(&self) -> Result<HashMap<String, Vec<String>>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            r#"SELECT g.name, s.body
+               FROM cluster_group_configs g
+               CROSS JOIN LATERAL unnest(g.translation_script_ids) WITH ORDINALITY AS u(sid, ord)
+               JOIN user_scripts s ON s.id = u.sid AND s.kind = 'translation_fixup'
+               ORDER BY g.name, u.ord"#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("load_group_translation_bodies: {e}")))?;
+
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for (name, body) in rows {
+            map.entry(name).or_default().push(body);
+        }
+        Ok(map)
     }
 }
 
@@ -194,45 +273,67 @@ impl ClusterConfigStore for PostgresStore {
         cfg: &UpsertClusterConfig,
     ) -> Result<ClusterConfigRecord> {
         sqlx::query_as::<_, ClusterConfigRecord>(
-            r#"INSERT INTO cluster_configs
-                   (name, engine_key, endpoint, database_path, auth_type,
-                    auth_username, auth_password, auth_token,
-                    tls_insecure_skip_verify, enabled)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            r#"INSERT INTO cluster_configs (name, engine_key, enabled, max_running_queries, config)
+               VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (name) DO UPDATE SET
-                   engine_key               = EXCLUDED.engine_key,
-                   endpoint                 = EXCLUDED.endpoint,
-                   database_path            = EXCLUDED.database_path,
-                   auth_type                = EXCLUDED.auth_type,
-                   auth_username            = EXCLUDED.auth_username,
-                   auth_password            = EXCLUDED.auth_password,
-                   auth_token               = EXCLUDED.auth_token,
-                   tls_insecure_skip_verify = EXCLUDED.tls_insecure_skip_verify,
-                   enabled                  = EXCLUDED.enabled,
-                   updated_at               = now()
+                   engine_key          = EXCLUDED.engine_key,
+                   enabled             = EXCLUDED.enabled,
+                   max_running_queries = EXCLUDED.max_running_queries,
+                   config              = EXCLUDED.config,
+                   updated_at          = now()
                RETURNING *"#,
         )
         .bind(name)
         .bind(&cfg.engine_key)
-        .bind(&cfg.endpoint)
-        .bind(&cfg.database_path)
-        .bind(&cfg.auth_type)
-        .bind(&cfg.auth_username)
-        .bind(&cfg.auth_password)
-        .bind(&cfg.auth_token)
-        .bind(cfg.tls_insecure_skip_verify)
         .bind(cfg.enabled)
+        .bind(cfg.max_running_queries)
+        .bind(&cfg.config)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| QueryFluxError::Persistence(format!("upsert_cluster_config: {e}")))
     }
 
     async fn delete_cluster_config(&self, name: &str) -> Result<bool> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("delete_cluster_config begin: {e}")))?;
+
+        let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM cluster_configs WHERE name = $1")
+            .bind(name)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("delete_cluster_config lookup: {e}")))?;
+
+        let Some((cluster_id,)) = row else {
+            tx.rollback()
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("delete_cluster_config rollback: {e}")))?;
+            return Ok(false);
+        };
+
+        sqlx::query(
+            r#"UPDATE cluster_group_configs
+               SET members = array_remove(members, $1),
+                   updated_at = now()
+               WHERE $1 = ANY(members)"#,
+        )
+        .bind(cluster_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("delete_cluster_config strip groups: {e}")))?;
+
         let r = sqlx::query("DELETE FROM cluster_configs WHERE name = $1")
             .bind(name)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
-            .map_err(|e| QueryFluxError::Persistence(format!("delete_cluster_config: {e}")))?;
+            .map_err(|e| QueryFluxError::Persistence(format!("delete_cluster_config delete: {e}")))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("delete_cluster_config commit: {e}")))?;
+
         Ok(r.rows_affected() > 0)
     }
 
@@ -244,23 +345,85 @@ impl ClusterConfigStore for PostgresStore {
         Ok(n)
     }
 
-    async fn list_group_configs(&self) -> Result<Vec<ClusterGroupConfigRecord>> {
-        sqlx::query_as::<_, ClusterGroupConfigRecord>(
-            "SELECT * FROM cluster_group_configs ORDER BY name",
+    async fn rename_cluster_config(&self, old_name: &str, new_name: &str) -> Result<ClusterConfigRecord> {
+        let old_name = old_name.trim();
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return Err(QueryFluxError::Persistence(
+                "New cluster name must not be empty".to_string(),
+            ));
+        }
+        if old_name == new_name {
+            return self
+                .get_cluster_config(old_name)
+                .await?
+                .ok_or_else(|| {
+                    QueryFluxError::Persistence(format!("Cluster '{old_name}' not found"))
+                });
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("rename_cluster_config begin: {e}")))?;
+
+        let taken: Option<(i64,)> = sqlx::query_as("SELECT id FROM cluster_configs WHERE name = $1")
+            .bind(new_name)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("rename_cluster_config check new: {e}")))?;
+        if taken.is_some() {
+            return Err(QueryFluxError::Persistence(format!(
+                "Cluster name '{new_name}' is already in use"
+            )));
+        }
+
+        let row = sqlx::query_as::<_, ClusterConfigRecord>(
+            r#"UPDATE cluster_configs
+                  SET name = $2, updated_at = now()
+                WHERE name = $1
+            RETURNING *"#,
         )
-        .fetch_all(&self.pool)
+        .bind(old_name)
+        .bind(new_name)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| QueryFluxError::Persistence(format!("list_group_configs: {e}")))
+        .map_err(|e| {
+            if e.as_database_error().is_some_and(|db| db.code() == Some(Cow::Borrowed("23505"))) {
+                QueryFluxError::Persistence(format!("Cluster name '{new_name}' is already in use"))
+            } else {
+                QueryFluxError::Persistence(format!("rename_cluster_config: {e}"))
+            }
+        })?;
+
+        let Some(record) = row else {
+            return Err(QueryFluxError::Persistence(format!(
+                "Cluster '{old_name}' not found"
+            )));
+        };
+
+        tx.commit()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("rename_cluster_config commit: {e}")))?;
+        Ok(record)
+    }
+
+    async fn list_group_configs(&self) -> Result<Vec<ClusterGroupConfigRecord>> {
+        let q = format!("{CLUSTER_GROUP_CONFIG_SELECT} ORDER BY g.name");
+        sqlx::query_as::<_, ClusterGroupConfigRecord>(&q)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("list_group_configs: {e}")))
     }
 
     async fn get_group_config(&self, name: &str) -> Result<Option<ClusterGroupConfigRecord>> {
-        sqlx::query_as::<_, ClusterGroupConfigRecord>(
-            "SELECT * FROM cluster_group_configs WHERE name = $1",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| QueryFluxError::Persistence(format!("get_group_config: {e}")))
+        let q = format!("{CLUSTER_GROUP_CONFIG_SELECT} WHERE g.name = $1");
+        sqlx::query_as::<_, ClusterGroupConfigRecord>(&q)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("get_group_config: {e}")))
     }
 
     async fn upsert_group_config(
@@ -268,28 +431,84 @@ impl ClusterConfigStore for PostgresStore {
         name: &str,
         cfg: &UpsertClusterGroupConfig,
     ) -> Result<ClusterGroupConfigRecord> {
-        sqlx::query_as::<_, ClusterGroupConfigRecord>(
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("upsert_group_config begin: {e}")))?;
+
+        let mut member_ids: Vec<i64> = Vec::with_capacity(cfg.members.len());
+        for m in &cfg.members {
+            let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM cluster_configs WHERE name = $1")
+                .bind(m)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("upsert_group_config member lookup: {e}")))?;
+            let Some((cid,)) = row else {
+                return Err(QueryFluxError::Persistence(format!(
+                    "Unknown cluster '{m}' in group members (clusters must exist first)"
+                )));
+            };
+            member_ids.push(cid);
+        }
+
+        for sid in &cfg.translation_script_ids {
+            let row: Option<(String,)> = sqlx::query_as("SELECT kind FROM user_scripts WHERE id = $1")
+                .bind(sid)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("upsert_group_config script lookup: {e}")))?;
+            let Some((kind,)) = row else {
+                return Err(QueryFluxError::Persistence(format!(
+                    "Unknown translation script id {sid}"
+                )));
+            };
+            if kind != KIND_TRANSLATION_FIXUP {
+                return Err(QueryFluxError::Persistence(format!(
+                    "Script id {sid} has kind '{kind}', expected '{KIND_TRANSLATION_FIXUP}' for group translation"
+                )));
+            }
+        }
+
+        sqlx::query(
             r#"INSERT INTO cluster_group_configs
-                   (name, enabled, members, max_running_queries, max_queued_queries, strategy)
-               VALUES ($1,$2,$3,$4,$5,$6)
+                   (name, enabled, members, max_running_queries, max_queued_queries, strategy, allow_groups, allow_users, translation_script_ids)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                ON CONFLICT (name) DO UPDATE SET
-                   enabled             = EXCLUDED.enabled,
-                   members             = EXCLUDED.members,
-                   max_running_queries = EXCLUDED.max_running_queries,
-                   max_queued_queries  = EXCLUDED.max_queued_queries,
-                   strategy            = EXCLUDED.strategy,
-                   updated_at          = now()
-               RETURNING *"#,
+                   enabled                = EXCLUDED.enabled,
+                   members                = EXCLUDED.members,
+                   max_running_queries    = EXCLUDED.max_running_queries,
+                   max_queued_queries     = EXCLUDED.max_queued_queries,
+                   strategy               = EXCLUDED.strategy,
+                   allow_groups           = EXCLUDED.allow_groups,
+                   allow_users            = EXCLUDED.allow_users,
+                   translation_script_ids = EXCLUDED.translation_script_ids,
+                   updated_at             = now()"#,
         )
         .bind(name)
         .bind(cfg.enabled)
-        .bind(&cfg.members)
+        .bind(&member_ids)
         .bind(cfg.max_running_queries)
         .bind(cfg.max_queued_queries)
         .bind(&cfg.strategy)
-        .fetch_one(&self.pool)
+        .bind(&cfg.allow_groups)
+        .bind(&cfg.allow_users)
+        .bind(&cfg.translation_script_ids)
+        .execute(&mut *tx)
         .await
-        .map_err(|e| QueryFluxError::Persistence(format!("upsert_group_config: {e}")))
+        .map_err(|e| QueryFluxError::Persistence(format!("upsert_group_config: {e}")))?;
+
+        let q = format!("{CLUSTER_GROUP_CONFIG_SELECT} WHERE g.name = $1");
+        let record = sqlx::query_as::<_, ClusterGroupConfigRecord>(&q)
+            .bind(name)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("upsert_group_config reload: {e}")))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("upsert_group_config commit: {e}")))?;
+        Ok(record)
     }
 
     async fn delete_group_config(&self, name: &str) -> Result<bool> {
@@ -297,7 +516,16 @@ impl ClusterConfigStore for PostgresStore {
             .bind(name)
             .execute(&self.pool)
             .await
-            .map_err(|e| QueryFluxError::Persistence(format!("delete_group_config: {e}")))?;
+            .map_err(|e| {
+                if let Some(db) = e.as_database_error() {
+                    if db.code() == Some(std::borrow::Cow::Borrowed("23503")) {
+                        return QueryFluxError::Persistence(format!(
+                            "Cannot delete group '{name}': still referenced by routing rules"
+                        ));
+                    }
+                }
+                QueryFluxError::Persistence(format!("delete_group_config: {e}"))
+            })?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -307,6 +535,359 @@ impl ClusterConfigStore for PostgresStore {
             .await
             .map_err(|e| QueryFluxError::Persistence(format!("group_configs_count: {e}")))?;
         Ok(n)
+    }
+
+    async fn rename_group_config(&self, old_name: &str, new_name: &str) -> Result<ClusterGroupConfigRecord> {
+        let old_name = old_name.trim();
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return Err(QueryFluxError::Persistence(
+                "New group name must not be empty".to_string(),
+            ));
+        }
+        if old_name == new_name {
+            let q = format!("{CLUSTER_GROUP_CONFIG_SELECT} WHERE g.name = $1");
+            return sqlx::query_as::<_, ClusterGroupConfigRecord>(&q)
+                .bind(old_name)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("rename_group_config: {e}")))?
+                .ok_or_else(|| QueryFluxError::Persistence(format!("Group '{old_name}' not found")));
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("rename_group_config begin: {e}")))?;
+
+        let taken: Option<(i64,)> =
+            sqlx::query_as("SELECT id FROM cluster_group_configs WHERE name = $1")
+                .bind(new_name)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("rename_group_config check new: {e}")))?;
+        if taken.is_some() {
+            return Err(QueryFluxError::Persistence(format!(
+                "Group name '{new_name}' is already in use"
+            )));
+        }
+
+        let updated = sqlx::query(
+            r#"UPDATE cluster_group_configs
+                  SET name = $2, updated_at = now()
+                WHERE name = $1"#,
+        )
+        .bind(old_name)
+        .bind(new_name)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            if e.as_database_error().is_some_and(|db| db.code() == Some(Cow::Borrowed("23505"))) {
+                QueryFluxError::Persistence(format!("Group name '{new_name}' is already in use"))
+            } else {
+                QueryFluxError::Persistence(format!("rename_group_config update group: {e}"))
+            }
+        })?;
+
+        if updated.rows_affected() == 0 {
+            return Err(QueryFluxError::Persistence(format!(
+                "Group '{old_name}' not found"
+            )));
+        }
+
+        sqlx::query(
+            r#"UPDATE routing_settings
+                  SET routing_fallback = $1
+                WHERE singleton = true
+                  AND routing_fallback = $2"#,
+        )
+        .bind(new_name)
+        .bind(old_name)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("rename_group_config routing_fallback: {e}")))?;
+
+        let q = format!("{CLUSTER_GROUP_CONFIG_SELECT} WHERE g.name = $1");
+        let record = sqlx::query_as::<_, ClusterGroupConfigRecord>(&q)
+            .bind(new_name)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("rename_group_config reload: {e}")))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("rename_group_config commit: {e}")))?;
+        Ok(record)
+    }
+}
+
+#[async_trait]
+impl ScriptLibraryStore for PostgresStore {
+    async fn list_user_scripts(&self, kind: Option<&str>) -> Result<Vec<UserScriptRecord>> {
+        let rows = if let Some(k) = kind {
+            sqlx::query_as::<_, UserScriptRecord>(
+                "SELECT * FROM user_scripts WHERE kind = $1 ORDER BY name",
+            )
+            .bind(k)
+            .fetch_all(&self.pool)
+            .await
+        } else {
+            sqlx::query_as::<_, UserScriptRecord>("SELECT * FROM user_scripts ORDER BY name")
+                .fetch_all(&self.pool)
+                .await
+        }
+        .map_err(|e| QueryFluxError::Persistence(format!("list_user_scripts: {e}")))?;
+        Ok(rows)
+    }
+
+    async fn get_user_script(&self, id: i64) -> Result<Option<UserScriptRecord>> {
+        sqlx::query_as::<_, UserScriptRecord>("SELECT * FROM user_scripts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("get_user_script: {e}")))
+    }
+
+    async fn create_user_script(&self, body: &UpsertUserScript) -> Result<UserScriptRecord> {
+        if !is_valid_script_kind(&body.kind) {
+            return Err(QueryFluxError::Persistence(format!(
+                "Invalid script kind '{}'",
+                body.kind
+            )));
+        }
+        sqlx::query_as::<_, UserScriptRecord>(
+            r#"INSERT INTO user_scripts (name, description, kind, body)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *"#,
+        )
+        .bind(&body.name)
+        .bind(&body.description)
+        .bind(&body.kind)
+        .bind(&body.body)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("create_user_script: {e}")))
+    }
+
+    async fn update_user_script(&self, id: i64, body: &UpsertUserScript) -> Result<UserScriptRecord> {
+        if !is_valid_script_kind(&body.kind) {
+            return Err(QueryFluxError::Persistence(format!(
+                "Invalid script kind '{}'",
+                body.kind
+            )));
+        }
+        sqlx::query_as::<_, UserScriptRecord>(
+            r#"UPDATE user_scripts SET
+                   name = $2,
+                   description = $3,
+                   kind = $4,
+                   body = $5,
+                   updated_at = now()
+               WHERE id = $1
+               RETURNING *"#,
+        )
+        .bind(id)
+        .bind(&body.name)
+        .bind(&body.description)
+        .bind(&body.kind)
+        .bind(&body.body)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("update_user_script: {e}")))?
+        .ok_or_else(|| QueryFluxError::Persistence(format!("user script id {id} not found")))
+    }
+
+    async fn delete_user_script(&self, id: i64) -> Result<bool> {
+        let r = sqlx::query("DELETE FROM user_scripts WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("delete_user_script: {e}")))?;
+        Ok(r.rows_affected() > 0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ProxySettingsStore — `security_config` backed by `security_settings` (singleton JSON)
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl ProxySettingsStore for PostgresStore {
+    async fn get_proxy_setting(&self, key: &str) -> Result<Option<serde_json::Value>> {
+        if key != "security_config" {
+            return Ok(None);
+        }
+        let row: Option<(serde_json::Value,)> = sqlx::query_as(
+            r#"SELECT config FROM security_settings WHERE singleton = TRUE"#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("get_proxy_setting: {e}")))?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    async fn set_proxy_setting(&self, key: &str, value: serde_json::Value) -> Result<()> {
+        if key != "security_config" {
+            return Ok(());
+        }
+        sqlx::query(
+            r#"INSERT INTO security_settings (singleton, config) VALUES (TRUE, $1)
+               ON CONFLICT (singleton) DO UPDATE SET config = EXCLUDED.config, updated_at = now()"#,
+        )
+        .bind(&value)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("set_proxy_setting: {e}")))?;
+        Ok(())
+    }
+
+    async fn delete_proxy_setting(&self, key: &str) -> Result<()> {
+        if key != "security_config" {
+            return Ok(());
+        }
+        sqlx::query(
+            r#"UPDATE security_settings SET config = '{}'::jsonb, updated_at = now() WHERE singleton = TRUE"#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("delete_proxy_setting: {e}")))?;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RoutingConfigStore — expand/collapse routers ↔ `routing_rules` slices
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl RoutingConfigStore for PostgresStore {
+    async fn load_routing_config(&self) -> Result<Option<LoadedRoutingConfig>> {
+        let row: Option<(bool, String, Option<i64>)> = sqlx::query_as(
+            r#"SELECT routing_persist_active, routing_fallback, fallback_group_id
+                 FROM routing_settings
+                WHERE singleton = true"#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("load_routing_config settings: {e}")))?;
+
+        let Some((persist_active, fallback, fallback_gid)) = row else {
+            return Ok(None);
+        };
+        if !persist_active {
+            return Ok(None);
+        }
+
+        let id_rows: Vec<(i64, String)> = sqlx::query_as(r#"SELECT id, name FROM cluster_group_configs"#)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("load_routing_config groups: {e}")))?;
+        let id_to_name: HashMap<i64, String> = id_rows.into_iter().collect();
+
+        let sql_rows: Vec<(i32, i32, i32, Option<i64>, sqlx::types::Json<serde_json::Value>)> =
+            sqlx::query_as(
+                r#"SELECT sort_order, router_logical_index, slice_index, target_group_id, definition
+                     FROM routing_rules
+                    ORDER BY sort_order ASC, id ASC"#,
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("load_routing_config rules: {e}")))?;
+
+        let persist_rows: Vec<RoutingRulePersistRow> = sql_rows
+            .into_iter()
+            .map(
+                |(sort_order, router_logical_index, slice_index, target_group_id, def)| {
+                    RoutingRulePersistRow {
+                        sort_order,
+                        router_logical_index,
+                        slice_index,
+                        target_group_id,
+                        definition: def.0,
+                    }
+                },
+            )
+            .collect();
+
+        let routers = collapse_rows_to_routers(&persist_rows, &id_to_name)?;
+
+        Ok(Some(LoadedRoutingConfig {
+            routing_fallback: fallback,
+            routing_fallback_group_id: fallback_gid,
+            routers,
+        }))
+    }
+
+    async fn replace_routing_config(
+        &self,
+        routing_fallback: &str,
+        routing_fallback_group_id: Option<i64>,
+        routers: &[serde_json::Value],
+    ) -> Result<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("replace_routing_config begin: {e}")))?;
+
+        sqlx::query(
+            r#"UPDATE routing_settings
+               SET routing_fallback = $1,
+                   fallback_group_id = $2,
+                   routing_persist_active = true
+             WHERE singleton = true"#,
+        )
+        .bind(routing_fallback)
+        .bind(routing_fallback_group_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("replace_routing_config settings: {e}")))?;
+
+        sqlx::query("DELETE FROM routing_rules")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("replace_routing_config delete: {e}")))?;
+
+        let rows: Vec<(String, i64)> = sqlx::query_as(r#"SELECT name, id FROM cluster_group_configs"#)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("replace_routing_config groups: {e}")))?;
+        let name_to_id: HashMap<String, i64> = rows.into_iter().collect();
+
+        let mut sort_key: i32 = 0;
+        for (logical_idx, def) in routers.iter().enumerate() {
+            let slices = expand_router_for_persistence(def, &name_to_id).map_err(|e| {
+                QueryFluxError::Persistence(format!("replace_routing_config expand: {e}"))
+            })?;
+            if slices.is_empty() {
+                return Err(QueryFluxError::Persistence(format!(
+                    "router at index {logical_idx} produced no routing slices (empty mappings?)"
+                )));
+            }
+            for (slice_i, (stripped_def, gid)) in slices.iter().enumerate() {
+                sqlx::query(
+                    r#"INSERT INTO routing_rules (sort_order, router_logical_index, slice_index, definition, target_group_id)
+                       VALUES ($1, $2, $3, $4, $5)"#,
+                )
+                .bind(sort_key)
+                .bind(logical_idx as i32)
+                .bind(slice_i as i32)
+                .bind(stripped_def)
+                .bind(gid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("replace_routing_config insert: {e}")))?;
+                sort_key = sort_key
+                    .checked_add(1)
+                    .ok_or_else(|| QueryFluxError::Persistence("too many routing slices".into()))?;
+            }
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("replace_routing_config commit: {e}")))?;
+        Ok(())
     }
 }
 
@@ -484,9 +1065,10 @@ impl MetricsStore for PostgresStore {
                  catalog, db_name, sql_preview, translated_sql, status, routing_trace,
                  queue_duration_ms, execution_duration_ms, rows_returned, error_message,
                  created_at, engine_elapsed_time_ms, cpu_time_ms, processed_rows, processed_bytes,
-                 physical_input_bytes, peak_memory_bytes, spilled_bytes, total_splits)
+                 physical_input_bytes, peak_memory_bytes, spilled_bytes, total_splits,
+                 cluster_group_id, cluster_id)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-                       $21,$22,$23,$24,$25,$26,$27,$28,$29)"#,
+                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)"#,
         )
         .bind(&r.proxy_query_id)
         .bind(&r.backend_query_id)
@@ -517,6 +1099,8 @@ impl MetricsStore for PostgresStore {
         .bind(peak_mem)
         .bind(spilled)
         .bind(splits)
+        .bind(r.cluster_group_config_id)
+        .bind(r.cluster_config_id)
         .execute(&self.pool)
         .await
         .map_err(|e| QueryFluxError::Persistence(format!("Insert query_records: {e}")))?;

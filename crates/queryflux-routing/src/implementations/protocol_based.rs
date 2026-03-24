@@ -28,6 +28,7 @@ impl RouterTrait for ProtocolBasedRouter {
         _sql: &str,
         _session: &SessionContext,
         frontend_protocol: &FrontendProtocol,
+        _auth_ctx: Option<&queryflux_auth::AuthContext>,
     ) -> Result<Option<ClusterGroupName>> {
         let group = match frontend_protocol {
             FrontendProtocol::TrinoHttp => self.trino_http.clone(),

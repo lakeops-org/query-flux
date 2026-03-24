@@ -50,7 +50,10 @@ impl TrinoClient {
     pub fn new(base_url: &str) -> Self {
         Self {
             http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
+                // E2E queries can take longer than Trino's/StarRocks' default
+                // planning/execution budgets; keep this high enough to avoid
+                // flaky timeouts during CI/local Docker startup.
+                .timeout(Duration::from_secs(120))
                 .build()
                 .expect("Failed to build reqwest client"),
             base_url: base_url.trim_end_matches('/').to_string(),

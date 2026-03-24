@@ -1,3 +1,5 @@
+pub mod http;
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -14,6 +16,9 @@ use queryflux_core::{
 use tracing::debug;
 
 use crate::EngineAdapterTrait;
+use queryflux_core::engine_registry::{
+    AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
+};
 
 /// DuckDB embedded engine adapter.
 ///
@@ -33,7 +38,21 @@ impl DuckDbAdapter {
         group_name: ClusterGroupName,
         database_path: Option<String>,
     ) -> Result<Self> {
-        let conn = match database_path.as_deref() {
+        Self::new_with_token(cluster_name, group_name, database_path, None)
+    }
+
+    /// Create a new DuckDB adapter, optionally injecting a MotherDuck token.
+    ///
+    /// When `database_path` starts with `"md:"` and `motherduck_token` is provided,
+    /// the token is appended to the connection string as a query parameter.
+    pub fn new_with_token(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        database_path: Option<String>,
+        motherduck_token: Option<String>,
+    ) -> Result<Self> {
+        let resolved_path = build_connection_string(database_path, motherduck_token);
+        let conn = match resolved_path.as_deref() {
             Some(path) => Connection::open(path),
             None => Connection::open_in_memory(),
         }
@@ -47,10 +66,40 @@ impl DuckDbAdapter {
     }
 }
 
+/// Build the DuckDB connection string.
+///
+/// For MotherDuck (`md:` prefix) with a token, appends `motherduck_token=<token>` as a
+/// query parameter. Local file paths and in-memory (None) are returned unchanged.
+fn build_connection_string(
+    database_path: Option<String>,
+    motherduck_token: Option<String>,
+) -> Option<String> {
+    match (database_path, motherduck_token) {
+        (None, _) => None,
+        (Some(path), None) => Some(path),
+        (Some(path), Some(token)) if path.starts_with("md:") => {
+            // Append token to the connection string.
+            // md:dbname  →  md:dbname?motherduck_token=<token>
+            // md:        →  md:?motherduck_token=<token>
+            if path.contains('?') {
+                Some(format!("{path}&motherduck_token={token}"))
+            } else {
+                Some(format!("{path}?motherduck_token={token}"))
+            }
+        }
+        (Some(path), Some(_)) => Some(path), // token ignored for non-MotherDuck paths
+    }
+}
+
 #[async_trait]
 impl EngineAdapterTrait for DuckDbAdapter {
     /// Not used — DuckDB queries go through `execute_as_arrow`.
-    async fn submit_query(&self, _sql: &str, _session: &SessionContext) -> Result<QueryExecution> {
+    async fn submit_query(
+        &self,
+        _sql: &str,
+        _session: &SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
+    ) -> Result<QueryExecution> {
         Err(QueryFluxError::Engine(
             "DuckDB requires execute_as_arrow; use the Arrow execution path".to_string(),
         ))
@@ -92,6 +141,7 @@ impl EngineAdapterTrait for DuckDbAdapter {
         &self,
         sql: &str,
         _session: &SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
     ) -> Result<crate::ArrowStream> {
         debug!(cluster = %self.cluster_name, "Executing DuckDB query as Arrow");
         let conn = Arc::clone(&self.conn);
@@ -275,5 +325,47 @@ impl DuckDbAdapter {
         })
         .await
         .map_err(|e| QueryFluxError::Engine(format!("spawn_blocking failed: {e}")))?
+    }
+}
+
+impl DuckDbAdapter {
+    pub fn descriptor() -> EngineDescriptor {
+        EngineDescriptor {
+            engine_key: "duckDb",
+            display_name: "DuckDB",
+            description: "Embedded in-process OLAP database. Use databasePath for a local file or 'md:' prefix for MotherDuck (cloud DuckDB).",
+            hex: "FCC021",
+            connection_type: ConnectionType::Embedded,
+            default_port: None,
+            endpoint_example: None,
+            supported_auth: vec![AuthType::Bearer],
+            implemented: true,
+            config_fields: vec![
+                ConfigField {
+                    key: "databasePath",
+                    label: "Database path",
+                    description: "Local DuckDB file path, 'md:' for MotherDuck default database, or 'md:mydb' for a named MotherDuck database. Omit for an in-memory database.",
+                    field_type: FieldType::Path,
+                    required: false,
+                    example: Some("md:my_database"),
+                },
+                ConfigField {
+                    key: "auth.type",
+                    label: "Auth type",
+                    description: "Set to 'bearer' for MotherDuck (requires a MotherDuck token). Leave unset for local DuckDB.",
+                    field_type: FieldType::Text,
+                    required: false,
+                    example: Some("bearer"),
+                },
+                ConfigField {
+                    key: "auth.token",
+                    label: "MotherDuck token",
+                    description: "MotherDuck access token. Required when databasePath starts with 'md:'.",
+                    field_type: FieldType::Secret,
+                    required: false,
+                    example: None,
+                },
+            ],
+        }
     }
 }

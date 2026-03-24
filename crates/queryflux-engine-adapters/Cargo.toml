@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 queryflux-core = { workspace = true }
+queryflux-auth = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
@@ -20,3 +21,9 @@ mysql_async = { workspace = true }
 arrow = { workspace = true }
 futures = { workspace = true }
 tokio-stream = { workspace = true }
+chrono = { workspace = true }
+aws-sdk-athena = { workspace = true }
+aws-sdk-sts = { workspace = true }
+aws-config = { workspace = true }
+aws-credential-types = { workspace = true }
+aws-types = { workspace = true }

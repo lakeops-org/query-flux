@@ -1,3 +1,4 @@
+use queryflux_auth::AuthContext;
 use queryflux_core::{
     error::Result,
     query::{ClusterGroupName, FrontendProtocol},
@@ -43,9 +44,10 @@ impl RouterChain {
         sql: &str,
         session: &SessionContext,
         frontend_protocol: &FrontendProtocol,
+        auth_ctx: Option<&AuthContext>,
     ) -> Result<ClusterGroupName> {
         for router in &self.routers {
-            if let Some(group) = router.route(sql, session, frontend_protocol).await? {
+            if let Some(group) = router.route(sql, session, frontend_protocol, auth_ctx).await? {
                 return Ok(group);
             }
         }
@@ -58,11 +60,12 @@ impl RouterChain {
         sql: &str,
         session: &SessionContext,
         frontend_protocol: &FrontendProtocol,
+        auth_ctx: Option<&AuthContext>,
     ) -> Result<(ClusterGroupName, RoutingTrace)> {
         let mut decisions = Vec::with_capacity(self.routers.len());
 
         for router in &self.routers {
-            match router.route(sql, session, frontend_protocol).await? {
+            match router.route(sql, session, frontend_protocol, auth_ctx).await? {
                 Some(group) => {
                     decisions.push(RouterDecision {
                         router_type: router.type_name(),

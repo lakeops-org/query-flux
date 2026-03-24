@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 pub struct ClusterState {
     pub cluster_name: ClusterName,
     pub group_name: ClusterGroupName,
+    /// Postgres `cluster_configs.id` when config is DB-backed; `None` for YAML-only deployments.
+    pub cluster_config_id: Option<i64>,
+    /// Postgres `cluster_group_configs.id` for this group membership row.
+    pub cluster_group_config_id: Option<i64>,
     pub engine_type: EngineType,
     pub endpoint: Option<String>,
     max_running_queries: Arc<AtomicU64>,
@@ -27,6 +31,8 @@ impl ClusterState {
     pub fn new(
         cluster_name: ClusterName,
         group_name: ClusterGroupName,
+        cluster_config_id: Option<i64>,
+        cluster_group_config_id: Option<i64>,
         engine_type: EngineType,
         endpoint: Option<String>,
         max_running_queries: u64,
@@ -35,6 +41,8 @@ impl ClusterState {
         Self {
             cluster_name,
             group_name,
+            cluster_config_id,
+            cluster_group_config_id,
             engine_type,
             endpoint,
             max_running_queries: Arc::new(AtomicU64::new(max_running_queries)),
@@ -109,6 +117,8 @@ impl ClusterState {
         ClusterStateSnapshot {
             cluster_name: self.cluster_name.clone(),
             group_name: self.group_name.clone(),
+            cluster_config_id: self.cluster_config_id,
+            cluster_group_config_id: self.cluster_group_config_id,
             engine_type: self.engine_type.clone(),
             endpoint: self.endpoint.clone(),
             running_queries: self.running_queries(),
@@ -125,6 +135,8 @@ impl ClusterState {
 pub struct ClusterStateSnapshot {
     pub cluster_name: ClusterName,
     pub group_name: ClusterGroupName,
+    pub cluster_config_id: Option<i64>,
+    pub cluster_group_config_id: Option<i64>,
     pub engine_type: EngineType,
     /// The HTTP endpoint of the cluster (e.g. `http://trino-1:8080`).
     pub endpoint: Option<String>,

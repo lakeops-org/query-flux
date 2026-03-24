@@ -20,6 +20,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, info, warn};
 
+use queryflux_auth::Credentials;
 use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{FrontendProtocol, QueryStats},
@@ -232,11 +233,26 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
 
     let protocol = FrontendProtocol::MySqlWire;
 
-    let (group, _trace) = match state
-        .router_chain
-        .route_with_trace(sql, session, &protocol)
-        .await
-    {
+    // Authenticate — derive AuthContext from session (Phase 1: NoneAuthProvider).
+    let creds = Credentials {
+        username: session.user().map(|s| s.to_string()),
+        ..Default::default()
+    };
+    let auth_ctx = match state.auth_provider.authenticate(&creds).await {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            write_packet(writer, start_seq, &build_err(1045, &e.to_string())).await?;
+            return Ok(());
+        }
+    };
+
+    let routing_result = {
+        let live = state.live.read().await;
+        live.router_chain
+            .route_with_trace(sql, session, &protocol, Some(&auth_ctx))
+            .await
+    };
+    let (group, _trace) = match routing_result {
         Ok(r) => r,
         Err(e) => {
             write_packet(writer, start_seq, &build_err(1105, &e.to_string())).await?;
@@ -253,7 +269,7 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
     let sql2 = sql.to_string();
 
     let exec_task = tokio::spawn(async move {
-        execute_to_sink(&state2, sql2, session2, protocol, group, &mut sink).await
+        execute_to_sink(&state2, sql2, session2, protocol, group, &mut sink, &auth_ctx).await
         // `sink` drops here — closes tx — rx.recv() will return None after last packet
     });
 
