@@ -1,4 +1,5 @@
- //! Split [`RouterConfig`]-shaped JSON into DB rows with `target_group_id` columns (no group names
+
+//! Split [`RouterConfig`]-shaped JSON into DB rows with `target_group_id` columns (no group names
 //! inside `definition`), and merge back on load.
 
 use queryflux_core::error::{QueryFluxError, Result};
@@ -70,9 +71,9 @@ pub fn expand_router_for_persistence(
             let mut out = Vec::new();
             if let Some(obj) = map_field(router, "headerValueToGroup", "header_value_to_group") {
                 for (hv_key, gv) in obj {
-                    let name = gv
-                        .as_str()
-                        .ok_or_else(|| QueryFluxError::Persistence("header map value must be a string".into()))?;
+                    let name = gv.as_str().ok_or_else(|| {
+                        QueryFluxError::Persistence("header map value must be a string".into())
+                    })?;
                     if name.is_empty() {
                         continue;
                     }
@@ -93,9 +94,9 @@ pub fn expand_router_for_persistence(
             let mut out = Vec::new();
             if let Some(obj) = map_field(router, "userToGroup", "user_to_group") {
                 for (user, gv) in obj {
-                    let name = gv
-                        .as_str()
-                        .ok_or_else(|| QueryFluxError::Persistence("userToGroup value must be a string".into()))?;
+                    let name = gv.as_str().ok_or_else(|| {
+                        QueryFluxError::Persistence("userToGroup value must be a string".into())
+                    })?;
                     if name.is_empty() {
                         continue;
                     }
@@ -115,9 +116,9 @@ pub fn expand_router_for_persistence(
             let mut out = Vec::new();
             if let Some(obj) = map_field(router, "tagToGroup", "tag_to_group") {
                 for (tag, gv) in obj {
-                    let name = gv
-                        .as_str()
-                        .ok_or_else(|| QueryFluxError::Persistence("tagToGroup value must be a string".into()))?;
+                    let name = gv.as_str().ok_or_else(|| {
+                        QueryFluxError::Persistence("tagToGroup value must be a string".into())
+                    })?;
                     if name.is_empty() {
                         continue;
                     }
@@ -222,7 +223,8 @@ pub fn collapse_rows_to_routers(
             i += 1;
         }
 
-        if chunk.len() == 1 && is_legacy_full_router(&chunk[0].definition, chunk[0].target_group_id) {
+        if chunk.len() == 1 && is_legacy_full_router(&chunk[0].definition, chunk[0].target_group_id)
+        {
             routers.push(chunk[0].definition.clone());
             continue;
         }
@@ -264,9 +266,9 @@ fn merge_proto_chunk(
             .get("protocol")
             .and_then(|x| x.as_str())
             .ok_or_else(|| QueryFluxError::Persistence("_qfProtoLeg missing protocol".into()))?;
-        let gid = leg
-            .target_group_id
-            .ok_or_else(|| QueryFluxError::Persistence("_qfProtoLeg missing target_group_id".into()))?;
+        let gid = leg.target_group_id.ok_or_else(|| {
+            QueryFluxError::Persistence("_qfProtoLeg missing target_group_id".into())
+        })?;
         let name = name_for_id(gid, id_to_name)?;
         m.insert(proto.to_string(), json!(name));
     }
@@ -289,10 +291,12 @@ fn merge_header_chunk(
             .definition
             .get("headerValue")
             .and_then(|x| x.as_str())
-            .ok_or_else(|| QueryFluxError::Persistence("_qfHeaderLeg missing headerValue".into()))?;
-        let gid = leg
-            .target_group_id
-            .ok_or_else(|| QueryFluxError::Persistence("_qfHeaderLeg missing target_group_id".into()))?;
+            .ok_or_else(|| {
+                QueryFluxError::Persistence("_qfHeaderLeg missing headerValue".into())
+            })?;
+        let gid = leg.target_group_id.ok_or_else(|| {
+            QueryFluxError::Persistence("_qfHeaderLeg missing target_group_id".into())
+        })?;
         let name = name_for_id(gid, id_to_name)?;
         map.insert(hv.to_string(), json!(name));
     }
@@ -314,9 +318,9 @@ fn merge_user_chunk(
             .get("username")
             .and_then(|x| x.as_str())
             .ok_or_else(|| QueryFluxError::Persistence("_qfUserLeg missing username".into()))?;
-        let gid = leg
-            .target_group_id
-            .ok_or_else(|| QueryFluxError::Persistence("_qfUserLeg missing target_group_id".into()))?;
+        let gid = leg.target_group_id.ok_or_else(|| {
+            QueryFluxError::Persistence("_qfUserLeg missing target_group_id".into())
+        })?;
         let name = name_for_id(gid, id_to_name)?;
         map.insert(user.to_string(), json!(name));
     }
@@ -337,9 +341,9 @@ fn merge_tag_chunk(
             .get("tag")
             .and_then(|x| x.as_str())
             .ok_or_else(|| QueryFluxError::Persistence("_qfTagLeg missing tag".into()))?;
-        let gid = leg
-            .target_group_id
-            .ok_or_else(|| QueryFluxError::Persistence("_qfTagLeg missing target_group_id".into()))?;
+        let gid = leg.target_group_id.ok_or_else(|| {
+            QueryFluxError::Persistence("_qfTagLeg missing target_group_id".into())
+        })?;
         let name = name_for_id(gid, id_to_name)?;
         map.insert(tag.to_string(), json!(name));
     }
@@ -361,9 +365,9 @@ fn merge_regex_chunk(
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string();
-        let gid = leg
-            .target_group_id
-            .ok_or_else(|| QueryFluxError::Persistence("_qfRegexLeg missing target_group_id".into()))?;
+        let gid = leg.target_group_id.ok_or_else(|| {
+            QueryFluxError::Persistence("_qfRegexLeg missing target_group_id".into())
+        })?;
         let name = name_for_id(gid, id_to_name)?;
         rules.push(json!({
             "regex": regex,
@@ -376,16 +380,18 @@ fn merge_regex_chunk(
     }))
 }
 
-fn merge_compound_chunk(leg: &RoutingRulePersistRow, id_to_name: &HashMap<i64, String>) -> Result<Value> {
+fn merge_compound_chunk(
+    leg: &RoutingRulePersistRow,
+    id_to_name: &HashMap<i64, String>,
+) -> Result<Value> {
     let gid = leg.target_group_id.ok_or_else(|| {
         QueryFluxError::Persistence("compound router row missing target_group_id".into())
     })?;
     let name = name_for_id(gid, id_to_name)?;
-    let mut m = leg
-        .definition
-        .as_object()
-        .cloned()
-        .ok_or_else(|| QueryFluxError::Persistence("compound definition must be object".into()))?;
+    let mut m =
+        leg.definition.as_object().cloned().ok_or_else(|| {
+            QueryFluxError::Persistence("compound definition must be object".into())
+        })?;
     m.insert("targetGroup".to_string(), json!(name));
     Ok(Value::Object(m))
 }

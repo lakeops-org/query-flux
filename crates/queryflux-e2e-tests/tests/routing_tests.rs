@@ -43,10 +43,7 @@ macro_rules! require_group {
 async fn unknown_x_qf_group_value_uses_fallback() {
     require_group!(GROUP_TRINO);
     let r = client()
-        .execute(
-            "SELECT 7 AS n",
-            &[("x-qf-group", "not-a-configured-group")],
-        )
+        .execute("SELECT 7 AS n", &[("x-qf-group", "not-a-configured-group")])
         .await
         .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);

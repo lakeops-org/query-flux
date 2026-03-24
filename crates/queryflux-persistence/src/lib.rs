@@ -117,7 +117,11 @@ pub trait ClusterConfigStore: Send + Sync {
     /// Returns the number of stored cluster configs (used for first-run seeding).
     async fn cluster_configs_count(&self) -> Result<i64>;
     /// Rename a cluster row. The stable `id` is unchanged; group `members` arrays store ids and need no update.
-    async fn rename_cluster_config(&self, old_name: &str, new_name: &str) -> Result<ClusterConfigRecord>;
+    async fn rename_cluster_config(
+        &self,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<ClusterConfigRecord>;
 
     // --- Cluster group configs ---
     async fn list_group_configs(&self) -> Result<Vec<ClusterGroupConfigRecord>>;
@@ -131,7 +135,11 @@ pub trait ClusterConfigStore: Send + Sync {
     /// Returns the number of stored group configs (used for first-run seeding).
     async fn group_configs_count(&self) -> Result<i64>;
     /// Rename a cluster group. `routing_settings.routing_fallback` is updated when it matched the old name.
-    async fn rename_group_config(&self, old_name: &str, new_name: &str) -> Result<ClusterGroupConfigRecord>;
+    async fn rename_group_config(
+        &self,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<ClusterGroupConfigRecord>;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +151,11 @@ pub trait ScriptLibraryStore: Send + Sync {
     async fn list_user_scripts(&self, kind: Option<&str>) -> Result<Vec<UserScriptRecord>>;
     async fn get_user_script(&self, id: i64) -> Result<Option<UserScriptRecord>>;
     async fn create_user_script(&self, body: &UpsertUserScript) -> Result<UserScriptRecord>;
-    async fn update_user_script(&self, id: i64, body: &UpsertUserScript) -> Result<UserScriptRecord>;
+    async fn update_user_script(
+        &self,
+        id: i64,
+        body: &UpsertUserScript,
+    ) -> Result<UserScriptRecord>;
     async fn delete_user_script(&self, id: i64) -> Result<bool>;
 }
 

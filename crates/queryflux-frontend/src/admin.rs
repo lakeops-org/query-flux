@@ -10,7 +10,7 @@ use axum::{
 };
 use queryflux_core::{
     config::{
-        AuthConfig, AuthorizationConfig, AuthorizationProviderConfig, AuthProviderConfig,
+        AuthConfig, AuthProviderConfig, AuthorizationConfig, AuthorizationProviderConfig,
         ClusterGroupConfig, OpenFgaCredentials, RouterConfig,
     },
     engine_registry::EngineRegistry,
@@ -20,7 +20,8 @@ use queryflux_core::{
 use queryflux_metrics::prometheus_store::PrometheusMetrics;
 use queryflux_persistence::{
     cluster_config::{
-        ClusterGroupConfigRecord, RenameConfigRequest, UpsertClusterConfig, UpsertClusterGroupConfig,
+        ClusterGroupConfigRecord, RenameConfigRequest, UpsertClusterConfig,
+        UpsertClusterGroupConfig,
     },
     query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
     routing_json::{enrich_routers_for_api, resolve_routers_for_storage},
@@ -190,10 +191,7 @@ impl SecurityConfigDto {
             group_name_attribute: l.group_name_attribute.clone(),
         });
 
-        let static_user_count = auth
-            .static_users
-            .as_ref()
-            .map(|s| s.users.len());
+        let static_user_count = auth.static_users.as_ref().map(|s| s.users.len());
 
         let authorization_provider = match authz.provider {
             AuthorizationProviderConfig::None => "none",
@@ -216,8 +214,7 @@ impl SecurityConfigDto {
         let group_authorization = groups
             .iter()
             .filter(|(_, g)| {
-                !g.authorization.allow_groups.is_empty()
-                    || !g.authorization.allow_users.is_empty()
+                !g.authorization.allow_groups.is_empty() || !g.authorization.allow_users.is_empty()
             })
             .map(|(name, g)| {
                 (
@@ -249,7 +246,10 @@ pub struct RoutingConfigDto {
     #[serde(rename = "routingFallback")]
     pub routing_fallback: String,
     /// Stable DB id of the fallback cluster group (when known).
-    #[serde(rename = "routingFallbackGroupId", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "routingFallbackGroupId",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub routing_fallback_group_id: Option<i64>,
     pub routers: Vec<serde_json::Value>,
 }
@@ -283,11 +283,7 @@ pub struct UpsertSecurityConfig {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UpsertRoutingConfig {
     /// Accept `routingFallback` (canonical) or legacy `routing_fallback` from older clients.
-    #[serde(
-        rename = "routingFallback",
-        alias = "routing_fallback",
-        default
-    )]
+    #[serde(rename = "routingFallback", alias = "routing_fallback", default)]
     pub routing_fallback: String,
     #[serde(rename = "routingFallbackGroupId", default)]
     pub routing_fallback_group_id: Option<i64>,
@@ -710,29 +706,22 @@ async fn update_cluster_handler(
     {
         Ok(false) => (StatusCode::NOT_FOUND, "Cluster not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        Ok(true) => {
-            match cluster_manager
-                .cluster_state(&group, &cluster_name)
-                .await
-            {
-                Ok(Some(s)) => Json(ClusterStateDto {
-                    group_name: s.group_name.0,
-                    cluster_name: s.cluster_name.0,
-                    engine_type: format!("{:?}", s.engine_type),
-                    endpoint: s.endpoint,
-                    running_queries: s.running_queries,
-                    queued_queries: s.queued_queries,
-                    max_running_queries: s.max_running_queries,
-                    is_healthy: s.is_healthy,
-                    enabled: s.enabled,
-                })
-                .into_response(),
-                Ok(None) => {
-                    (StatusCode::NOT_FOUND, "Cluster not found after update").into_response()
-                }
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-            }
-        }
+        Ok(true) => match cluster_manager.cluster_state(&group, &cluster_name).await {
+            Ok(Some(s)) => Json(ClusterStateDto {
+                group_name: s.group_name.0,
+                cluster_name: s.cluster_name.0,
+                engine_type: format!("{:?}", s.engine_type),
+                endpoint: s.endpoint,
+                running_queries: s.running_queries,
+                queued_queries: s.queued_queries,
+                max_running_queries: s.max_running_queries,
+                is_healthy: s.is_healthy,
+                enabled: s.enabled,
+            })
+            .into_response(),
+            Ok(None) => (StatusCode::NOT_FOUND, "Cluster not found after update").into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
     }
 }
 
@@ -1053,7 +1042,11 @@ async fn put_security_config_handler(
     Json(body): Json<UpsertSecurityConfig>,
 ) -> impl IntoResponse {
     let Some(store) = &state.admin_store else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
+            .into_response();
     };
     let value = serde_json::to_value(&body).unwrap_or(serde_json::Value::Null);
     match store.set_proxy_setting("security_config", value).await {
@@ -1067,7 +1060,11 @@ async fn put_routing_config_handler(
     Json(body): Json<UpsertRoutingConfig>,
 ) -> impl IntoResponse {
     let Some(store) = &state.admin_store else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Postgres persistence not configured").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
+            .into_response();
     };
     let groups = match store.list_group_configs().await {
         Ok(g) => g,

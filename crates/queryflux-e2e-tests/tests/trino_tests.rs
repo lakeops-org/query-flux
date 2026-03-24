@@ -102,7 +102,11 @@ async fn tpch_trino_customer_count() {
         .await
         .expect("query");
     assert!(r.error.is_none(), "error: {:?}", r.error);
-    assert_eq!(first_i64(&r), 1500, "tpch.tiny.customer should have 1500 rows");
+    assert_eq!(
+        first_i64(&r),
+        1500,
+        "tpch.tiny.customer should have 1500 rows"
+    );
 }
 
 #[tokio::test]
@@ -114,5 +118,9 @@ async fn tpch_trino_orders_count() {
         .await
         .expect("query");
     assert!(r.error.is_none(), "error: {:?}", r.error);
-    assert_eq!(first_i64(&r), 15000, "tpch.tiny.orders should have 15000 rows");
+    assert_eq!(
+        first_i64(&r),
+        15000,
+        "tpch.tiny.orders should have 15000 rows"
+    );
 }

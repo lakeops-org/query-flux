@@ -76,9 +76,7 @@ impl TrinoAdapter {
         cluster_name_str: &str,
     ) -> Result<Self> {
         let endpoint = cfg.endpoint.clone().ok_or_else(|| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': missing endpoint"
-            ))
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
         })?;
         let tls_skip = cfg
             .tls
@@ -292,7 +290,13 @@ impl EngineAdapterTrait for TrinoAdapter {
         _credentials: &queryflux_auth::QueryCredentials,
     ) -> Result<crate::ArrowStream> {
         // Submit query — get initial body + first next_uri.
-        let execution = self.submit_query(sql, session, &queryflux_auth::QueryCredentials::ServiceAccount).await?;
+        let execution = self
+            .submit_query(
+                sql,
+                session,
+                &queryflux_auth::QueryCredentials::ServiceAccount,
+            )
+            .await?;
         let QueryExecution::Async {
             initial_body,
             next_uri: first_next_uri,
@@ -439,7 +443,13 @@ impl EngineAdapterTrait for TrinoAdapter {
                 "queryflux-catalog-discovery".to_string(),
             )]),
         };
-        let execution = self.submit_query(&sql, &session, &queryflux_auth::QueryCredentials::ServiceAccount).await?;
+        let execution = self
+            .submit_query(
+                &sql,
+                &session,
+                &queryflux_auth::QueryCredentials::ServiceAccount,
+            )
+            .await?;
         if let QueryExecution::Async {
             initial_body: Some(body),
             ..
@@ -462,7 +472,13 @@ impl TrinoAdapter {
                 "queryflux-catalog-discovery".to_string(),
             )]),
         };
-        let execution = self.submit_query(sql, &session, &queryflux_auth::QueryCredentials::ServiceAccount).await?;
+        let execution = self
+            .submit_query(
+                sql,
+                &session,
+                &queryflux_auth::QueryCredentials::ServiceAccount,
+            )
+            .await?;
         if let QueryExecution::Async {
             initial_body: Some(body),
             ..

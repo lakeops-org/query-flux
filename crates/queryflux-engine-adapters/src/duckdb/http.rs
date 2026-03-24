@@ -12,7 +12,9 @@ use queryflux_core::{
     catalog::TableSchema,
     config::ClusterConfig,
     error::{QueryFluxError, Result},
-    query::{BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult},
+    query::{
+        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
+    },
     session::SessionContext,
 };
 use reqwest::Client;
@@ -61,8 +63,8 @@ impl HttpQueryResponse {
             if line.is_empty() {
                 continue;
             }
-            let obj: serde_json::Map<String, serde_json::Value> =
-                serde_json::from_str(line).map_err(|e| {
+            let obj: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line)
+                .map_err(|e| {
                     QueryFluxError::Engine(format!("Failed to parse DuckDB HTTP NDJSON line: {e}"))
                 })?;
 
@@ -70,8 +72,10 @@ impl HttpQueryResponse {
                 column_names = obj.keys().cloned().collect();
             }
 
-            let row: Vec<serde_json::Value> =
-                column_names.iter().map(|k| obj.get(k).cloned().unwrap_or(serde_json::Value::Null)).collect();
+            let row: Vec<serde_json::Value> = column_names
+                .iter()
+                .map(|k| obj.get(k).cloned().unwrap_or(serde_json::Value::Null))
+                .collect();
             rows.push(row);
         }
 
@@ -127,7 +131,12 @@ impl DuckDbHttpAdapter {
             .map_err(|e| QueryFluxError::Engine(format!("Failed to build HTTP client: {e}")))?;
 
         let endpoint = endpoint.trim_end_matches('/').to_string();
-        Ok(Self { cluster_name, group_name, endpoint, client })
+        Ok(Self {
+            cluster_name,
+            group_name,
+            endpoint,
+            client,
+        })
     }
 
     /// Build from persisted / YAML [`ClusterConfig`].
@@ -138,9 +147,7 @@ impl DuckDbHttpAdapter {
         cluster_name_str: &str,
     ) -> Result<Self> {
         let endpoint = cfg.endpoint.clone().ok_or_else(|| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': missing endpoint"
-            ))
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
         })?;
         let tls_skip = cfg
             .tls
@@ -289,7 +296,11 @@ impl EngineAdapterTrait for DuckDbHttpAdapter {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_uppercase() != "NO")
                     .unwrap_or(true);
-                Some(queryflux_core::catalog::ColumnDef { name, data_type, nullable })
+                Some(queryflux_core::catalog::ColumnDef {
+                    name,
+                    data_type,
+                    nullable,
+                })
             })
             .collect();
         Ok(Some(TableSchema {
@@ -363,14 +374,17 @@ fn build_array(
 ) -> Result<ArrayRef> {
     match arrow_type {
         DataType::Boolean => {
-            let arr: BooleanArray = values
-                .iter()
-                .map(|v| v.and_then(|v| v.as_bool()))
-                .collect();
+            let arr: BooleanArray = values.iter().map(|v| v.and_then(|v| v.as_bool())).collect();
             Ok(Arc::new(arr))
         }
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
-        | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
+        DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64 => {
             // Use Int64 for all integer types; Arrow will cast if needed.
             let arr: Int64Array = values
                 .iter()
@@ -450,11 +464,21 @@ fn base64_encode(input: &str) -> String {
             _ => [chunk[0], chunk[1], chunk[2]],
         };
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
-        let _ = write!(out, "{}{}{}{}",
+        let _ = write!(
+            out,
+            "{}{}{}{}",
             CHARS[((n >> 18) & 0x3f) as usize] as char,
             CHARS[((n >> 12) & 0x3f) as usize] as char,
-            if chunk.len() > 1 { CHARS[((n >> 6) & 0x3f) as usize] as char } else { '=' },
-            if chunk.len() > 2 { CHARS[(n & 0x3f) as usize] as char } else { '=' },
+            if chunk.len() > 1 {
+                CHARS[((n >> 6) & 0x3f) as usize] as char
+            } else {
+                '='
+            },
+            if chunk.len() > 2 {
+                CHARS[(n & 0x3f) as usize] as char
+            } else {
+                '='
+            },
         );
     }
     out

@@ -4,20 +4,17 @@
 /// All tests run with: cargo test -p queryflux-routing
 use std::collections::HashMap;
 
+use queryflux_auth::AuthContext;
 use queryflux_core::{
     config::{CompoundCombineMode, CompoundCondition},
     query::{ClusterGroupName, FrontendProtocol},
     session::SessionContext,
 };
-use queryflux_auth::AuthContext;
 use queryflux_routing::{
     chain::RouterChain,
     implementations::{
-        client_tags::ClientTagsRouter,
-        compound::CompoundRouter,
-        header::HeaderRouter,
-        protocol_based::ProtocolBasedRouter,
-        python_script::PythonScriptRouter,
+        client_tags::ClientTagsRouter, compound::CompoundRouter, header::HeaderRouter,
+        protocol_based::ProtocolBasedRouter, python_script::PythonScriptRouter,
         query_regex::QueryRegexRouter,
     },
     RouterTrait,
@@ -280,7 +277,10 @@ async fn query_regex_no_match() {
 async fn query_regex_first_match_wins() {
     let router = QueryRegexRouter::new(vec![
         (r"(?i)\borders\b".to_string(), "orders-group".to_string()),
-        (r"(?i)\bcustomers\b".to_string(), "customers-group".to_string()),
+        (
+            r"(?i)\bcustomers\b".to_string(),
+            "customers-group".to_string(),
+        ),
     ]);
     let session = trino_session(&[]);
     // SQL matches both, first rule should win
@@ -624,7 +624,11 @@ async fn chain_short_circuits_after_first_match() {
         .unwrap();
     assert_eq!(result, group("priority-group"));
     assert!(!trace.used_fallback);
-    assert_eq!(trace.decisions.len(), 1, "second router must not run after first match");
+    assert_eq!(
+        trace.decisions.len(),
+        1,
+        "second router must not run after first match"
+    );
     assert!(trace.decisions[0].matched);
 }
 

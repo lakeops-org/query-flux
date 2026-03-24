@@ -112,7 +112,10 @@ pub struct EngineDescriptor {
 
 impl EngineDescriptor {
     pub fn requires_endpoint(&self) -> bool {
-        matches!(self.connection_type, ConnectionType::Http | ConnectionType::MySqlWire)
+        matches!(
+            self.connection_type,
+            ConnectionType::Http | ConnectionType::MySqlWire
+        )
     }
 
     pub fn supports_tls(&self) -> bool {

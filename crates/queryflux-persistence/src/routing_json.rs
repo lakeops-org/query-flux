@@ -19,7 +19,11 @@ pub fn field<'a>(v: &'a Value, camel: &str, snake: &str) -> Option<&'a Value> {
     v.get(camel).or_else(|| v.get(snake))
 }
 
-pub fn map_field<'a>(v: &'a Value, camel: &str, snake: &str) -> Option<&'a serde_json::Map<String, Value>> {
+pub fn map_field<'a>(
+    v: &'a Value,
+    camel: &str,
+    snake: &str,
+) -> Option<&'a serde_json::Map<String, Value>> {
     field(v, camel, snake).and_then(|x| x.as_object())
 }
 
@@ -38,7 +42,10 @@ fn push_str_group(seen: &mut std::collections::HashSet<String>, s: &str) {
     }
 }
 
-fn collect_group_names_from_router_json_inner(v: &Value, seen: &mut std::collections::HashSet<String>) {
+fn collect_group_names_from_router_json_inner(
+    v: &Value,
+    seen: &mut std::collections::HashSet<String>,
+) {
     let Some(ty) = v.get("type").and_then(|x| x.as_str()) else {
         return;
     };
@@ -73,7 +80,9 @@ fn collect_group_names_from_router_json_inner(v: &Value, seen: &mut std::collect
         "queryRegex" => {
             if let Some(arr) = v.get("rules").and_then(|x| x.as_array()) {
                 for r in arr {
-                    if let Some(s) = field(r, "targetGroup", "target_group").and_then(|x| x.as_str()) {
+                    if let Some(s) =
+                        field(r, "targetGroup", "target_group").and_then(|x| x.as_str())
+                    {
                         push_str_group(seen, s);
                     }
                 }
@@ -103,10 +112,9 @@ fn group_value_to_name(v: &Value, id_to_name: &HashMap<i64, String>) -> Result<S
             let id = n
                 .as_i64()
                 .ok_or_else(|| QueryFluxError::Persistence("invalid group id".into()))?;
-            id_to_name
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| QueryFluxError::Persistence(format!("unknown cluster group id {id}")))
+            id_to_name.get(&id).cloned().ok_or_else(|| {
+                QueryFluxError::Persistence(format!("unknown cluster group id {id}"))
+            })
         }
         Value::String(s) => Ok(s.clone()),
         Value::Null => Ok(String::new()),
@@ -209,9 +217,7 @@ fn resolve_one_router_for_storage(v: &Value, id_to_name: &HashMap<i64, String>) 
                 .map(|arr| {
                     arr.iter()
                         .map(|rule| {
-                            let regex = field(rule, "regex", "regex")
-                                .cloned()
-                                .unwrap_or(json!(""));
+                            let regex = field(rule, "regex", "regex").cloned().unwrap_or(json!(""));
                             let tg = field(rule, "targetGroup", "target_group")
                                 .or_else(|| rule.get("targetGroupId"));
                             let name = group_value_to_name(tg.unwrap_or(&Value::Null), id_to_name)?;
@@ -260,14 +266,13 @@ fn resolve_one_router_for_storage(v: &Value, id_to_name: &HashMap<i64, String>) 
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            let script_file = field(v, "scriptFile", "script_file")
-                .and_then(|x| {
-                    if x.is_null() {
-                        None
-                    } else {
-                        x.as_str().map(|s| s.to_string())
-                    }
-                });
+            let script_file = field(v, "scriptFile", "script_file").and_then(|x| {
+                if x.is_null() {
+                    None
+                } else {
+                    x.as_str().map(|s| s.to_string())
+                }
+            });
             Ok(json!({
                 "type": "pythonScript",
                 "script": script,
@@ -340,9 +345,7 @@ fn enrich_one_router_for_api(v: &Value, name_to_id: &HashMap<String, i64>) -> Va
                     .iter()
                     .map(|rule| {
                         let mut ro = rule.as_object().cloned().unwrap_or_default();
-                        if let Some(Value::String(s)) =
-                            field(rule, "targetGroup", "target_group")
-                        {
+                        if let Some(Value::String(s)) = field(rule, "targetGroup", "target_group") {
                             if let Some(id) = name_to_id.get(s) {
                                 ro.insert("targetGroupId".to_string(), json!(id));
                             }
@@ -393,7 +396,10 @@ mod tests {
             "conditions": [],
             "targetGroup": "analytics"
         });
-        assert_eq!(collect_group_names_from_router_json(&v), vec!["analytics".to_string()]);
+        assert_eq!(
+            collect_group_names_from_router_json(&v),
+            vec!["analytics".to_string()]
+        );
     }
 
     #[test]

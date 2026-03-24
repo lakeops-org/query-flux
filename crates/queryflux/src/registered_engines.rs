@@ -37,10 +37,9 @@ pub async fn build_adapter(
     cluster_cfg: &ClusterConfig,
     cluster_name_str: &str,
 ) -> Result<Arc<dyn EngineAdapterTrait>> {
-    let engine = cluster_cfg
-        .engine
-        .as_ref()
-        .context(format!("cluster '{cluster_name_str}' missing required 'engine' field"))?;
+    let engine = cluster_cfg.engine.as_ref().context(format!(
+        "cluster '{cluster_name_str}' missing required 'engine' field"
+    ))?;
 
     let adapter: Arc<dyn EngineAdapterTrait> = match engine {
         EngineConfig::Trino => Arc::new(

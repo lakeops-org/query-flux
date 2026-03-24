@@ -709,7 +709,10 @@ mod tests {
                 header_value_to_group,
             } => {
                 assert_eq!(header_name, "X-Env");
-                assert_eq!(header_value_to_group.get("prod").map(String::as_str), Some("g-analytics"));
+                assert_eq!(
+                    header_value_to_group.get("prod").map(String::as_str),
+                    Some("g-analytics")
+                );
             }
             _ => panic!("expected header"),
         }
@@ -722,7 +725,10 @@ mod tests {
             _ => panic!("expected queryRegex"),
         }
         match &routers[2] {
-            RouterConfig::PythonScript { script, script_file } => {
+            RouterConfig::PythonScript {
+                script,
+                script_file,
+            } => {
                 assert!(script.contains("def route"));
                 assert!(script_file.is_none());
             }
@@ -750,10 +756,7 @@ mod tests {
             } => {
                 assert_eq!(target_group, "g1");
                 assert_eq!(conditions.len(), 2);
-                assert!(matches!(
-                    combine,
-                    super::CompoundCombineMode::All
-                ));
+                assert!(matches!(combine, super::CompoundCombineMode::All));
             }
             _ => panic!("expected compound"),
         }
@@ -762,15 +765,24 @@ mod tests {
     #[test]
     fn periodic_config_reload_interval_secs_default_zero_and_explicit() {
         let cfg_default: ProxyConfig = serde_yaml::from_str("queryflux: {}").unwrap();
-        assert_eq!(cfg_default.queryflux.periodic_config_reload_interval_secs(), Some(30));
+        assert_eq!(
+            cfg_default.queryflux.periodic_config_reload_interval_secs(),
+            Some(30)
+        );
 
         let cfg_120: ProxyConfig =
             serde_yaml::from_str("queryflux:\n  configReloadIntervalSecs: 120\n").unwrap();
-        assert_eq!(cfg_120.queryflux.periodic_config_reload_interval_secs(), Some(120));
+        assert_eq!(
+            cfg_120.queryflux.periodic_config_reload_interval_secs(),
+            Some(120)
+        );
 
         let cfg_zero: ProxyConfig =
             serde_yaml::from_str("queryflux:\n  configReloadIntervalSecs: 0\n").unwrap();
-        assert_eq!(cfg_zero.queryflux.periodic_config_reload_interval_secs(), None);
+        assert_eq!(
+            cfg_zero.queryflux.periodic_config_reload_interval_secs(),
+            None
+        );
     }
 
     /// Studio-first / Postgres: YAML may omit clusters, clusterGroups, routers, routingFallback.

@@ -200,9 +200,10 @@ impl FlightSqlService for QueryFluxFlightSql {
         let sql2 = sql.clone();
 
         tokio::spawn(async move {
-            let _ =
-                execute_to_sink(&state2, sql2, session, protocol, group, &mut sink, &auth_ctx)
-                    .await;
+            let _ = execute_to_sink(
+                &state2, sql2, session, protocol, group, &mut sink, &auth_ctx,
+            )
+            .await;
             // sink drops here → tx closes → rx stream ends
         });
 

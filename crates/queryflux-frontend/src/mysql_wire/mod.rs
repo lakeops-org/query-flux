@@ -269,7 +269,10 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
     let sql2 = sql.to_string();
 
     let exec_task = tokio::spawn(async move {
-        execute_to_sink(&state2, sql2, session2, protocol, group, &mut sink, &auth_ctx).await
+        execute_to_sink(
+            &state2, sql2, session2, protocol, group, &mut sink, &auth_ctx,
+        )
+        .await
         // `sink` drops here — closes tx — rx.recv() will return None after last packet
     });
 

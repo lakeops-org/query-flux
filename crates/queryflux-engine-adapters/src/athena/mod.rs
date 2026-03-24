@@ -3,17 +3,21 @@ use std::time::Duration;
 
 use aws_sdk_sts;
 
-use arrow::array::{ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int64Builder, StringBuilder};
+use arrow::array::{
+    ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int64Builder, StringBuilder,
+};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use aws_sdk_athena::types::{QueryExecutionState, ResultConfiguration, QueryExecutionContext};
+use aws_sdk_athena::types::{QueryExecutionContext, QueryExecutionState, ResultConfiguration};
 use futures::stream;
 use queryflux_core::{
     catalog::TableSchema,
     config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
-    query::{BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult},
+    query::{
+        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
+    },
     session::SessionContext,
 };
 use tracing::warn;
@@ -63,7 +67,11 @@ impl AthenaAdapter {
         let aws_region = Region::new(region.clone());
 
         let sdk_config = match auth {
-            Some(ClusterAuth::AccessKey { access_key_id, secret_access_key, session_token }) => {
+            Some(ClusterAuth::AccessKey {
+                access_key_id,
+                secret_access_key,
+                session_token,
+            }) => {
                 let creds = Credentials::new(
                     access_key_id,
                     secret_access_key,
@@ -77,7 +85,10 @@ impl AthenaAdapter {
                     .load()
                     .await
             }
-            Some(ClusterAuth::RoleArn { role_arn, external_id }) => {
+            Some(ClusterAuth::RoleArn {
+                role_arn,
+                external_id,
+            }) => {
                 // First load the base config from the default credential chain,
                 // then use STS AssumeRole to obtain temporary credentials.
                 let base_config = aws_config::defaults(BehaviorVersion::latest())
@@ -96,9 +107,9 @@ impl AthenaAdapter {
                     .send()
                     .await
                     .map_err(|e| QueryFluxError::Engine(format!("STS AssumeRole failed: {e}")))?;
-                let creds_resp = resp
-                    .credentials()
-                    .ok_or_else(|| QueryFluxError::Engine("STS returned no credentials".to_string()))?;
+                let creds_resp = resp.credentials().ok_or_else(|| {
+                    QueryFluxError::Engine("STS returned no credentials".to_string())
+                })?;
                 let creds = Credentials::new(
                     creds_resp.access_key_id(),
                     creds_resp.secret_access_key(),
@@ -202,10 +213,14 @@ impl AthenaAdapter {
                         .and_then(|s| s.state_change_reason())
                         .unwrap_or("unknown reason")
                         .to_string();
-                    return Err(QueryFluxError::Engine(format!("Athena query failed: {reason}")));
+                    return Err(QueryFluxError::Engine(format!(
+                        "Athena query failed: {reason}"
+                    )));
                 }
                 QueryExecutionState::Cancelled => {
-                    return Err(QueryFluxError::Engine("Athena query was cancelled".to_string()));
+                    return Err(QueryFluxError::Engine(
+                        "Athena query was cancelled".to_string(),
+                    ));
                 }
                 // Running / Queued — keep polling.
                 _ => tokio::time::sleep(Duration::from_millis(500)).await,
@@ -426,7 +441,11 @@ impl EngineAdapterTrait for AthenaAdapter {
     }
 
     async fn list_databases(&self, catalog: &str) -> Result<Vec<String>> {
-        let cat = if catalog.is_empty() { &self.catalog } else { catalog };
+        let cat = if catalog.is_empty() {
+            &self.catalog
+        } else {
+            catalog
+        };
         let mut names = Vec::new();
         let mut next_token: Option<String> = None;
         loop {
@@ -450,7 +469,11 @@ impl EngineAdapterTrait for AthenaAdapter {
     }
 
     async fn list_tables(&self, catalog: &str, database: &str) -> Result<Vec<String>> {
-        let cat = if catalog.is_empty() { &self.catalog } else { catalog };
+        let cat = if catalog.is_empty() {
+            &self.catalog
+        } else {
+            catalog
+        };
         let mut names = Vec::new();
         let mut next_token: Option<String> = None;
         loop {
@@ -483,7 +506,11 @@ impl EngineAdapterTrait for AthenaAdapter {
         database: &str,
         table: &str,
     ) -> Result<Option<TableSchema>> {
-        let cat = if catalog.is_empty() { &self.catalog } else { catalog };
+        let cat = if catalog.is_empty() {
+            &self.catalog
+        } else {
+            catalog
+        };
         let resp = match self
             .client
             .get_table_metadata()
@@ -523,7 +550,13 @@ impl EngineAdapterTrait for AthenaAdapter {
 // ---------------------------------------------------------------------------
 
 fn athena_type_to_arrow(athena_type: &str) -> DataType {
-    match athena_type.to_lowercase().trim_start_matches("varchar(").split('(').next().unwrap_or("") {
+    match athena_type
+        .to_lowercase()
+        .trim_start_matches("varchar(")
+        .split('(')
+        .next()
+        .unwrap_or("")
+    {
         "bigint" | "long" => DataType::Int64,
         "integer" | "int" => DataType::Int64,
         "smallint" => DataType::Int64,
@@ -552,7 +585,11 @@ fn build_column(dt: &DataType, rows: &[Vec<Option<String>>], col_idx: usize) -> 
         DataType::Int64 => {
             let mut b = Int64Builder::with_capacity(rows.len());
             for row in rows {
-                match row.get(col_idx).and_then(|v| v.as_deref()).and_then(|s| s.parse::<i64>().ok()) {
+                match row
+                    .get(col_idx)
+                    .and_then(|v| v.as_deref())
+                    .and_then(|s| s.parse::<i64>().ok())
+                {
                     Some(v) => b.append_value(v),
                     None => b.append_null(),
                 }
@@ -562,7 +599,11 @@ fn build_column(dt: &DataType, rows: &[Vec<Option<String>>], col_idx: usize) -> 
         DataType::Float32 => {
             let mut b = Float32Builder::with_capacity(rows.len());
             for row in rows {
-                match row.get(col_idx).and_then(|v| v.as_deref()).and_then(|s| s.parse::<f32>().ok()) {
+                match row
+                    .get(col_idx)
+                    .and_then(|v| v.as_deref())
+                    .and_then(|s| s.parse::<f32>().ok())
+                {
                     Some(v) => b.append_value(v),
                     None => b.append_null(),
                 }
@@ -572,7 +613,11 @@ fn build_column(dt: &DataType, rows: &[Vec<Option<String>>], col_idx: usize) -> 
         DataType::Float64 => {
             let mut b = Float64Builder::with_capacity(rows.len());
             for row in rows {
-                match row.get(col_idx).and_then(|v| v.as_deref()).and_then(|s| s.parse::<f64>().ok()) {
+                match row
+                    .get(col_idx)
+                    .and_then(|v| v.as_deref())
+                    .and_then(|s| s.parse::<f64>().ok())
+                {
                     Some(v) => b.append_value(v),
                     None => b.append_null(),
                 }

@@ -111,8 +111,7 @@ pub async fn dispatch_query(
         let live = state.live.read().await;
         (
             live.cluster_manager.clone(),
-            live
-                .group_translation_scripts
+            live.group_translation_scripts
                 .get(&group.0)
                 .cloned()
                 .unwrap_or_default(),
@@ -154,9 +153,7 @@ pub async fn dispatch_query(
         Some(a) => a,
         None => {
             state.metrics.on_query_finished(&group.0, &cluster_name.0);
-            let _ = cluster_manager
-                .release_cluster(&group, &cluster_name)
-                .await;
+            let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
             return Err(QueryFluxError::Engine(format!(
                 "No adapter for {group}/{cluster_name}"
             )));
@@ -168,9 +165,7 @@ pub async fn dispatch_query(
     // round-robin doesn't reach `submit_query` and fail at runtime.
     if !adapter.supports_async() {
         state.metrics.on_query_finished(&group.0, &cluster_name.0);
-        let _ = cluster_manager
-            .release_cluster(&group, &cluster_name)
-            .await;
+        let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
         return Err(QueryFluxError::SyncEngineRequired(cluster_name.0.clone()));
     }
 
@@ -192,9 +187,7 @@ pub async fn dispatch_query(
         Err(e) => {
             warn!(id = %query_id, "Translation error: {e}");
             state.metrics.on_query_finished(&group.0, &cluster_name.0);
-            let _ = cluster_manager
-                .release_cluster(&group, &cluster_name)
-                .await;
+            let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
             return Err(e);
         }
     };
@@ -207,9 +200,7 @@ pub async fn dispatch_query(
         Ok(e) => e,
         Err(e) => {
             state.metrics.on_query_finished(&group.0, &cluster_name.0);
-            let _ = cluster_manager
-                .release_cluster(&group, &cluster_name)
-                .await;
+            let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
             warn!(id = %query_id, "Submit error: {e}");
             return Err(e);
         }
@@ -331,8 +322,7 @@ pub async fn execute_to_sink(
         let live = state.live.read().await;
         (
             live.cluster_manager.clone(),
-            live
-                .group_translation_scripts
+            live.group_translation_scripts
                 .get(&group.0)
                 .cloned()
                 .unwrap_or_default(),
@@ -376,9 +366,7 @@ pub async fn execute_to_sink(
     {
         Ok(t) => t,
         Err(e) => {
-            let _ = cluster_manager
-                .release_cluster(&group, &cluster_name)
-                .await;
+            let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
             return sink.on_error(&e.to_string()).await;
         }
     };
@@ -392,12 +380,13 @@ pub async fn execute_to_sink(
 
     // 3. Execute as Arrow stream.
     let start = Instant::now();
-    let mut stream = match adapter.execute_as_arrow(&translated, &session, &credentials).await {
+    let mut stream = match adapter
+        .execute_as_arrow(&translated, &session, &credentials)
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
-            let _ = cluster_manager
-                .release_cluster(&group, &cluster_name)
-                .await;
+            let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
             return sink.on_error(&e.to_string()).await;
         }
     };
@@ -409,9 +398,7 @@ pub async fn execute_to_sink(
         match result {
             Err(e) => {
                 let stream_error = Some(e.to_string());
-                let _ = cluster_manager
-                    .release_cluster(&group, &cluster_name)
-                    .await;
+                let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 state.record_query(
                     &query_id,
@@ -444,27 +431,21 @@ pub async fn execute_to_sink(
             Ok(batch) => {
                 if !schema_sent {
                     if let Err(e) = sink.on_schema(batch.schema_ref()).await {
-                        let _ = cluster_manager
-                            .release_cluster(&group, &cluster_name)
-                            .await;
+                        let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
                         return Err(e);
                     }
                     schema_sent = true;
                 }
                 rows_returned += batch.num_rows() as u64;
                 if let Err(e) = sink.on_batch(&batch).await {
-                    let _ = cluster_manager
-                        .release_cluster(&group, &cluster_name)
-                        .await;
+                    let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
                     return Err(e);
                 }
             }
         }
     }
 
-    let _ = cluster_manager
-        .release_cluster(&group, &cluster_name)
-        .await;
+    let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
     let stats = QueryStats {

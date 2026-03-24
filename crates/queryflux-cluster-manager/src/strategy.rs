@@ -213,4 +213,3 @@ pub fn strategy_from_config(
         }
     }
 }
-

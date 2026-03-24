@@ -400,7 +400,11 @@ impl ClusterConfigStore for InMemoryPersistence {
             .map(|r| r.id)
             .unwrap_or_else(|| self.next_group_id.fetch_add(1, Ordering::Relaxed));
         for sid in &cfg.translation_script_ids {
-            let ok = self.user_scripts.get(sid).map(|r| r.kind == KIND_TRANSLATION_FIXUP).unwrap_or(false);
+            let ok = self
+                .user_scripts
+                .get(sid)
+                .map(|r| r.kind == KIND_TRANSLATION_FIXUP)
+                .unwrap_or(false);
             if !ok {
                 return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
                     "Unknown or invalid translation script id {sid}"
@@ -447,32 +451,27 @@ impl ClusterConfigStore for InMemoryPersistence {
             ));
         }
         if old_name == new_name {
-            return self
-                .get_cluster_config(old_name)
-                .await?
-                .ok_or_else(|| {
-                    queryflux_core::error::QueryFluxError::Persistence(format!(
-                        "Cluster '{old_name}' not found"
-                    ))
-                });
+            return self.get_cluster_config(old_name).await?.ok_or_else(|| {
+                queryflux_core::error::QueryFluxError::Persistence(format!(
+                    "Cluster '{old_name}' not found"
+                ))
+            });
         }
         if self.cluster_configs.contains_key(new_name) {
             return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
                 "Cluster name '{new_name}' is already in use"
             )));
         }
-        let (_, mut record) = self
-            .cluster_configs
-            .remove(old_name)
-            .ok_or_else(|| {
-                queryflux_core::error::QueryFluxError::Persistence(format!(
-                    "Cluster '{old_name}' not found"
-                ))
-            })?;
+        let (_, mut record) = self.cluster_configs.remove(old_name).ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Cluster '{old_name}' not found"
+            ))
+        })?;
         let now = Utc::now();
         record.name = new_name.to_string();
         record.updated_at = now;
-        self.cluster_configs.insert(new_name.to_string(), record.clone());
+        self.cluster_configs
+            .insert(new_name.to_string(), record.clone());
 
         for mut entry in self.group_configs.iter_mut() {
             let gr = entry.value_mut();
@@ -504,32 +503,27 @@ impl ClusterConfigStore for InMemoryPersistence {
             ));
         }
         if old_name == new_name {
-            return self
-                .get_group_config(old_name)
-                .await?
-                .ok_or_else(|| {
-                    queryflux_core::error::QueryFluxError::Persistence(format!(
-                        "Group '{old_name}' not found"
-                    ))
-                });
+            return self.get_group_config(old_name).await?.ok_or_else(|| {
+                queryflux_core::error::QueryFluxError::Persistence(format!(
+                    "Group '{old_name}' not found"
+                ))
+            });
         }
         if self.group_configs.contains_key(new_name) {
             return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
                 "Group name '{new_name}' is already in use"
             )));
         }
-        let (_, mut record) = self
-            .group_configs
-            .remove(old_name)
-            .ok_or_else(|| {
-                queryflux_core::error::QueryFluxError::Persistence(format!(
-                    "Group '{old_name}' not found"
-                ))
-            })?;
+        let (_, mut record) = self.group_configs.remove(old_name).ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Group '{old_name}' not found"
+            ))
+        })?;
         let now = Utc::now();
         record.name = new_name.to_string();
         record.updated_at = now;
-        self.group_configs.insert(new_name.to_string(), record.clone());
+        self.group_configs
+            .insert(new_name.to_string(), record.clone());
         Ok(record)
     }
 }
@@ -545,7 +539,10 @@ impl ProxySettingsStore for InMemoryPersistence {
     }
 
     async fn set_proxy_setting(&self, key: &str, value: serde_json::Value) -> Result<()> {
-        self.proxy_settings.write().unwrap().insert(key.to_string(), value);
+        self.proxy_settings
+            .write()
+            .unwrap()
+            .insert(key.to_string(), value);
         Ok(())
     }
 
@@ -595,7 +592,11 @@ impl ScriptLibraryStore for InMemoryPersistence {
                 body.kind
             )));
         }
-        if self.user_scripts.iter().any(|e| e.value().name == body.name) {
+        if self
+            .user_scripts
+            .iter()
+            .any(|e| e.value().name == body.name)
+        {
             return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
                 "Script name '{}' already exists",
                 body.name
@@ -616,14 +617,22 @@ impl ScriptLibraryStore for InMemoryPersistence {
         Ok(record)
     }
 
-    async fn update_user_script(&self, id: i64, body: &UpsertUserScript) -> Result<UserScriptRecord> {
+    async fn update_user_script(
+        &self,
+        id: i64,
+        body: &UpsertUserScript,
+    ) -> Result<UserScriptRecord> {
         if !is_valid_script_kind(&body.kind) {
             return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
                 "Invalid script kind '{}'",
                 body.kind
             )));
         }
-        if self.user_scripts.iter().any(|e| *e.key() != id && e.value().name == body.name) {
+        if self
+            .user_scripts
+            .iter()
+            .any(|e| *e.key() != id && e.value().name == body.name)
+        {
             return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
                 "Script name '{}' already exists",
                 body.name

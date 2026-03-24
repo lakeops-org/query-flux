@@ -127,7 +127,12 @@ impl UpsertClusterConfig {
         if let Some(v) = &cfg.database_path {
             config.insert("databasePath".into(), v.clone().into());
         }
-        if cfg.tls.as_ref().map(|t| t.insecure_skip_verify).unwrap_or(false) {
+        if cfg
+            .tls
+            .as_ref()
+            .map(|t| t.insecure_skip_verify)
+            .unwrap_or(false)
+        {
             config.insert("tlsInsecureSkipVerify".into(), true.into());
         }
         if let Some(v) = &cfg.region {
@@ -153,7 +158,11 @@ impl UpsertClusterConfig {
                 config.insert("authType".into(), "bearer".into());
                 config.insert("authToken".into(), token.clone().into());
             }
-            Some(ClusterAuth::AccessKey { access_key_id, secret_access_key, session_token }) => {
+            Some(ClusterAuth::AccessKey {
+                access_key_id,
+                secret_access_key,
+                session_token,
+            }) => {
                 config.insert("authType".into(), "accessKey".into());
                 config.insert("authUsername".into(), access_key_id.clone().into());
                 config.insert("authPassword".into(), secret_access_key.clone().into());
@@ -166,7 +175,10 @@ impl UpsertClusterConfig {
                 config.insert("authType".into(), "keyPair".into());
                 config.insert("authUsername".into(), username.clone().into());
             }
-            Some(ClusterAuth::RoleArn { role_arn, external_id }) => {
+            Some(ClusterAuth::RoleArn {
+                role_arn,
+                external_id,
+            }) => {
                 config.insert("authType".into(), "roleArn".into());
                 config.insert("authUsername".into(), role_arn.clone().into());
                 if let Some(eid) = external_id {
@@ -215,18 +227,21 @@ impl ClusterConfigRecord {
         use queryflux_core::error::QueryFluxError;
 
         let engine = parse_engine_key(&self.engine_key).map_err(|_| {
-            QueryFluxError::Engine(format!(
-                "Unknown engine key in DB: '{}'",
-                self.engine_key
-            ))
+            QueryFluxError::Engine(format!("Unknown engine key in DB: '{}'", self.engine_key))
         })?;
 
         // Helpers to extract typed values from the config JSON.
         let s = |key: &str| -> Option<String> {
-            self.config.get(key).and_then(|v| v.as_str()).map(String::from)
+            self.config
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(String::from)
         };
         let b = |key: &str| -> bool {
-            self.config.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+            self.config
+                .get(key)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
         };
 
         let auth = match s("authType").as_deref() {
@@ -260,7 +275,9 @@ impl ClusterConfigRecord {
             workgroup: s("workgroup"),
             catalog: s("catalog"),
             tls: if b("tlsInsecureSkipVerify") {
-                Some(TlsConfig { insecure_skip_verify: true })
+                Some(TlsConfig {
+                    insecure_skip_verify: true,
+                })
             } else {
                 None
             },

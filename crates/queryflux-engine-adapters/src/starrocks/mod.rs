@@ -77,17 +77,9 @@ impl StarRocksAdapter {
         cluster_name_str: &str,
     ) -> Result<Self> {
         let endpoint = cfg.endpoint.clone().ok_or_else(|| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': missing endpoint"
-            ))
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
         })?;
-        Self::new(
-            cluster_name,
-            group_name,
-            endpoint,
-            cfg.auth.clone(),
-        )
-        .map_err(|e| {
+        Self::new(cluster_name, group_name, endpoint, cfg.auth.clone()).map_err(|e| {
             QueryFluxError::Engine(format!(
                 "cluster '{cluster_name_str}': failed to create StarRocks adapter ({e})"
             ))

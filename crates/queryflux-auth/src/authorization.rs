@@ -167,8 +167,8 @@ impl OpenFgaAuthorizationClient {
                     .and_then(|v| v.as_u64())
                     .unwrap_or(300);
 
-                let expires_at = std::time::Instant::now()
-                    + std::time::Duration::from_secs(expires_in);
+                let expires_at =
+                    std::time::Instant::now() + std::time::Duration::from_secs(expires_in);
                 *self.token_cache.lock().await = Some((token.clone(), expires_at));
                 Some(token)
             }
@@ -218,20 +218,18 @@ impl AuthorizationChecker for OpenFgaAuthorizationClient {
         }
 
         match req.send().await {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.json::<CheckResponse>().await {
-                    Ok(r) => {
-                        if !r.allowed {
-                            warn!(user = %auth_ctx.user, group, "OpenFGA: access denied");
-                        }
-                        r.allowed
+            Ok(resp) if resp.status().is_success() => match resp.json::<CheckResponse>().await {
+                Ok(r) => {
+                    if !r.allowed {
+                        warn!(user = %auth_ctx.user, group, "OpenFGA: access denied");
                     }
-                    Err(e) => {
-                        warn!(error = %e, "OpenFGA: failed to parse check response — denying");
-                        false
-                    }
+                    r.allowed
                 }
-            }
+                Err(e) => {
+                    warn!(error = %e, "OpenFGA: failed to parse check response — denying");
+                    false
+                }
+            },
             Ok(resp) => {
                 warn!(status = %resp.status(), user = %auth_ctx.user, group, "OpenFGA: check returned error status — denying");
                 false

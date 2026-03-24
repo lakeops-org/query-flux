@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
-use queryflux_auth::{AuthorizationChecker, AuthProvider, BackendIdentityResolver};
+use queryflux_auth::{AuthProvider, AuthorizationChecker, BackendIdentityResolver};
 use queryflux_cluster_manager::{cluster_state::ClusterState, ClusterGroupManager};
 use queryflux_core::{
     config::ClusterConfig,

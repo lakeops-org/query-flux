@@ -216,19 +216,32 @@ fn run_fixup_scripts(
         // Execute the script in its own globals dict so that top-level imports
         // and helper functions work correctly (same approach as PythonScriptRouter).
         let globals = PyDict::new(py);
-        let script_cstr = std::ffi::CString::new(script.as_str())
-            .map_err(|e| QueryFluxError::Translation(format!("translation script {i} contains null byte: {e}")))?;
+        let script_cstr = std::ffi::CString::new(script.as_str()).map_err(|e| {
+            QueryFluxError::Translation(format!("translation script {i} contains null byte: {e}"))
+        })?;
         py.run(script_cstr.as_c_str(), Some(&globals), None)
-            .map_err(|e| QueryFluxError::Translation(format!("translation script {i} error: {e}")))?;
+            .map_err(|e| {
+                QueryFluxError::Translation(format!("translation script {i} error: {e}"))
+            })?;
 
         let transform_fn = globals
             .get_item("transform")
-            .map_err(|e| QueryFluxError::Translation(format!("translation script {i} has no 'transform' function: {e}")))?
-            .ok_or_else(|| QueryFluxError::Translation(format!("translation script {i} has no 'transform' function")))?;
+            .map_err(|e| {
+                QueryFluxError::Translation(format!(
+                    "translation script {i} has no 'transform' function: {e}"
+                ))
+            })?
+            .ok_or_else(|| {
+                QueryFluxError::Translation(format!(
+                    "translation script {i} has no 'transform' function"
+                ))
+            })?;
 
-        transform_fn
-            .call1((&ast, src, tgt))
-            .map_err(|e| QueryFluxError::Translation(format!("translation script {i} transform() call failed: {e}")))?;
+        transform_fn.call1((&ast, src, tgt)).map_err(|e| {
+            QueryFluxError::Translation(format!(
+                "translation script {i} transform() call failed: {e}"
+            ))
+        })?;
     }
 
     // Re-serialize once after all scripts have run.

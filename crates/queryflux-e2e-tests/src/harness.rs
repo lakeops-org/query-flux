@@ -16,7 +16,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use axum::Router;
 use queryflux_auth::{
-    AllowAllAuthorization, AuthorizationChecker, AuthProvider, BackendIdentityResolver,
+    AllowAllAuthorization, AuthProvider, AuthorizationChecker, BackendIdentityResolver,
     NoneAuthProvider,
 };
 use queryflux_cluster_manager::{
@@ -29,7 +29,10 @@ use queryflux_core::{
 use queryflux_engine_adapters::{
     starrocks::StarRocksAdapter, trino::TrinoAdapter, EngineAdapterTrait,
 };
-use queryflux_frontend::{state::LiveConfig, trino_http::{state::AppState, TrinoHttpFrontend}};
+use queryflux_frontend::{
+    state::LiveConfig,
+    trino_http::{state::AppState, TrinoHttpFrontend},
+};
 use queryflux_metrics::{ClusterSnapshot, MetricsStore, QueryRecord};
 use queryflux_persistence::in_memory::InMemoryPersistence;
 use queryflux_routing::{chain::RouterChain, implementations::header::HeaderRouter, RouterTrait};

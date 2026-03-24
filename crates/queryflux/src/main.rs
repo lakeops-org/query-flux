@@ -13,7 +13,10 @@ use queryflux_cluster_manager::{
 use queryflux_config::{yaml::YamlFileConfigProvider, ConfigProvider};
 use queryflux_core::query::{ClusterGroupName, ClusterName, EngineType};
 use queryflux_frontend::{
-    admin::{AdminFrontend, RoutingConfigDto as AdminRoutingConfigDto, SecurityConfigDto as AdminSecurityConfigDto},
+    admin::{
+        AdminFrontend, RoutingConfigDto as AdminRoutingConfigDto,
+        SecurityConfigDto as AdminSecurityConfigDto,
+    },
     flight_sql::FlightSqlFrontend,
     mysql_wire::MysqlWireFrontend,
     postgres_wire::PostgresWireFrontend,
@@ -191,7 +194,9 @@ async fn main() -> Result<()> {
         // Apply persisted security overrides (`security_settings` / `security_config` key).
         if let Ok(Some(v)) = pg.get_proxy_setting("security_config").await {
             if let Ok(auth_cfg) = serde_json::from_value::<queryflux_core::config::AuthConfig>(
-                v.get("authConfig").cloned().unwrap_or(serde_json::Value::Null),
+                v.get("authConfig")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
             ) {
                 config.auth = auth_cfg;
             }
@@ -213,14 +218,18 @@ async fn main() -> Result<()> {
                 for v in loaded.routers {
                     match serde_json::from_value::<queryflux_core::config::RouterConfig>(v) {
                         Ok(r) => routers.push(r),
-                        Err(e) => tracing::warn!(error = %e, "Skipping invalid routing_rules row from Postgres"),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Skipping invalid routing_rules row from Postgres")
+                        }
                     }
                 }
                 config.routers = routers;
                 routing_from_db = true;
             }
             Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, "load_routing_config failed; keeping YAML routing"),
+            Err(e) => {
+                tracing::warn!(error = %e, "load_routing_config failed; keeping YAML routing")
+            }
         }
         if !routing_from_db {
             if let Ok(Some(v)) = pg.get_proxy_setting("routing_config").await {
@@ -231,13 +240,11 @@ async fn main() -> Result<()> {
                 ) {
                     config.routing_fallback = fallback;
                 }
-                if let Ok(routers) = serde_json::from_value::<
-                    Vec<queryflux_core::config::RouterConfig>,
-                >(
-                    v.get("routers")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null),
-                ) {
+                if let Ok(routers) =
+                    serde_json::from_value::<Vec<queryflux_core::config::RouterConfig>>(
+                        v.get("routers").cloned().unwrap_or(serde_json::Value::Null),
+                    )
+                {
                     config.routers = routers;
                 }
             }
@@ -370,11 +377,12 @@ async fn main() -> Result<()> {
 
     // --- Build translation service ---
     let translation = Arc::new(
-        TranslationService::new_sqlglot(config.translation.python_scripts.clone())
-            .unwrap_or_else(|e| {
+        TranslationService::new_sqlglot(config.translation.python_scripts.clone()).unwrap_or_else(
+            |e| {
                 tracing::warn!("sqlglot unavailable ({e}), translation disabled");
                 TranslationService::disabled()
-            }),
+            },
+        ),
     );
 
     // --- Build router chain ---
@@ -494,44 +502,54 @@ async fn main() -> Result<()> {
     };
     // --- Build authorization checker from config ---
     use queryflux_core::config::AuthorizationProviderConfig;
-    let authorization: Arc<dyn queryflux_auth::AuthorizationChecker> =
-        match &config.authorization.provider {
-            AuthorizationProviderConfig::None => {
-                // Build per-group allow-lists from cluster group configs.
-                // Groups with empty lists are open (allow-all), preserving backward compat.
-                let policies = config
-                    .cluster_groups
-                    .iter()
-                    .map(|(name, cfg)| (name.clone(), cfg.authorization.clone()))
-                    .collect();
-                let has_any_policy = config
-                    .cluster_groups
-                    .values()
-                    .any(|cfg| !cfg.authorization.allow_groups.is_empty() || !cfg.authorization.allow_users.is_empty());
-                if has_any_policy {
-                    info!("Authorization: simple allow-list policy");
-                    Arc::new(SimpleAuthorizationPolicy::new(policies))
-                } else {
-                    info!("Authorization: allow-all (no allow-lists configured)");
-                    Arc::new(AllowAllAuthorization)
-                }
+    let authorization: Arc<dyn queryflux_auth::AuthorizationChecker> = match &config
+        .authorization
+        .provider
+    {
+        AuthorizationProviderConfig::None => {
+            // Build per-group allow-lists from cluster group configs.
+            // Groups with empty lists are open (allow-all), preserving backward compat.
+            let policies = config
+                .cluster_groups
+                .iter()
+                .map(|(name, cfg)| (name.clone(), cfg.authorization.clone()))
+                .collect();
+            let has_any_policy = config.cluster_groups.values().any(|cfg| {
+                !cfg.authorization.allow_groups.is_empty()
+                    || !cfg.authorization.allow_users.is_empty()
+            });
+            if has_any_policy {
+                info!("Authorization: simple allow-list policy");
+                Arc::new(SimpleAuthorizationPolicy::new(policies))
+            } else {
+                info!("Authorization: allow-all (no allow-lists configured)");
+                Arc::new(AllowAllAuthorization)
             }
-            AuthorizationProviderConfig::OpenFga => {
-                let openfga_cfg = config
-                    .authorization
-                    .openfga
-                    .clone()
-                    .context("authorization.provider = openfga requires authorization.openfga to be configured")?;
-                info!(url = %openfga_cfg.url, store_id = %openfga_cfg.store_id, "Authorization: OpenFGA");
-                Arc::new(OpenFgaAuthorizationClient::new(openfga_cfg))
-            }
-        };
+        }
+        AuthorizationProviderConfig::OpenFga => {
+            let openfga_cfg = config.authorization.openfga.clone().context(
+                "authorization.provider = openfga requires authorization.openfga to be configured",
+            )?;
+            info!(url = %openfga_cfg.url, store_id = %openfga_cfg.store_id, "Authorization: OpenFGA");
+            Arc::new(OpenFgaAuthorizationClient::new(openfga_cfg))
+        }
+    };
 
     // --- Startup validation: impersonate only valid for Trino ---
     for (name, cfg) in &config.clusters {
-        if matches!(cfg.query_auth, Some(queryflux_core::config::QueryAuthConfig::Impersonate)) {
-            let engine = cfg.engine.as_ref().map(|e| format!("{e:?}")).unwrap_or_default();
-            if !matches!(cfg.engine, Some(queryflux_core::config::EngineConfig::Trino)) {
+        if matches!(
+            cfg.query_auth,
+            Some(queryflux_core::config::QueryAuthConfig::Impersonate)
+        ) {
+            let engine = cfg
+                .engine
+                .as_ref()
+                .map(|e| format!("{e:?}"))
+                .unwrap_or_default();
+            if !matches!(
+                cfg.engine,
+                Some(queryflux_core::config::EngineConfig::Trino)
+            ) {
                 anyhow::bail!(
                     "cluster '{name}': queryAuth.type = impersonate is only supported for Trino, got {engine}"
                 );
@@ -737,11 +755,12 @@ async fn main() -> Result<()> {
             interval.tick().await; // skip the first immediate tick at startup
             loop {
                 interval.tick().await;
-                let cutoff = chrono::Utc::now()
-                    - chrono::Duration::days(retention_days as i64);
+                let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days as i64);
                 match pg.purge_old_query_records(cutoff).await {
                     Ok(0) => {}
-                    Ok(n) => tracing::info!("Purged {n} query records older than {retention_days} days"),
+                    Ok(n) => {
+                        tracing::info!("Purged {n} query records older than {retention_days} days")
+                    }
                     Err(e) => tracing::warn!("Query history purge failed: {e}"),
                 }
             }
@@ -775,15 +794,13 @@ async fn main() -> Result<()> {
             }
 
             match periodic_secs {
-                None => {
-                    loop {
-                        notify.notified().await;
-                        tracing::debug!("Config reload requested via admin API");
-                        if let Some(pg) = &pg {
-                            do_reload(pg, &cache, &live).await;
-                        }
+                None => loop {
+                    notify.notified().await;
+                    tracing::debug!("Config reload requested via admin API");
+                    if let Some(pg) = &pg {
+                        do_reload(pg, &cache, &live).await;
                     }
-                }
+                },
                 Some(interval_secs) => {
                     let mut interval =
                         tokio::time::interval(std::time::Duration::from_secs(interval_secs));
@@ -939,7 +956,10 @@ struct AdapterReloadCache {
 fn health_targets_from_groups(
     group_states: &GroupStatesMap,
     adapters: &HashMap<String, Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>>,
-) -> Vec<(Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>, Arc<ClusterState>)> {
+) -> Vec<(
+    Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>,
+    Arc<ClusterState>,
+)> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for (states, _) in group_states.values() {
@@ -964,10 +984,7 @@ fn health_targets_from_groups(
 #[allow(clippy::too_many_arguments)]
 async fn build_live_config(
     clusters: &std::collections::HashMap<String, queryflux_core::config::ClusterConfig>,
-    cluster_groups: &std::collections::HashMap<
-        String,
-        queryflux_core::config::ClusterGroupConfig,
-    >,
+    cluster_groups: &std::collections::HashMap<String, queryflux_core::config::ClusterGroupConfig>,
     cluster_ids_by_name: &HashMap<String, i64>,
     group_ids_by_name: &HashMap<String, i64>,
     routers_cfg: &[queryflux_core::config::RouterConfig],
@@ -975,7 +992,10 @@ async fn build_live_config(
     group_translation_scripts: HashMap<String, Vec<String>>,
     cache: &mut AdapterReloadCache,
 ) -> Result<LiveConfig> {
-    use queryflux_cluster_manager::{cluster_state::ClusterState, simple::SimpleClusterGroupManager, strategy::strategy_from_config};
+    use queryflux_cluster_manager::{
+        cluster_state::ClusterState, simple::SimpleClusterGroupManager,
+        strategy::strategy_from_config,
+    };
 
     // Build adapters — reuse when serialized cluster config is unchanged.
     for (cluster_name_str, cluster_cfg) in clusters {
@@ -986,10 +1006,7 @@ async fn build_live_config(
         }
         let cfg_json = serde_json::to_string(cluster_cfg).unwrap_or_default();
         let reuse = cache.adapters.contains_key(cluster_name_str.as_str())
-            && cache
-                .config_json
-                .get(cluster_name_str)
-                .map(String::as_str)
+            && cache.config_json.get(cluster_name_str).map(String::as_str)
                 == Some(cfg_json.as_str());
         if reuse {
             continue;
@@ -1014,12 +1031,12 @@ async fn build_live_config(
             }
         };
         cache.adapters.insert(cluster_name_str.clone(), adapter);
-        cache
-            .config_json
-            .insert(cluster_name_str.clone(), cfg_json);
+        cache.config_json.insert(cluster_name_str.clone(), cfg_json);
     }
     cache.adapters.retain(|name, _| clusters.contains_key(name));
-    cache.config_json.retain(|name, _| clusters.contains_key(name));
+    cache
+        .config_json
+        .retain(|name, _| clusters.contains_key(name));
 
     // Build group states.
     let mut group_states: GroupStatesMap = HashMap::new();
@@ -1071,11 +1088,8 @@ async fn build_live_config(
             // still inherit is_healthy from the previous generation so the UI does not
             // flash healthy for 30 s until the next health-check tick.
             let cfg_json = serde_json::to_string(cluster_cfg).unwrap_or_default();
-            let config_unchanged = cache
-                .config_json
-                .get(member_name)
-                .map(String::as_str)
-                == Some(cfg_json.as_str());
+            let config_unchanged =
+                cache.config_json.get(member_name).map(String::as_str) == Some(cfg_json.as_str());
 
             let state = if config_unchanged {
                 if let Some(prev) = cache.cluster_states.get(member_name) {
@@ -1284,7 +1298,9 @@ async fn reload_live_config(
             for v in loaded.routers {
                 match serde_json::from_value::<queryflux_core::config::RouterConfig>(v) {
                     Ok(r) => routers.push(r),
-                    Err(e) => tracing::warn!(error = %e, "Reload: skipping invalid routing_rules row"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Reload: skipping invalid routing_rules row")
+                    }
                 }
             }
             (loaded.routing_fallback, routers)

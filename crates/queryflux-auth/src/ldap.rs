@@ -87,11 +87,7 @@ impl LdapAuthProvider {
     }
 
     /// Read group names from `memberOf` on the user entry, or search `groupSearchBase`.
-    async fn resolve_groups(
-        &self,
-        ldap: &mut Ldap,
-        user_dn: &str,
-    ) -> Vec<String> {
+    async fn resolve_groups(&self, ldap: &mut Ldap, user_dn: &str) -> Vec<String> {
         match &self.config.group_search_base {
             Some(base) => {
                 // Explicit group search: find groups where `member` = user_dn.
@@ -227,7 +223,11 @@ fn ldap_escape(s: &str) -> String {
 fn extract_cn(dn: &str, attr: &str) -> Option<String> {
     let prefix = format!("{attr}=");
     dn.split(',')
-        .find(|rdn| rdn.trim().to_lowercase().starts_with(&prefix.to_lowercase()))
+        .find(|rdn| {
+            rdn.trim()
+                .to_lowercase()
+                .starts_with(&prefix.to_lowercase())
+        })
         .map(|rdn| {
             rdn.trim()
                 .split_once('=')

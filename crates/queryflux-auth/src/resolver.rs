@@ -140,10 +140,9 @@ impl BackendIdentityResolver {
             )));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| QueryFluxError::Auth(format!("tokenExchange: failed to parse response: {e}")))?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| {
+            QueryFluxError::Auth(format!("tokenExchange: failed to parse response: {e}"))
+        })?;
 
         let token = body
             .get("access_token")

@@ -80,11 +80,7 @@ impl CompoundRouter {
                 CompoundCondition::QueryRegex { regex } => match Regex::new(&regex) {
                     Ok(re) => Some(CompiledCondition::QueryRegex(re)),
                     Err(e) => {
-                        tracing::warn!(
-                            "CompoundRouter: skipping invalid regex {:?}: {}",
-                            regex,
-                            e
-                        );
+                        tracing::warn!("CompoundRouter: skipping invalid regex {:?}: {}", regex, e);
                         None
                     }
                 },
@@ -111,9 +107,7 @@ impl CompoundRouter {
                 header_equals(session, name, value.as_str())
             }
             CompiledCondition::User { username } => {
-                let u = auth_ctx
-                    .map(|a| a.user.as_str())
-                    .or_else(|| session.user());
+                let u = auth_ctx.map(|a| a.user.as_str()).or_else(|| session.user());
                 u == Some(username.as_str())
             }
             CompiledCondition::ClientTag { tag } => client_tags_contain(session, tag),
@@ -132,12 +126,14 @@ impl CompoundRouter {
             return false;
         }
         match self.combine {
-            CompoundCombineMode::All => self.conditions.iter().all(|c| {
-                Self::eval_one(c, sql, session, frontend_protocol, auth_ctx)
-            }),
-            CompoundCombineMode::Any => self.conditions.iter().any(|c| {
-                Self::eval_one(c, sql, session, frontend_protocol, auth_ctx)
-            }),
+            CompoundCombineMode::All => self
+                .conditions
+                .iter()
+                .all(|c| Self::eval_one(c, sql, session, frontend_protocol, auth_ctx)),
+            CompoundCombineMode::Any => self
+                .conditions
+                .iter()
+                .any(|c| Self::eval_one(c, sql, session, frontend_protocol, auth_ctx)),
         }
     }
 }

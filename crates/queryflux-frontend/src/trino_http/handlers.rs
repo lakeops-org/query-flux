@@ -312,8 +312,7 @@ fn extract_credentials(headers: &HeaderMap) -> Credentials {
 /// Decode standard base64 without a dependency — sufficient for Phase 1 Basic auth parsing.
 /// Returns the decoded string on success, or Err(()) on invalid input.
 fn base64_decode(encoded: &str) -> Result<String, ()> {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut lookup = [0xffu8; 256];
     for (i, &b) in TABLE.iter().enumerate() {
         lookup[b as usize] = i as u8;
