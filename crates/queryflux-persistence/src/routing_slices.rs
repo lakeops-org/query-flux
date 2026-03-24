@@ -1,4 +1,3 @@
-
 //! Split [`RouterConfig`]-shaped JSON into DB rows with `target_group_id` columns (no group names
 //! inside `definition`), and merge back on load.
 
