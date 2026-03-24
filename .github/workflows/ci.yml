@@ -24,7 +24,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: rustfmt, clippy
+
+      # Pinned `rust-toolchain.toml` wins over the action’s default; ensure components exist on it.
+      - name: Ensure rustfmt/clippy on workspace toolchain
+        run: rustup component add rustfmt clippy
 
       # Smarter than a raw actions/cache on target/: keys per crate graph, fewer misses, smaller uploads.
       # cache-on-failure: ensure duckdb/pyo3 C++ artifacts are cached even when clippy or tests fail.
