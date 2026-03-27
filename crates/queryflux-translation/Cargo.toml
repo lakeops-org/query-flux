@@ -7,9 +7,6 @@ license.workspace = true
 [dependencies]
 queryflux-core = { workspace = true }
 async-trait = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
 pyo3 = { workspace = true }
 tracing = { workspace = true }

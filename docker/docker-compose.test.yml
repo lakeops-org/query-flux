@@ -21,29 +21,29 @@ services:
   trino:
     image: trinodb/trino:476
     environment:
-      - CATALOG_MANAGEMENT=dynamic   # allows CREATE CATALOG at runtime
+      - CATALOG_MANAGEMENT=dynamic
+    healthcheck:
+      test: ["CMD", "curl", "-I", "http://localhost:8080/v1/status"]
+      interval: 2s
+      timeout: 10s
+      retries: 2
+      start_period: 10s
     ports:
       - "18081:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/info"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 30s
     networks:
       - test_net
 
   starrocks:
-    image: starrocks/allin1-ubuntu:3.4.1
+    image: starrocks/allin1-ubuntu:4.0.1
     ports:
-      - "19030:9030"   # MySQL wire (FE query port)
-      - "18030:8030"   # FE HTTP API (health check)
+      - "9030:9030"
+      - "8030:8030"
     healthcheck:
-      test: ["CMD-SHELL", "mysql -P 9030 -h 127.0.0.1 -u root --skip-column-names -e 'SHOW BACKENDS' 2>/dev/null | grep -q true"]
-      interval: 15s
+      test: ["CMD", "curl", "-I", "http://starrocks:8030/api/health"]
+      interval: 2s
       timeout: 10s
-      retries: 40
-      start_period: 120s
+      retries: 2
+      start_period: 40s
     networks:
       - test_net
 
@@ -99,7 +99,6 @@ services:
 
   migrate:
     image: quay.io/lakekeeper/catalog:latest-main
-    pull_policy: always
     environment:
       - LAKEKEEPER__PG_ENCRYPTION_KEY=test-key-not-secure
       - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://postgres:postgres@db:5432/postgres
@@ -114,7 +113,6 @@ services:
 
   lakekeeper:
     image: quay.io/lakekeeper/catalog:latest-main
-    pull_policy: always
     environment:
       - LAKEKEEPER__PG_ENCRYPTION_KEY=test-key-not-secure
       - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://postgres:postgres@db:5432/postgres
@@ -176,7 +174,7 @@ services:
         --data @/config/create-warehouse.json;
         exit 0
     volumes:
-      - ./test-data/create-warehouse.json:/config/create-warehouse.json
+      - ./docker/fixtures/create-warehouse.json:/config/create-warehouse.json
     networks:
       - test_net
 
@@ -207,10 +205,16 @@ services:
   data-loader:
     image: trinodb/trino:476
     profiles: ["loader"]
+    environment:
+      TPCH_SCALE: ${TPCH_SCALE:-tiny}
     entrypoint: ["/bin/bash", "-c"]
-    command: ["trino --server http://trino:8080 --user loader --file /test-data/init.sql"]
+    command:
+      - |
+        set -euo pipefail
+        sed "s/FROM tpch\\.tiny\\./FROM tpch.$${TPCH_SCALE}./g" /test-data/init.sql > /tmp/init.run.sql
+        exec trino --server http://trino:8080 --user loader --file /tmp/init.run.sql
     volumes:
-      - ./test-data/init.sql:/test-data/init.sql
+      - ./docker/fixtures/init.sql:/test-data/init.sql:ro
     networks:
       - test_net
 

@@ -330,6 +330,84 @@ fn default_true() -> bool {
     true
 }
 
+/// Postgres persistence: set a single `url`, **or** `host`, `user`, `database`, and optionally
+/// `password` / `port` (default 5432). The URL form wins when both are present.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PostgresPersistenceConfig {
+    /// Full `postgres://` connection string. When non-empty, `host` / `user` / … are ignored.
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub database: Option<String>,
+}
+
+impl PostgresPersistenceConfig {
+    /// Connection URL for sqlx / `PgPool` (includes password encoding for special characters).
+    pub fn connection_url(&self) -> Result<String, String> {
+        if let Some(ref u) = self.url {
+            let u = u.trim();
+            if !u.is_empty() {
+                return Ok(u.to_string());
+            }
+        }
+
+        let host = self
+            .host
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                "postgres persistence: set `url`, or set `host`, `user`, and `database`".to_string()
+            })?;
+        let user = self
+            .user
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                "postgres persistence: set `url`, or set `host`, `user`, and `database`".to_string()
+            })?;
+        let database = self
+            .database
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                "postgres persistence: set `url`, or set `host`, `user`, and `database`".to_string()
+            })?;
+
+        let port = self.port.unwrap_or(5432);
+        let password = self.password.as_deref().unwrap_or("");
+
+        let mut url = url::Url::parse("postgres://localhost/")
+            .map_err(|e| e.to_string())?;
+        url.set_host(Some(host)).map_err(|e| e.to_string())?;
+        url.set_username(user)
+            .map_err(|_| "invalid user for postgres URL (unsupported characters)".to_string())?;
+        if password.is_empty() {
+            let _ = url.set_password(None);
+        } else {
+            url.set_password(Some(password)).map_err(|_| {
+                "invalid password for postgres URL (unsupported characters)".to_string()
+            })?;
+        }
+        url.set_port(Some(port))
+            .map_err(|_| "invalid port for postgres URL".to_string())?;
+        url.set_path(&format!("/{}", database.trim_start_matches('/')));
+
+        Ok(url.to_string())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum PersistenceConfig {
@@ -340,7 +418,8 @@ pub enum PersistenceConfig {
         url: String,
     },
     Postgres {
-        url: String,
+        #[serde(flatten)]
+        conn: PostgresPersistenceConfig,
     },
 }
 
@@ -692,7 +771,7 @@ pub struct StaticColumnDef {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProxyConfig, RouterConfig};
+    use super::{PersistenceConfig, PostgresPersistenceConfig, ProxyConfig, RouterConfig};
 
     #[test]
     fn router_config_deserializes_admin_style_json_routers_array() {
@@ -786,6 +865,8 @@ mod tests {
     }
 
     /// Studio-first / Postgres: YAML may omit clusters, clusterGroups, routers, routingFallback.
+    /// When maps are non-empty, QueryFlux upserts those entries into Postgres on each startup;
+    /// omitted maps leave DB-managed resources unchanged.
     #[test]
     fn proxy_config_minimal_yaml_omits_groups_and_routing() {
         let yaml = r#"
@@ -796,5 +877,73 @@ queryflux: {}
         assert!(cfg.cluster_groups.is_empty());
         assert!(cfg.routers.is_empty());
         assert!(cfg.routing_fallback.is_empty());
+    }
+
+    #[test]
+    fn postgres_persistence_prefers_url() {
+        let c = PostgresPersistenceConfig {
+            url: Some("postgres://u:p@h:5432/db".into()),
+            host: Some("ignored".into()),
+            ..Default::default()
+        };
+        assert_eq!(c.connection_url().unwrap(), "postgres://u:p@h:5432/db");
+    }
+
+    #[test]
+    fn postgres_persistence_from_parts_builds_url() {
+        let c = PostgresPersistenceConfig {
+            host: Some("localhost".into()),
+            port: Some(5433),
+            user: Some("queryflux".into()),
+            password: Some("secret@x".into()),
+            database: Some("queryflux".into()),
+            url: None,
+        };
+        let u = c.connection_url().unwrap();
+        assert!(u.starts_with("postgres://"));
+        assert!(u.contains("5433"));
+        assert!(u.contains("localhost"));
+    }
+
+    #[test]
+    fn persistence_postgres_yaml_url_only() {
+        let yaml = r#"
+queryflux:
+  persistence:
+    type: postgres
+    url: postgres://a:b@localhost:5432/db
+"#;
+        let cfg: ProxyConfig = serde_yaml::from_str(yaml).unwrap();
+        match &cfg.queryflux.persistence {
+            PersistenceConfig::Postgres { conn } => {
+                assert_eq!(
+                    conn.connection_url().unwrap(),
+                    "postgres://a:b@localhost:5432/db"
+                );
+            }
+            _ => panic!("expected postgres"),
+        }
+    }
+
+    #[test]
+    fn persistence_postgres_yaml_discrete_fields() {
+        let yaml = r#"
+queryflux:
+  persistence:
+    type: postgres
+    host: localhost
+    port: 5433
+    user: queryflux
+    password: queryflux
+    database: queryflux
+"#;
+        let cfg: ProxyConfig = serde_yaml::from_str(yaml).unwrap();
+        match &cfg.queryflux.persistence {
+            PersistenceConfig::Postgres { conn } => {
+                let u = conn.connection_url().unwrap();
+                assert!(u.contains("localhost") && u.contains("5433"));
+            }
+            _ => panic!("expected postgres"),
+        }
     }
 }

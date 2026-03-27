@@ -99,8 +99,24 @@ impl ClusterState {
         self.running_queries.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Never wraps: extra releases (e.g. after restart when persistence still has executing rows
+    /// but in-memory counters were reset) must not underflow `u64`.
     pub fn decrement_running(&self) {
-        self.running_queries.fetch_sub(1, Ordering::Relaxed);
+        let mut current = self.running_queries.load(Ordering::Relaxed);
+        loop {
+            if current == 0 {
+                return;
+            }
+            match self.running_queries.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(c) => current = c,
+            }
+        }
     }
 
     pub fn increment_queued(&self) {
@@ -108,7 +124,21 @@ impl ClusterState {
     }
 
     pub fn decrement_queued(&self) {
-        self.queued_queries.fetch_sub(1, Ordering::Relaxed);
+        let mut current = self.queued_queries.load(Ordering::Relaxed);
+        loop {
+            if current == 0 {
+                return;
+            }
+            match self.queued_queries.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(c) => current = c,
+            }
+        }
     }
 
     pub fn is_at_capacity(&self) -> bool {

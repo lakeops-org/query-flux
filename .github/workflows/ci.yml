@@ -129,10 +129,10 @@ jobs:
       - name: E2E tests
         run: |
           TRINO_URL=http://localhost:18081 \
-          STARROCKS_URL=mysql://root@localhost:19030 \
+          STARROCKS_URL=mysql://root@localhost:9030 \
           LAKEKEEPER_URL=http://localhost:18181 \
           MINIO_ENDPOINT=localhost:19000 \
-          cargo test -p queryflux-e2e-tests -- --include-ignored
+          cargo test -p queryflux-e2e-tests -- --test-threads=1 --include-ignored
 
       - name: Stop e2e Docker stack
         if: always()

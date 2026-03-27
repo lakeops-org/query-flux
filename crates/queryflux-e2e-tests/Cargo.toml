@@ -27,6 +27,9 @@ axum = { workspace = true }
 # HTTP client for Trino protocol
 reqwest = { workspace = true }
 
+# Real Rust Trino client (used in e2e tests)
+trino-rust-client = { version = "0.9.3", features = ["spooling"] }
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -35,7 +38,6 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 
 # Tracing (silenced in tests, but needed to initialise once)
-tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 # Async trait

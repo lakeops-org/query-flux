@@ -11,7 +11,7 @@ use axum::{
 use queryflux_core::{
     config::{
         AuthConfig, AuthProviderConfig, AuthorizationConfig, AuthorizationProviderConfig,
-        ClusterGroupConfig, OpenFgaCredentials, RouterConfig,
+        ClusterGroupConfig, FrontendConfig, FrontendsConfig, OpenFgaCredentials, RouterConfig,
     },
     engine_registry::EngineRegistry,
     error::Result,
@@ -74,6 +74,7 @@ pub struct ClusterStateDto {
         list_engines_handler,
         get_engine_stats_handler,
         get_group_stats_handler,
+        frontends_status_handler,
     ),
     components(schemas(
         ClusterStateDto,
@@ -84,6 +85,8 @@ pub struct ClusterStateDto {
         GroupStatRow,
         UserScriptRecord,
         UpsertUserScript,
+        ProtocolFrontendDto,
+        FrontendsStatusDto,
     )),
     tags(
         (name = "admin", description = "Cluster and query management"),
@@ -156,6 +159,103 @@ impl Default for SecurityConfigDto {
             openfga: None,
             group_authorization: HashMap::new(),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Protocol frontends (read-only snapshot from startup YAML)
+// ---------------------------------------------------------------------------
+
+/// One entry protocol / client surface (Trino HTTP, MySQL wire, …).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ProtocolFrontendDto {
+    /// Stable id: `trino_http`, `mysql_wire`, …
+    pub id: String,
+    pub label: String,
+    pub short_description: String,
+    pub enabled: bool,
+    /// Listening port when enabled and configured; `null` when the block is absent in config.
+    pub port: Option<u16>,
+}
+
+/// Effective frontends from the running process config (not hot-reloaded).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct FrontendsStatusDto {
+    pub external_address: Option<String>,
+    pub admin_api_port: u16,
+    pub protocols: Vec<ProtocolFrontendDto>,
+}
+
+/// Build the snapshot returned by [`frontends_status_handler`] from the loaded `FrontendsConfig`.
+pub fn build_frontends_status(
+    frontends: &FrontendsConfig,
+    admin_api_port: u16,
+    external_address: Option<String>,
+) -> FrontendsStatusDto {
+    fn opt_fe(
+        id: &str,
+        label: &str,
+        desc: &str,
+        cfg: Option<&FrontendConfig>,
+    ) -> ProtocolFrontendDto {
+        match cfg {
+            None => ProtocolFrontendDto {
+                id: id.to_string(),
+                label: label.to_string(),
+                short_description: desc.to_string(),
+                enabled: false,
+                port: None,
+            },
+            Some(c) => ProtocolFrontendDto {
+                id: id.to_string(),
+                label: label.to_string(),
+                short_description: desc.to_string(),
+                enabled: c.enabled,
+                port: Some(c.port),
+            },
+        }
+    }
+
+    let trino = &frontends.trino_http;
+    let protocols = vec![
+        ProtocolFrontendDto {
+            id: "trino_http".to_string(),
+            label: "Trino HTTP".to_string(),
+            short_description: "Trino-compatible REST API (POST /v1/statement, poll nextUri)."
+                .to_string(),
+            enabled: trino.enabled,
+            port: Some(trino.port),
+        },
+        opt_fe(
+            "mysql_wire",
+            "MySQL wire",
+            "MySQL protocol (mysql CLI, JDBC mysql://, many drivers).",
+            frontends.mysql_wire.as_ref(),
+        ),
+        opt_fe(
+            "postgres_wire",
+            "PostgreSQL wire",
+            "PostgreSQL wire protocol (psql, JDBC postgresql://, etc.).",
+            frontends.postgres_wire.as_ref(),
+        ),
+        opt_fe(
+            "clickhouse_http",
+            "ClickHouse HTTP",
+            "ClickHouse HTTP interface (if implemented in this build).",
+            frontends.clickhouse_http.as_ref(),
+        ),
+        opt_fe(
+            "flight_sql",
+            "Flight SQL",
+            "Arrow Flight SQL / gRPC-style access (driver-dependent).",
+            frontends.flight_sql.as_ref(),
+        ),
+    ];
+
+    FrontendsStatusDto {
+        external_address,
+        admin_api_port,
+        protocols,
     }
 }
 
@@ -307,6 +407,8 @@ struct AdminState {
     engine_registry: Arc<EngineRegistry>,
     /// Wake the config reload task immediately after mutating persisted cluster/group/routing config.
     config_reload_notify: Arc<tokio::sync::Notify>,
+    /// Snapshot of protocol listeners from startup config (YAML); not hot-reloaded.
+    frontends_status: FrontendsStatusDto,
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +424,7 @@ pub struct AdminFrontend {
     routing_config: Arc<RoutingConfigDto>,
     engine_registry: Arc<EngineRegistry>,
     config_reload_notify: Arc<tokio::sync::Notify>,
+    frontends_status: FrontendsStatusDto,
 }
 
 impl AdminFrontend {
@@ -335,6 +438,7 @@ impl AdminFrontend {
         routing_config: Arc<RoutingConfigDto>,
         engine_registry: Arc<EngineRegistry>,
         config_reload_notify: Arc<tokio::sync::Notify>,
+        frontends_status: FrontendsStatusDto,
     ) -> Self {
         Self {
             prometheus,
@@ -345,6 +449,7 @@ impl AdminFrontend {
             routing_config,
             engine_registry,
             config_reload_notify,
+            frontends_status,
         }
     }
 
@@ -357,6 +462,7 @@ impl AdminFrontend {
             routing_config: self.routing_config.clone(),
             engine_registry: self.engine_registry.clone(),
             config_reload_notify: self.config_reload_notify.clone(),
+            frontends_status: self.frontends_status.clone(),
         });
 
         let spec_json =
@@ -371,6 +477,7 @@ impl AdminFrontend {
             .route("/admin/engines", get(list_engines_handler))
             .route("/admin/engine-stats", get(get_engine_stats_handler))
             .route("/admin/group-stats", get(get_group_stats_handler))
+            .route("/admin/frontends", get(frontends_status_handler))
             .route(
                 "/admin/clusters/{group}/{cluster}",
                 patch(update_cluster_handler),
@@ -477,6 +584,19 @@ async fn metrics_handler(State(state): State<Arc<AdminState>>) -> impl IntoRespo
 )]
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "ok")
+}
+
+/// Protocol frontends enabled at process start (from YAML). Not hot-reloaded.
+#[utoipa::path(
+    get,
+    path = "/admin/frontends",
+    tag = "admin",
+    responses(
+        (status = 200, description = "Frontend protocol snapshot", body = FrontendsStatusDto),
+    )
+)]
+async fn frontends_status_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
+    Json(state.frontends_status.clone())
 }
 
 /// Live state of all cluster groups.

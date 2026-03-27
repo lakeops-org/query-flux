@@ -14,7 +14,7 @@ use queryflux_config::{yaml::YamlFileConfigProvider, ConfigProvider};
 use queryflux_core::query::{ClusterGroupName, ClusterName, EngineType};
 use queryflux_frontend::{
     admin::{
-        AdminFrontend, RoutingConfigDto as AdminRoutingConfigDto,
+        build_frontends_status, AdminFrontend, RoutingConfigDto as AdminRoutingConfigDto,
         SecurityConfigDto as AdminSecurityConfigDto,
     },
     flight_sql::FlightSqlFrontend,
@@ -91,9 +91,12 @@ async fn main() -> Result<()> {
         Arc<dyn queryflux_persistence::Persistence>,
         Arc<dyn MetricsStore>,
     ) = match &config.queryflux.persistence {
-        queryflux_core::config::PersistenceConfig::Postgres { url } => {
+        queryflux_core::config::PersistenceConfig::Postgres { conn } => {
+            let url = conn
+                .connection_url()
+                .map_err(|m| anyhow::anyhow!("Invalid postgres persistence config: {m}"))?;
             let pg = Arc::new(
-                PostgresStore::connect(url)
+                PostgresStore::connect(&url)
                     .await
                     .context("Failed to connect to Postgres")?,
             );
@@ -124,41 +127,32 @@ async fn main() -> Result<()> {
     let mut group_ids_by_name: HashMap<String, i64> = HashMap::new();
 
     // --- When Postgres is active, load cluster/group config from DB ---
-    // On the very first run (tables empty) we seed from YAML so existing deployments
-    // migrate transparently without any manual step.
+    // Merge YAML-defined clusters and groups into Postgres on **every** startup when the
+    // file declares them (`clusters` / `clusterGroups` non-empty). This keeps Docker/Compose
+    // configs authoritative even if the volume already had older rows (e.g. switched engine).
+    // **Studio-first** setups omit those maps (or leave them empty) — then nothing is written
+    // here and the DB remains the source of truth for those resources.
     if let Some(pg) = &pg_store {
-        // Seed cluster configs from YAML if the table is empty.
-        if pg
-            .cluster_configs_count()
-            .await
-            .context("DB cluster config count")?
-            == 0
-        {
-            info!("Seeding cluster configs from YAML into Postgres (first run)");
+        if !config.clusters.is_empty() {
+            info!("Applying cluster definitions from YAML to Postgres");
             for (name, cfg) in &config.clusters {
                 if let Some(upsert) = UpsertClusterConfig::from_core(cfg) {
                     pg.upsert_cluster_config(name, &upsert)
                         .await
-                        .with_context(|| format!("Seeding cluster '{name}'"))?;
+                        .with_context(|| format!("Upsert cluster '{name}' from YAML"))?;
                 }
             }
         }
-        // Seed group configs from YAML if the table is empty.
-        if pg
-            .group_configs_count()
-            .await
-            .context("DB group config count")?
-            == 0
-        {
-            info!("Seeding cluster group configs from YAML into Postgres (first run)");
+        if !config.cluster_groups.is_empty() {
+            info!("Applying cluster group definitions from YAML to Postgres");
             for (name, cfg) in &config.cluster_groups {
                 pg.upsert_group_config(name, &UpsertClusterGroupConfig::from_core(cfg))
                     .await
-                    .with_context(|| format!("Seeding group '{name}'"))?;
+                    .with_context(|| format!("Upsert group '{name}' from YAML"))?;
             }
         }
 
-        // Override YAML config with DB (source of truth when Postgres is configured).
+        // Effective config comes from Postgres (YAML above only upserts keys that appear in the file).
         info!("Loading cluster and group configs from Postgres");
         let cluster_records = pg
             .list_cluster_configs()
@@ -623,6 +617,12 @@ async fn main() -> Result<()> {
     ));
     let config_reload_notify = Arc::new(tokio::sync::Notify::new());
 
+    let frontends_status = build_frontends_status(
+        &config.queryflux.frontends,
+        admin_port,
+        config.queryflux.external_address.clone(),
+    );
+
     let admin = AdminFrontend::new(
         prometheus,
         live.clone(),
@@ -632,6 +632,7 @@ async fn main() -> Result<()> {
         routing_config,
         engine_registry,
         config_reload_notify.clone(),
+        frontends_status,
     );
 
     // --- Start Trino HTTP frontend ---
@@ -866,18 +867,36 @@ async fn main() -> Result<()> {
                     let live = state.live.read().await;
                     live.health_check_targets.clone()
                 };
-                for (adapter, state) in &targets {
+                for (adapter, cstate) in &targets {
+                    let tracked = cstate.running_queries();
+                    let max = cstate.max_running_queries();
+                    // `decrement_running` used to wrap on underflow; or reload can desync counters.
+                    if tracked > max {
+                        let fix = adapter
+                            .fetch_running_query_count()
+                            .await
+                            .unwrap_or(0);
+                        tracing::warn!(
+                            cluster = %cstate.cluster_name.0,
+                            group = %cstate.group_name.0,
+                            tracked,
+                            max,
+                            fix,
+                            "running_queries above group capacity; resetting from engine count"
+                        );
+                        cstate.set_running_queries(fix);
+                        continue;
+                    }
                     if let Some(actual) = adapter.fetch_running_query_count().await {
-                        let tracked = state.running_queries();
                         if actual != tracked {
                             tracing::info!(
-                                cluster = %state.cluster_name.0,
-                                group = %state.group_name.0,
+                                cluster = %cstate.cluster_name.0,
+                                group = %cstate.group_name.0,
                                 tracked,
                                 actual,
                                 "Reconciling running_queries counter with engine ground truth"
                             );
-                            state.set_running_queries(actual);
+                            cstate.set_running_queries(actual);
                         }
                     }
                 }

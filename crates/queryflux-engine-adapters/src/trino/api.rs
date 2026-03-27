@@ -23,7 +23,8 @@ pub struct TrinoResponse {
     pub update_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update_count: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    // `trino-rust-client` expects `warnings` to always be present.
+    #[serde(default)]
     pub warnings: Vec<Value>,
 }
 
@@ -48,6 +49,9 @@ pub struct TrinoStats {
     pub queued: bool,
     #[serde(default)]
     pub scheduled: bool,
+    /// Trino's query `nodes` count (required by `trino-rust-client`).
+    #[serde(default)]
+    pub nodes: u32,
     #[serde(default)]
     pub running_drivers: u32,
     #[serde(default)]
@@ -73,7 +77,7 @@ pub struct TrinoStats {
     #[serde(default)]
     pub physical_input_bytes: u64,
     #[serde(default)]
-    pub peak_user_memory_bytes: u64,
+    pub peak_memory_bytes: u64,
     #[serde(default)]
     pub spilled_bytes: u64,
     #[serde(default)]
@@ -101,6 +105,7 @@ pub fn queued_response(query_id: &str, elapsed_ms: u64, next_uri: String) -> Tri
             state: "QUEUED".to_string(),
             queued: true,
             scheduled: false,
+            nodes: 0,
             running_drivers: 0,
             completed_splits: 0,
             total_splits: 0,
@@ -109,7 +114,7 @@ pub fn queued_response(query_id: &str, elapsed_ms: u64, next_uri: String) -> Tri
             processed_rows: 0,
             processed_bytes: 0,
             physical_input_bytes: 0,
-            peak_user_memory_bytes: 0,
+            peak_memory_bytes: 0,
             spilled_bytes: 0,
             queued_time_millis: elapsed_ms,
             elapsed_time_millis: elapsed_ms,

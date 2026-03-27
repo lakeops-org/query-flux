@@ -7,12 +7,21 @@
 //!
 //! Run (after `cargo build --bin queryflux`):
 //!   cargo run --bin queryflux-bench
+//!
+//! Configuration (environment):
+//!   `QUERYFLUX_BENCH_WARMUP` — warmup rounds per path (default `50`).
+//!   `QUERYFLUX_BENCH_ITERATIONS` — timed iterations (default `500`).
+//!   `QUERYFLUX_BENCH_TRINO_POLL` — if `1`/`true`, mock Trino uses `POST` + one `GET` on a
+//!   Trino-shaped `nextUri` (`/v1/statement/executing/…`, so QueryFlux can rewrite and forward
+//!   poll requests). Default `0`.
 
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use axum::extract::{Path, State};
 use axum::response::Json;
 use axum::{routing::get, routing::post, Router};
 use mysql_async::prelude::Queryable;
@@ -26,15 +35,56 @@ use tokio::io::BufWriter;
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 
-const WARMUP: usize = 50;
-const ITERATIONS: usize = 500;
-
 static QUERY_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Debug)]
+struct BenchConfig {
+    warmup: usize,
+    iterations: usize,
+    trino_poll: bool,
+}
+
+impl BenchConfig {
+    fn from_env() -> anyhow::Result<Self> {
+        Ok(Self {
+            warmup: parse_usize_env("QUERYFLUX_BENCH_WARMUP", 50)?,
+            iterations: parse_usize_env("QUERYFLUX_BENCH_ITERATIONS", 500)?,
+            trino_poll: env_truthy("QUERYFLUX_BENCH_TRINO_POLL"),
+        })
+    }
+}
+
+fn parse_usize_env(key: &str, default: usize) -> anyhow::Result<usize> {
+    match std::env::var(key) {
+        Ok(s) if s.trim().is_empty() => Ok(default),
+        Ok(s) => s
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("{key} must be a non-negative integer")),
+        Err(_) => Ok(default),
+    }
+}
+
+fn env_truthy(key: &str) -> bool {
+    match std::env::var(key) {
+        Ok(s) => {
+            let t = s.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        }
+        Err(_) => false,
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let trino_entries = bench_trino().await?;
-    let starrocks_entries = bench_starrocks().await?;
+    let cfg = BenchConfig::from_env()?;
+    eprintln!(
+        "[queryflux-bench] warmup={} iterations={} trino_poll={}",
+        cfg.warmup, cfg.iterations, cfg.trino_poll
+    );
+
+    let trino_entries = bench_trino(&cfg).await?;
+    let starrocks_entries = bench_starrocks(&cfg).await?;
 
     let combined: Vec<Value> = trino_entries.into_iter().chain(starrocks_entries).collect();
     println!("{}", serde_json::to_string_pretty(&json!(combined))?);
@@ -42,17 +92,28 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn bench_trino() -> anyhow::Result<Vec<Value>> {
+async fn bench_trino(cfg: &BenchConfig) -> anyhow::Result<Vec<Value>> {
     let mock_port = free_port();
     let qf_port = free_port();
     let admin_port = free_port();
 
+    let mock_cfg = Arc::new(MockTrinoConfig {
+        port: mock_port,
+        two_phase: cfg.trino_poll,
+    });
+
     let mock_listener = TcpListener::bind(format!("127.0.0.1:{mock_port}")).await?;
+    let mock_cfg_serve = mock_cfg.clone();
     tokio::spawn(async move {
         let app = Router::new()
             .route("/v1/statement", post(mock_trino_statement))
+            .route(
+                "/v1/statement/{*trino_path}",
+                get(mock_trino_poll_statement),
+            )
             .route("/v1/info", get(mock_trino_info))
-            .route("/v1/cluster", get(mock_trino_cluster));
+            .route("/v1/cluster", get(mock_trino_cluster))
+            .with_state(mock_cfg_serve);
         axum::serve(mock_listener, app).await.unwrap();
     });
     sleep(Duration::from_millis(100)).await;
@@ -103,35 +164,47 @@ routingFallback: bench-trino-group
         .timeout(Duration::from_secs(10))
         .build()?;
 
-    eprintln!("[Trino] Warming up ({WARMUP} queries each)...");
-    for _ in 0..WARMUP {
-        let _ = send_trino_http(&client, mock_port).await;
-        let _ = send_trino_http(&client, qf_port).await;
+    let engine_label = if cfg.trino_poll {
+        "Trino (POST+poll)"
+    } else {
+        "Trino"
+    };
+
+    eprintln!("[Trino] Warming up ({} queries each)...", cfg.warmup);
+    for _ in 0..cfg.warmup {
+        let _ = send_trino_until_done(&client, mock_port).await;
+        let _ = send_trino_until_done(&client, qf_port).await;
     }
 
-    eprintln!("[Trino] Benchmarking direct ({ITERATIONS} queries)...");
-    let mut direct_ms = Vec::with_capacity(ITERATIONS);
-    for _ in 0..ITERATIONS {
+    eprintln!(
+        "[Trino] Benchmarking direct ({} queries)...",
+        cfg.iterations
+    );
+    let mut direct_ms = Vec::with_capacity(cfg.iterations);
+    for _ in 0..cfg.iterations {
         let t = Instant::now();
-        send_trino_http(&client, mock_port).await?;
+        send_trino_until_done(&client, mock_port).await?;
         direct_ms.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
-    eprintln!("[Trino] Benchmarking through QueryFlux ({ITERATIONS} queries)...");
-    let mut proxy_ms = Vec::with_capacity(ITERATIONS);
-    for _ in 0..ITERATIONS {
+    eprintln!(
+        "[Trino] Benchmarking through QueryFlux ({} queries)...",
+        cfg.iterations
+    );
+    let mut proxy_ms = Vec::with_capacity(cfg.iterations);
+    for _ in 0..cfg.iterations {
         let t = Instant::now();
-        send_trino_http(&client, qf_port).await?;
+        send_trino_until_done(&client, qf_port).await?;
         proxy_ms.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
     let _ = qf_proc.kill();
     let _ = std::fs::remove_file(&config_path);
 
-    Ok(build_result_entries("Trino", &direct_ms, &proxy_ms))
+    Ok(build_result_entries(engine_label, &direct_ms, &proxy_ms))
 }
 
-async fn bench_starrocks() -> anyhow::Result<Vec<Value>> {
+async fn bench_starrocks(cfg: &BenchConfig) -> anyhow::Result<Vec<Value>> {
     let mysql_port = spawn_mock_mysql_server().await;
     let qf_port = free_port();
     let admin_port = free_port();
@@ -185,25 +258,31 @@ routingFallback: bench-sr-group
 
     let mysql_opts = mysql_opts_mock(&mysql_url)?;
 
-    eprintln!("[StarRocks] Warming up ({WARMUP} queries each)...");
-    for _ in 0..WARMUP {
+    eprintln!("[StarRocks] Warming up ({} queries each)...", cfg.warmup);
+    for _ in 0..cfg.warmup {
         let _ = send_mysql_select_one(&mysql_opts).await;
-        let _ = send_trino_http(&client, qf_port).await;
+        let _ = send_trino_until_done(&client, qf_port).await;
     }
 
-    eprintln!("[StarRocks] Benchmarking direct MySQL ({ITERATIONS} queries)...");
-    let mut direct_ms = Vec::with_capacity(ITERATIONS);
-    for _ in 0..ITERATIONS {
+    eprintln!(
+        "[StarRocks] Benchmarking direct MySQL ({} queries)...",
+        cfg.iterations
+    );
+    let mut direct_ms = Vec::with_capacity(cfg.iterations);
+    for _ in 0..cfg.iterations {
         let t = Instant::now();
         send_mysql_select_one(&mysql_opts).await?;
         direct_ms.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
-    eprintln!("[StarRocks] Benchmarking through QueryFlux ({ITERATIONS} queries)...");
-    let mut proxy_ms = Vec::with_capacity(ITERATIONS);
-    for _ in 0..ITERATIONS {
+    eprintln!(
+        "[StarRocks] Benchmarking through QueryFlux ({} queries)...",
+        cfg.iterations
+    );
+    let mut proxy_ms = Vec::with_capacity(cfg.iterations);
+    for _ in 0..cfg.iterations {
         let t = Instant::now();
-        send_trino_http(&client, qf_port).await?;
+        send_trino_until_done(&client, qf_port).await?;
         proxy_ms.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -349,9 +428,15 @@ fn is_select_one_literal(sql: &str) -> bool {
 
 // ── Mock Trino HTTP ──────────────────────────────────────────────────────────
 
-async fn mock_trino_statement() -> Json<Value> {
-    let id = format!("bench_{:08}", QUERY_COUNTER.fetch_add(1, Ordering::Relaxed));
-    Json(json!({
+#[derive(Clone)]
+struct MockTrinoConfig {
+    port: u16,
+    /// When true: first `POST` returns `RUNNING` + `nextUri` under `/v1/statement/...` (QueryFlux-compatible).
+    two_phase: bool,
+}
+
+fn trino_finished_json(id: &str) -> Value {
+    json!({
         "id": id,
         "infoUri": "http://mock/ui/query.html",
         "stats": {
@@ -375,7 +460,54 @@ async fn mock_trino_statement() -> Json<Value> {
         },
         "columns": [{"name": "col1", "type": "bigint", "typeSignature": {"rawType": "bigint", "arguments": []}}],
         "data": [[1]]
+    })
+}
+
+async fn mock_trino_statement(State(cfg): State<Arc<MockTrinoConfig>>) -> Json<Value> {
+    let n = QUERY_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let id = format!("bench_{n:08}");
+    if !cfg.two_phase {
+        return Json(trino_finished_json(&id));
+    }
+    let next_uri = format!(
+        "http://127.0.0.1:{}/v1/statement/executing/{}/1",
+        cfg.port, id
+    );
+    Json(json!({
+        "id": id,
+        "infoUri": "http://mock/ui/query.html",
+        "nextUri": next_uri,
+        "stats": {
+            "state": "RUNNING",
+            "queued": false,
+            "scheduled": true,
+            "runningDrivers": 1,
+            "completedSplits": 0,
+            "totalSplits": 1,
+            "queuedSplits": 0,
+            "runningSplits": 1,
+            "processedRows": 0,
+            "processedBytes": 0,
+            "queuedTimeMillis": 0,
+            "elapsedTimeMillis": 0,
+            "cpuTimeMillis": 0,
+            "wallTimeMillis": 0,
+            "physicalInputBytes": 0,
+            "peakUserMemoryBytes": 0,
+            "spilledBytes": 0
+        },
+        "columns": [{"name": "col1", "type": "bigint", "typeSignature": {"rawType": "bigint", "arguments": []}}],
     }))
+}
+
+/// Second page of a two-phase query; path matches Trino-style `/v1/statement/executing/{id}/…`.
+async fn mock_trino_poll_statement(Path(trino_path): Path<String>) -> Json<Value> {
+    let id = trino_path
+        .strip_prefix("executing/")
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or("bench_unknown")
+        .to_string();
+    Json(trino_finished_json(&id))
 }
 
 async fn mock_trino_info() -> Json<Value> {
@@ -396,13 +528,49 @@ async fn mock_trino_cluster() -> Json<Value> {
     }))
 }
 
-async fn send_trino_http(client: &reqwest::Client, port: u16) -> anyhow::Result<()> {
-    client
-        .post(format!("http://127.0.0.1:{port}/v1/statement"))
-        .header("x-trino-user", "bench")
-        .body("SELECT 1")
-        .send()
-        .await?;
+/// Full Trino client round-trip: `POST /v1/statement`, then follow `nextUri` until a terminal page.
+async fn send_trino_until_done(client: &reqwest::Client, port: u16) -> anyhow::Result<()> {
+    let stmt_url = format!("http://127.0.0.1:{port}/v1/statement");
+    let mut url = stmt_url;
+    let mut is_post = true;
+
+    loop {
+        let resp = if is_post {
+            client
+                .post(&url)
+                .header("X-Trino-User", "bench")
+                .body("SELECT 1")
+                .send()
+                .await?
+        } else {
+            client
+                .get(&url)
+                .header("X-Trino-User", "bench")
+                .send()
+                .await?
+        };
+
+        if !resp.status().is_success() {
+            anyhow::bail!("HTTP {} for {}", resp.status(), url);
+        }
+
+        let page: Value = resp.json().await?;
+        let state = page
+            .get("stats")
+            .and_then(|s| s.get("state"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let next = page.get("nextUri").and_then(|v| v.as_str());
+
+        if next.is_none() || state == "FINISHED" || state == "FAILED" {
+            break;
+        }
+
+        url = next.unwrap().to_string();
+        is_post = false;
+    }
+
     Ok(())
 }
 
@@ -467,6 +635,28 @@ fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
+fn mean(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
+    }
+    xs.iter().sum::<f64>() / xs.len() as f64
+}
+
+fn stddev_pop(xs: &[f64], m: f64) -> f64 {
+    if xs.len() < 2 {
+        return 0.0;
+    }
+    let v = xs.iter().map(|x| (x - m).powi(2)).sum::<f64>() / xs.len() as f64;
+    v.sqrt()
+}
+
+fn overhead_ratio_pct(direct_p50: f64, proxy_p50: f64) -> f64 {
+    if direct_p50 <= f64::EPSILON {
+        return 0.0;
+    }
+    ((proxy_p50 / direct_p50) - 1.0) * 100.0
+}
+
 fn build_result_entries(engine: &str, direct_ms: &[f64], proxy_ms: &[f64]) -> Vec<Value> {
     let mut d = direct_ms.to_vec();
     let mut p = proxy_ms.to_vec();
@@ -480,28 +670,61 @@ fn build_result_entries(engine: &str, direct_ms: &[f64], proxy_ms: &[f64]) -> Ve
     let p_p95 = percentile(&p, 95.0);
     let p_p99 = percentile(&p, 99.0);
 
+    let d_mean = mean(direct_ms);
+    let p_mean = mean(proxy_ms);
+    let d_std = stddev_pop(direct_ms, d_mean);
+    let p_std = stddev_pop(proxy_ms, p_mean);
+    let d_min = direct_ms.iter().cloned().fold(f64::INFINITY, f64::min);
+    let d_max = direct_ms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let p_min = proxy_ms.iter().cloned().fold(f64::INFINITY, f64::min);
+    let p_max = proxy_ms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let oh_ratio = overhead_ratio_pct(d_p50, p_p50);
+
     eprintln!("\n── QueryFlux overhead — {engine} ─────────────────────────────────────");
-    eprintln!("                  p50       p95       p99");
-    eprintln!("  Direct        {d_p50:>6.2} ms  {d_p95:>6.2} ms  {d_p99:>6.2} ms");
-    eprintln!("  Via QueryFlux {p_p50:>6.2} ms  {p_p95:>6.2} ms  {p_p99:>6.2} ms");
+    eprintln!("                  p50       p95       p99       mean      stddev");
     eprintln!(
-        "  Overhead      {:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
+        "  Direct        {d_p50:>6.2} ms  {d_p95:>6.2} ms  {d_p99:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
+        round2(d_mean),
+        round2(d_std),
+    );
+    eprintln!(
+        "  Via QueryFlux {p_p50:>6.2} ms  {p_p95:>6.2} ms  {p_p99:>6.2} ms  {:>6.2} ms  {:>6.2} ms",
+        round2(p_mean),
+        round2(p_std),
+    );
+    eprintln!(
+        "  Overhead      {:>6.2} ms  {:>6.2} ms  {:>6.2} ms  {:>6.2} ms        —",
         p_p50 - d_p50,
         p_p95 - d_p95,
-        p_p99 - d_p99
+        p_p99 - d_p99,
+        p_mean - d_mean,
     );
+    eprintln!(
+        "  Min / max     direct {:>6.2} / {:>6.2} ms   Proxy {:>6.2} / {:>6.2} ms",
+        round2(d_min),
+        round2(d_max),
+        round2(p_min),
+        round2(p_max),
+    );
+    eprintln!("  Overhead vs direct p50: {:+.1}%", round2(oh_ratio));
     eprintln!("────────────────────────────────────────────────────────────────────────\n");
 
     let prefix = format!("{engine} — ");
     vec![
-        json!({"name": format!("{prefix}Direct p50 (ms)"),         "value": round2(d_p50),         "unit": "ms"}),
-        json!({"name": format!("{prefix}Direct p95 (ms)"),         "value": round2(d_p95),         "unit": "ms"}),
-        json!({"name": format!("{prefix}Direct p99 (ms)"),         "value": round2(d_p99),         "unit": "ms"}),
-        json!({"name": format!("{prefix}Via QueryFlux p50 (ms)"), "value": round2(p_p50),         "unit": "ms"}),
-        json!({"name": format!("{prefix}Via QueryFlux p95 (ms)"), "value": round2(p_p95),         "unit": "ms"}),
-        json!({"name": format!("{prefix}Via QueryFlux p99 (ms)"), "value": round2(p_p99),         "unit": "ms"}),
-        json!({"name": format!("{prefix}Overhead p50 (ms)"),      "value": round2(p_p50 - d_p50), "unit": "ms"}),
-        json!({"name": format!("{prefix}Overhead p95 (ms)"),      "value": round2(p_p95 - d_p95), "unit": "ms"}),
-        json!({"name": format!("{prefix}Overhead p99 (ms)"),      "value": round2(p_p99 - d_p99), "unit": "ms"}),
+        json!({"name": format!("{prefix}Direct p50 (ms)"), "value": round2(d_p50), "unit": "ms"}),
+        json!({"name": format!("{prefix}Direct p95 (ms)"), "value": round2(d_p95), "unit": "ms"}),
+        json!({"name": format!("{prefix}Direct p99 (ms)"), "value": round2(d_p99), "unit": "ms"}),
+        json!({"name": format!("{prefix}Direct mean (ms)"), "value": round2(d_mean), "unit": "ms"}),
+        json!({"name": format!("{prefix}Direct stddev (ms)"), "value": round2(d_std), "unit": "ms"}),
+        json!({"name": format!("{prefix}Via QueryFlux p50 (ms)"), "value": round2(p_p50), "unit": "ms"}),
+        json!({"name": format!("{prefix}Via QueryFlux p95 (ms)"), "value": round2(p_p95), "unit": "ms"}),
+        json!({"name": format!("{prefix}Via QueryFlux p99 (ms)"), "value": round2(p_p99), "unit": "ms"}),
+        json!({"name": format!("{prefix}Via QueryFlux mean (ms)"), "value": round2(p_mean), "unit": "ms"}),
+        json!({"name": format!("{prefix}Via QueryFlux stddev (ms)"), "value": round2(p_std), "unit": "ms"}),
+        json!({"name": format!("{prefix}Overhead p50 (ms)"), "value": round2(p_p50 - d_p50), "unit": "ms"}),
+        json!({"name": format!("{prefix}Overhead p95 (ms)"), "value": round2(p_p95 - d_p95), "unit": "ms"}),
+        json!({"name": format!("{prefix}Overhead p99 (ms)"), "value": round2(p_p99 - d_p99), "unit": "ms"}),
+        json!({"name": format!("{prefix}Overhead mean (ms)"), "value": round2(p_mean - d_mean), "unit": "ms"}),
+        json!({"name": format!("{prefix}Overhead vs direct p50 (%)"), "value": round2(oh_ratio), "unit": "%"}),
     ]
 }

@@ -9,6 +9,19 @@ queryflux:
       port: 5432
   persistence:
     type: inMemory
+  # --- Postgres persistence examples (pick one style) ---
+  # Single URL:
+  # persistence:
+  #   type: postgres
+  #   url: postgres://queryflux:queryflux@localhost:5432/queryflux
+  # Or discrete fields (port defaults to 5432 if omitted):
+  # persistence:
+  #   type: postgres
+  #   host: localhost
+  #   port: 5432
+  #   user: queryflux
+  #   password: queryflux
+  #   database: queryflux
   adminApi:
     port: 9000
   # When persistence.type is postgres: how often (seconds) to poll the DB and refresh the in-memory

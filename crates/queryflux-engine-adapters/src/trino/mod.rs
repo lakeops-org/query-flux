@@ -242,7 +242,7 @@ impl EngineAdapterTrait for TrinoAdapter {
                 processed_rows: Some(s.processed_rows),
                 processed_bytes: Some(s.processed_bytes),
                 physical_input_bytes: Some(s.physical_input_bytes),
-                peak_memory_bytes: Some(s.peak_user_memory_bytes),
+                peak_memory_bytes: Some(s.peak_memory_bytes),
                 spilled_bytes: Some(s.spilled_bytes),
                 total_splits: Some(s.total_splits),
             })

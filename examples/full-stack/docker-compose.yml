@@ -1,0 +1,242 @@
+# QueryFlux + Studio (ECR images) + Trino + StarRocks + Lakekeeper/MinIO + optional TPCH→Iceberg load.
+# Modeled on docker/docker-compose.yml; paths are relative to this directory (repo-root docker/fixtures via ../..).
+#
+#   docker compose up -d --wait
+#   docker compose --profile loader run --rm -T data-loader
+#   docker compose --profile loader run --rm -T starrocks-catalog-setup
+#
+# QueryFlux Trino HTTP: http://localhost:8080 · MySQL wire (StarRocks path): localhost:3306
+# Studio: http://localhost:3000 · Trino direct: http://localhost:8081 · Lakekeeper: http://localhost:8181
+
+name: queryflux-example-full
+
+services:
+  queryflux:
+    image: 343959804465.dkr.ecr.us-east-1.amazonaws.com/queryflux:latest
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+      - "3306:3306"
+    volumes:
+      - ./config.yaml:/etc/queryflux/config.yaml:ro
+    environment:
+      RUST_LOG: ${RUST_LOG:-queryflux=info,queryflux_frontend=info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+      starrocks:
+        condition: service_healthy
+    restart: unless-stopped
+
+  queryflux-studio:
+    image: 343959804465.dkr.ecr.us-east-1.amazonaws.com/queryflux-studio:latest
+    ports:
+      - "3000:3000"
+    environment:
+      ADMIN_API_URL: http://queryflux:9000
+    depends_on:
+      - queryflux
+    restart: unless-stopped
+
+  trino:
+    image: trinodb/trino:latest
+    environment:
+      - CATALOG_MANAGEMENT=dynamic
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  starrocks:
+    image: starrocks/allin1-ubuntu:latest
+    ports:
+      - "9030:9030"
+      - "8030:8030"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8030/api/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: queryflux
+      POSTGRES_USER: queryflux
+      POSTGRES_PASSWORD: queryflux
+    volumes:
+      - queryflux-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queryflux"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  lakekeeper-db:
+    image: postgres:17
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -p 5432 -d postgres"]
+      interval: 2s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+
+  minio:
+    image: minio/minio
+    environment:
+      - MINIO_ROOT_USER=minio-root-user
+      - MINIO_ROOT_PASSWORD=minio-root-password
+    command: ["server", "--console-address", ":9001", "/data"]
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+
+  createbuckets:
+    image: minio/minio
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: on-failure
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 minio-root-user minio-root-password;
+      /usr/bin/mc mb --ignore-existing local/warehouse;
+      exit 0;
+      "
+
+  migrate:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: always
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=dev-key-not-secure
+      - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://postgres:postgres@lakekeeper-db:5432/postgres
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=postgresql://postgres:postgres@lakekeeper-db:5432/postgres
+    restart: "no"
+    command: ["migrate"]
+    depends_on:
+      lakekeeper-db:
+        condition: service_healthy
+
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: always
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=dev-key-not-secure
+      - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://postgres:postgres@lakekeeper-db:5432/postgres
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=postgresql://postgres:postgres@lakekeeper-db:5432/postgres
+    command: ["serve"]
+    ports:
+      - "8181:8181"
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      lakekeeper-db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      createbuckets:
+        condition: service_completed_successfully
+
+  bootstrap:
+    image: curlimages/curl
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >
+        curl -sv -X POST http://lakekeeper:8181/management/v1/bootstrap
+        -H 'Content-Type: application/json'
+        --data '{"accept-terms-of-use": true}';
+        exit 0
+
+  initialwarehouse:
+    image: curlimages/curl
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >
+        curl -sv -X POST http://lakekeeper:8181/management/v1/warehouse
+        -H 'Content-Type: application/json'
+        --data @/config/create-warehouse.json;
+        exit 0
+    volumes:
+      - ../../docker/fixtures/create-warehouse.json:/config/create-warehouse.json:ro
+
+  sentinel:
+    image: alpine
+    command: ["tail", "-f", "/dev/null"]
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      initialwarehouse:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 1s
+      retries: 1
+      start_period: 0s
+
+  data-loader:
+    image: trinodb/trino:476
+    profiles: ["loader"]
+    environment:
+      TPCH_SCALE: ${TPCH_SCALE:-tiny}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        sed "s/FROM tpch\\.tiny\\./FROM tpch.$${TPCH_SCALE}./g" /test-data/init.sql > /tmp/init.run.sql
+        exec trino --server http://trino:8080 --user loader --file /tmp/init.run.sql
+    volumes:
+      - ../../docker/fixtures/init.docker-network.sql:/test-data/init.sql:ro
+    depends_on:
+      trino:
+        condition: service_healthy
+      sentinel:
+        condition: service_healthy
+
+  starrocks-catalog-setup:
+    image: mysql:8.0
+    profiles: ["loader"]
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["mysql -h starrocks -P 9030 -u root --connect-timeout=30 < /setup/starrocks-setup.sql"]
+    volumes:
+      - ../../docker/fixtures/starrocks-setup.sql:/setup/starrocks-setup.sql:ro
+    depends_on:
+      starrocks:
+        condition: service_healthy
+
+volumes:
+  queryflux-pg:

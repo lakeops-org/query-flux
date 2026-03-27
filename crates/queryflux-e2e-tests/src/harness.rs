@@ -115,7 +115,7 @@ impl TestHarness {
 
         // --- StarRocks ---
         let sr_url = std::env::var("STARROCKS_URL")
-            .unwrap_or_else(|_| "mysql://root@localhost:19030".to_string());
+            .unwrap_or_else(|_| "mysql://root@localhost:9030".to_string());
         let sr_available = is_starrocks_ready(&sr_url).await;
         let sr_adapter = if sr_available {
             let group = ClusterGroupName(GROUP_STARROCKS.to_string());
@@ -179,8 +179,17 @@ impl TestHarness {
         }
 
         let fallback = pick_fallback_group(&group_order);
+        // Route compatibility:
+        // - `X-Qf-Group` is our internal E2E routing header (legacy tests).
+        // - `X-Trino-Client-Tags` is set by real Trino clients like `trino-rust-client`.
+        //   We route on it so e2e tests can behave like real-world Trino traffic.
+        let header_map_qf = header_map.clone();
         routers.push(Box::new(HeaderRouter::new(
             "x-qf-group".to_string(),
+            header_map_qf,
+        )));
+        routers.push(Box::new(HeaderRouter::new(
+            "x-trino-client-tags".to_string(),
             header_map,
         )));
 
