@@ -178,7 +178,11 @@ async fn iceberg_cross_engine_advanced_compatibility_matches() {
     );
 
     eprintln!("[iceberg e2e] 1/5 filtered orders count");
-    assert_eq!(t1, s1, "filtered orders count: Trino={} StarRocks={}", t1, s1);
+    assert_eq!(
+        t1, s1,
+        "filtered orders count: Trino={} StarRocks={}",
+        t1, s1
+    );
 
     eprintln!("[iceberg e2e] 2/5 filtered orders sum");
     let diff = (t2 - s2).abs();
@@ -186,17 +190,32 @@ async fn iceberg_cross_engine_advanced_compatibility_matches() {
     assert!(
         diff <= tol,
         "expected close sum totals; trino={}, starrocks={}, diff={}, tol={}",
-        t2, s2, diff, tol
+        t2,
+        s2,
+        diff,
+        tol
     );
 
     eprintln!("[iceberg e2e] 3/5 customer–orders join count");
-    assert_eq!(t3, s3, "customer-orders join: Trino={} StarRocks={}", t3, s3);
+    assert_eq!(
+        t3, s3,
+        "customer-orders join: Trino={} StarRocks={}",
+        t3, s3
+    );
 
     eprintln!("[iceberg e2e] 4/5 orders–lineitem join count");
-    assert_eq!(t4, s4, "orders-lineitem join: Trino={} StarRocks={}", t4, s4);
+    assert_eq!(
+        t4, s4,
+        "orders-lineitem join: Trino={} StarRocks={}",
+        t4, s4
+    );
 
     eprintln!("[iceberg e2e] 5/5 lineitem return-flag sum");
-    assert_eq!(t5, s5, "lineitem return-flag sum: Trino={} StarRocks={}", t5, s5);
+    assert_eq!(
+        t5, s5,
+        "lineitem return-flag sum: Trino={} StarRocks={}",
+        t5, s5
+    );
 }
 
 #[tokio::test]

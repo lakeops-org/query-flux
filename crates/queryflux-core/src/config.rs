@@ -388,8 +388,7 @@ impl PostgresPersistenceConfig {
         let port = self.port.unwrap_or(5432);
         let password = self.password.as_deref().unwrap_or("");
 
-        let mut url = url::Url::parse("postgres://localhost/")
-            .map_err(|e| e.to_string())?;
+        let mut url = url::Url::parse("postgres://localhost/").map_err(|e| e.to_string())?;
         url.set_host(Some(host)).map_err(|e| e.to_string())?;
         url.set_username(user)
             .map_err(|_| "invalid user for postgres URL (unsupported characters)".to_string())?;

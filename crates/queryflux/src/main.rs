@@ -872,10 +872,7 @@ async fn main() -> Result<()> {
                     let max = cstate.max_running_queries();
                     // `decrement_running` used to wrap on underflow; or reload can desync counters.
                     if tracked > max {
-                        let fix = adapter
-                            .fetch_running_query_count()
-                            .await
-                            .unwrap_or(0);
+                        let fix = adapter.fetch_running_query_count().await.unwrap_or(0);
                         tracing::warn!(
                             cluster = %cstate.cluster_name.0,
                             group = %cstate.group_name.0,

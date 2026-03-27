@@ -9,6 +9,8 @@ env:
   RUST_TOOLCHAIN_VERSION: "1.91.1"
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # DuckDB Rust crate: download prebuilt libduckdb in CI (no system libduckdb).
+  DUCKDB_DOWNLOAD_LIB: "1"
   # Faster links on Linux (mold is installed where we compile).
   RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
 
