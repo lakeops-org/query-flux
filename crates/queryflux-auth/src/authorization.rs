@@ -112,6 +112,10 @@ impl AuthorizationChecker for SimpleAuthorizationPolicy {
 ///
 /// On any HTTP error or unreachable OpenFGA, **denies** access and logs a warning.
 /// Operators should ensure OpenFGA is highly available; a sidecar pattern is recommended.
+/// Refresh OAuth token this long before `expires_at` so we do not send requests with a token
+/// about to expire.
+const OPENFGA_TOKEN_REFRESH_BUFFER: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub struct OpenFgaAuthorizationClient {
     config: OpenFgaConfig,
     http_client: reqwest::Client,
@@ -137,11 +141,13 @@ impl OpenFgaAuthorizationClient {
                 client_secret,
                 token_endpoint,
             }) => {
-                // Check cache first (with 30s buffer before expiry).
+                // Reuse cache only while `now + buffer < expires_at` (future `expires_at` must
+                // not use `elapsed()`, which subtracts the wrong way and can panic).
                 {
                     let guard = self.token_cache.lock().await;
                     if let Some((token, expires_at)) = guard.as_ref() {
-                        if expires_at.elapsed().as_secs() < 30 {
+                        let now = std::time::Instant::now();
+                        if now + OPENFGA_TOKEN_REFRESH_BUFFER < *expires_at {
                             return Some(token.clone());
                         }
                     }

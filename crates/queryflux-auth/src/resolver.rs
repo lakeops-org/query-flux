@@ -20,6 +20,9 @@ use tracing::{debug, warn};
 
 use crate::credentials::{AuthContext, QueryCredentials};
 
+/// Drop cached exchanged tokens this long before `expires_at` (same idea as OpenFGA client cache).
+const TOKEN_EXCHANGE_CACHE_BUFFER: Duration = Duration::from_secs(30);
+
 // ---------------------------------------------------------------------------
 // BackendIdentityResolver
 // ---------------------------------------------------------------------------
@@ -82,12 +85,11 @@ impl BackendIdentityResolver {
     ) -> Result<String> {
         let cache_key = (auth_ctx.user.clone(), cfg.token_endpoint.clone());
 
-        // Fast path: return cached token if not expired (with 30 s buffer).
+        // Fast path: return cached token if still more than the buffer before expiry.
+        // `expires_at` is in the future — do not call `expires_at.elapsed()` (`now - expires_at` panics).
         if let Some(entry) = self.token_cache.get(&cache_key) {
             let (token, expires_at) = entry.value();
-            if expires_at.elapsed() < expires_at.elapsed().max(Duration::ZERO)
-                || Instant::now() + Duration::from_secs(30) < *expires_at
-            {
+            if Instant::now() + TOKEN_EXCHANGE_CACHE_BUFFER < *expires_at {
                 debug!(user = %auth_ctx.user, "tokenExchange: using cached token");
                 return Ok(token.clone());
             }
