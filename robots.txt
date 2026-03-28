@@ -1,0 +1,5 @@
+# https://docusaurus.io/docs/seo#robots-file
+User-agent: *
+Disallow:
+
+Sitemap: https://lakeops-org.github.io/sitemap.xml
