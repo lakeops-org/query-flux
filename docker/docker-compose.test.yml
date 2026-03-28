@@ -1,7 +1,7 @@
 # Lean compose file for E2E tests.
 #
 # Engines: Trino, StarRocks.
-# Iceberg stack: Postgres (Lakekeeper backend), MinIO, Lakekeeper, data-loader.
+# Iceberg stack: Postgres (Lakekeeper backend), MinIO, Lakekeeper.
 #
 # Usage:
 #   docker compose -f docker-compose.test.yml up -d --wait
@@ -185,9 +185,8 @@ services:
     networks:
       - test_net
 
-  # Loads TPC-H data from Trino's built-in tpch connector into Iceberg tables.
-  # Trino persists the lakekeeper catalog (CATALOG_MANAGEMENT=dynamic) for the
-  # duration of the container lifetime — no per-test setup needed for Trino.
+  # Trino persists dynamic catalogs (CATALOG_MANAGEMENT=dynamic) for the container lifetime.
+  # Iceberg tables for e2e are created by `queryflux-e2e-tests` via direct Trino HTTP.
   # Sentinel: stays running forever; only starts after all init containers finish.
   # `--wait` watches this service instead of the one-shot containers so it
   # doesn't fail when migrate/bootstrap/initialwarehouse exit.
@@ -204,24 +203,6 @@ services:
       interval: 1s
       retries: 1
       start_period: 0s
-    networks:
-      - test_net
-
-  # Run separately via `docker compose run --rm -T data-loader` after `up --wait`.
-  # Uses a profile so `up --wait` doesn't try to manage its lifecycle.
-  data-loader:
-    image: trinodb/trino:476
-    profiles: ["loader"]
-    environment:
-      TPCH_SCALE: ${TPCH_SCALE:-tiny}
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        set -euo pipefail
-        sed "s/FROM tpch\\.tiny\\./FROM tpch.$${TPCH_SCALE}./g" /test-data/init.sql > /tmp/init.run.sql
-        exec trino --server http://trino:8080 --user loader --file /tmp/init.run.sql
-    volumes:
-      - ./docker/fixtures/init.sql:/test-data/init.sql:ro
     networks:
       - test_net
 

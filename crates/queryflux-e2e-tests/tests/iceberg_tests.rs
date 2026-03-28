@@ -1,4 +1,4 @@
-/// Iceberg / Lakekeeper — Trino + StarRocks (shared `lakekeeper.tpch.*`).
+/// Iceberg / Lakekeeper — Trino + StarRocks (shared `lakekeeper.e2e.*`, seeded in-process).
 ///
 /// Requires docker-compose stack + `make test-e2e` (or `--include-ignored`).
 /// DuckDB is not used in the e2e harness.
@@ -11,6 +11,7 @@ use trino_rust_client::types::Row;
 use trino_rust_client::Trino;
 
 use queryflux_e2e_tests::harness::{TestHarness, GROUP_LAKEKEEPER, GROUP_STARROCKS, GROUP_TRINO};
+use queryflux_e2e_tests::iceberg_seed::ensure_iceberg_e2e_data;
 
 static HARNESS: OnceLock<TestHarness> = OnceLock::new();
 
@@ -111,8 +112,9 @@ async fn iceberg_cross_engine_orders_count_matches() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_TRINO);
     require_group!(GROUP_STARROCKS);
+    ensure_iceberg_e2e_data().await.expect("iceberg e2e seed");
 
-    let sql = "SELECT COUNT(*) AS n FROM lakekeeper.tpch.orders";
+    let sql = "SELECT COUNT(*) AS n FROM lakekeeper.e2e.orders";
 
     let timeout = Duration::from_secs(240);
     let trino_client = trino_client_for_group(GROUP_TRINO);
@@ -136,29 +138,30 @@ async fn iceberg_cross_engine_advanced_compatibility_matches() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_TRINO);
     require_group!(GROUP_STARROCKS);
+    ensure_iceberg_e2e_data().await.expect("iceberg e2e seed");
 
     let timeout = Duration::from_secs(240);
     let trino_client = trino_client_for_group(GROUP_TRINO);
     let sr_client = trino_client_for_group(GROUP_STARROCKS);
 
-    let sql_1 = "SELECT COUNT(*) AS n FROM lakekeeper.tpch.orders WHERE o_orderstatus = 'O'";
+    let sql_1 = "SELECT COUNT(*) AS n FROM lakekeeper.e2e.orders WHERE o_orderstatus = 'O'";
     let sql_2 =
-        "SELECT SUM(o_totalprice) AS total FROM lakekeeper.tpch.orders WHERE o_orderstatus = 'O'";
+        "SELECT SUM(o_totalprice) AS total FROM lakekeeper.e2e.orders WHERE o_orderstatus = 'O'";
     let sql_3 = r#"
         SELECT COUNT(*) AS n
-        FROM lakekeeper.tpch.customer c
-        JOIN lakekeeper.tpch.orders o ON c.c_custkey = o.o_custkey
+        FROM lakekeeper.e2e.customer c
+        JOIN lakekeeper.e2e.orders o ON c.c_custkey = o.o_custkey
         WHERE c.c_nationkey = 1 AND o.o_orderstatus = 'O'
     "#;
     let sql_4 = r#"
         SELECT COUNT(*) AS n
-        FROM lakekeeper.tpch.orders o
-        JOIN lakekeeper.tpch.lineitem l ON o.o_orderkey = l.l_orderkey
+        FROM lakekeeper.e2e.orders o
+        JOIN lakekeeper.e2e.lineitem l ON o.o_orderkey = l.l_orderkey
         WHERE o.o_orderstatus = 'O' AND l.l_shipmode = 'MAIL'
     "#;
     let sql_5 = r#"
         SELECT SUM(l_quantity) AS total_qty
-        FROM lakekeeper.tpch.lineitem
+        FROM lakekeeper.e2e.lineitem
         WHERE l_returnflag = 'R'
     "#;
 
@@ -220,67 +223,72 @@ async fn iceberg_cross_engine_advanced_compatibility_matches() {
 
 #[tokio::test]
 #[ignore = "requires Trino + Lakekeeper — run with: make test-e2e"]
-async fn tpch_trino_iceberg_nation_count() {
+async fn iceberg_e2e_trino_nation_count() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_TRINO);
+    ensure_iceberg_e2e_data().await.expect("iceberg e2e seed");
     let timeout = Duration::from_secs(120);
     let trino_client = trino_client_for_group(GROUP_TRINO);
-    let sql = "SELECT COUNT(*) AS n FROM lakekeeper.tpch.nation";
+    let sql = "SELECT COUNT(*) AS n FROM lakekeeper.e2e.nation";
     let n = execute_on_scalar_i64(&trino_client, sql, timeout).await;
-    assert_eq!(n, 25);
+    assert_eq!(n, 3);
 }
 
 #[tokio::test]
 #[ignore = "requires Trino + Lakekeeper — run with: make test-e2e"]
-async fn tpch_trino_iceberg_orders_aggregation() {
+async fn iceberg_e2e_trino_orders_open_count() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_TRINO);
+    ensure_iceberg_e2e_data().await.expect("iceberg e2e seed");
     let timeout = Duration::from_secs(120);
     let trino_client = trino_client_for_group(GROUP_TRINO);
-    let sql = "SELECT COUNT(*) AS n FROM lakekeeper.tpch.orders WHERE o_orderstatus = 'O'";
+    let sql = "SELECT COUNT(*) AS n FROM lakekeeper.e2e.orders WHERE o_orderstatus = 'O'";
     let n = execute_on_scalar_i64(&trino_client, sql, timeout).await;
-    assert!(n > 0, "filtered orders count");
+    assert_eq!(n, 3);
 }
 
 #[tokio::test]
 #[ignore = "requires Trino + Lakekeeper — run with: make test-e2e"]
-async fn tpch_trino_iceberg_orders_total_price() {
+async fn iceberg_e2e_trino_orders_total_price() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_TRINO);
+    ensure_iceberg_e2e_data().await.expect("iceberg e2e seed");
     let timeout = Duration::from_secs(120);
     let trino_client = trino_client_for_group(GROUP_TRINO);
-    let sql = "SELECT SUM(o_totalprice) AS total FROM lakekeeper.tpch.orders";
+    let sql = "SELECT SUM(o_totalprice) AS total FROM lakekeeper.e2e.orders";
     let total = execute_on_scalar_f64(&trino_client, sql, timeout).await;
-    assert!(total > 0.0);
+    assert!((total - 184.5).abs() < 1e-3, "sum all orders: got {total}");
 }
 
 #[tokio::test]
 #[ignore = "requires StarRocks + Lakekeeper — run with: make test-e2e"]
-async fn tpch_starrocks_iceberg_nation_count() {
+async fn iceberg_e2e_starrocks_nation_count() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_STARROCKS);
+    ensure_iceberg_e2e_data().await.expect("iceberg e2e seed");
     let timeout = Duration::from_secs(120);
     let sr_client = trino_client_for_group(GROUP_STARROCKS);
-    let sql = "SELECT COUNT(*) AS n FROM lakekeeper.tpch.nation";
+    let sql = "SELECT COUNT(*) AS n FROM lakekeeper.e2e.nation";
     let n = execute_on_scalar_i64(&sr_client, sql, timeout).await;
-    assert_eq!(n, 25);
+    assert_eq!(n, 3);
 }
 
 /// Full-table scans on StarRocks Iceberg are slow; run both checks in one test so they do not
 /// compete with each other when `cargo test` runs tests in parallel.
 #[tokio::test]
 #[ignore = "requires StarRocks + Lakekeeper — run with: make test-e2e"]
-async fn tpch_starrocks_iceberg_orders_aggregation_and_sum() {
+async fn iceberg_e2e_starrocks_orders_open_count_and_sum() {
     require_group!(GROUP_LAKEKEEPER);
     require_group!(GROUP_STARROCKS);
+    ensure_iceberg_e2e_data().await.expect("iceberg e2e seed");
     let timeout = Duration::from_secs(240);
     let sr_client = trino_client_for_group(GROUP_STARROCKS);
 
-    let sql_count = "SELECT COUNT(*) AS n FROM lakekeeper.tpch.orders WHERE o_orderstatus = 'O'";
+    let sql_count = "SELECT COUNT(*) AS n FROM lakekeeper.e2e.orders WHERE o_orderstatus = 'O'";
     let n = execute_on_scalar_i64(&sr_client, sql_count, timeout).await;
-    assert!(n > 0, "filtered orders count");
+    assert_eq!(n, 3);
 
-    let sql_sum = "SELECT SUM(o_totalprice) AS total FROM lakekeeper.tpch.orders";
+    let sql_sum = "SELECT SUM(o_totalprice) AS total FROM lakekeeper.e2e.orders";
     let total = execute_on_scalar_f64(&sr_client, sql_sum, timeout).await;
-    assert!(total > 0.0);
+    assert!((total - 184.5).abs() < 1e-3, "sum all orders: got {total}");
 }

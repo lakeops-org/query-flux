@@ -53,7 +53,7 @@ impl MetricsStore for NoOpMetrics {
 
 pub const GROUP_TRINO: &str = "trino";
 pub const GROUP_STARROCKS: &str = "starrocks";
-/// Set when Lakekeeper port is reachable (Iceberg metadata loaded via data-loader + Trino).
+/// Set when Lakekeeper port is reachable (Iceberg tables seeded by e2e tests via Trino).
 pub const GROUP_LAKEKEEPER: &str = "lakekeeper";
 
 pub struct TestHarness {

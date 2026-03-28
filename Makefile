@@ -72,17 +72,17 @@ benchmark:
 ## Requires reachable engines; see docker/docker-compose.test.yml.
 ## `--test-threads=1`: StarRocks Iceberg is slow; default parallel libtest + `#[serial]` makes
 ## every test report libtest's 60s "slow test" spam while threads wait on the serial lock.
-## Larger TPC-H: TPCH_SCALE=sf1 make test-e2e (slow; increase client timeouts if needed).
+## Iceberg/Lakekeeper tables are created by the e2e crate (no TPC-H loader).
 test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
-	$(COMPOSE_TEST) run --rm -T data-loader
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
 	TRINO_URL=http://localhost:18081 \
 	STARROCKS_URL=mysql://root@localhost:9030 \
 	LAKEKEEPER_URL=http://localhost:18181 \
 	MINIO_ENDPOINT=localhost:19000 \
+	DUCKDB_DOWNLOAD_LIB=1 \
 	$(CARGO) test -p queryflux-e2e-tests --manifest-path Cargo.toml -- --test-threads=1 --include-ignored --nocapture
 	$(COMPOSE_TEST) down
 
