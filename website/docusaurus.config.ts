@@ -2,20 +2,27 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
-// Keep in sync with `url` below (used in headTags / structured data).
-const siteUrl = 'https://lakeoops-org.github.io';
+// Keep in sync with `url` + `baseUrl` (used in headTags / structured data). Project Pages:
+// https://<org>.github.io/<repo>/
+const siteUrl = 'https://lakeops-org.github.io';
+/** Public docs homepage (project Pages: host + repo path, no trailing slash). */
+const siteCanonicalUrl = `${siteUrl}/query-flux`;
 
 const config: Config = {
   title: 'QueryFlux',
   tagline: 'Universal SQL query proxy and router in Rust',
   favicon: 'img/queryflux-logo.png',
 
-  // For GitHub Pages project sites use url + baseUrl `/queryflux/`. For local-only or a custom domain, set baseUrl to `/`.
+  // Must match GitHub Pages path: repo `query-flux` → baseUrl `/query-flux/`.
   url: siteUrl,
-  baseUrl: '/query-flux',
+  baseUrl: '/query-flux/',
 
-  organizationName: 'lakeops',
+  // Used by `npm run deploy` to pick the target repo — must match `git remote` (org/repo).
+  organizationName: 'lakeops-org',
   projectName: 'query-flux',
+
+  // https://docusaurus.io/docs/deployment#deploying-to-github-pages
+  trailingSlash: false,
 
   onBrokenLinks: 'throw',
 
@@ -39,7 +46,7 @@ const config: Config = {
         name: 'QueryFlux',
         description:
           'Universal SQL query proxy and router in Rust. Front protocols include Trino HTTP, PostgreSQL wire, MySQL wire, and Arrow Flight; backends include Trino, DuckDB, StarRocks, and more with routing and sqlglot dialect translation.',
-        url: siteUrl,
+        url: siteCanonicalUrl,
         codeRepository: 'https://github.com/lakeops-org/query-flux',
         license: 'https://www.apache.org/licenses/LICENSE-2.0',
         programmingLanguage: 'Rust',
@@ -54,7 +61,7 @@ const config: Config = {
         '@context': 'https://schema.org',
         '@type': 'WebSite',
         name: 'QueryFlux',
-        url: siteUrl,
+        url: siteCanonicalUrl,
         description:
           'Documentation and resources for QueryFlux, a universal SQL query proxy and router.',
       }),
