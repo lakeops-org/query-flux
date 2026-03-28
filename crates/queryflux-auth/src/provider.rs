@@ -33,9 +33,8 @@ pub trait AuthProvider: Send + Sync {
 /// cryptographic verification. Suitable for trusted networks (VPC, mTLS at LB).
 ///
 /// Behavior:
-/// - `username` present → `AuthContext { user: username, groups: [], raw_token: bearer_token }`
-/// - `username` absent but `bearer_token` present → user = `"bearer-user"` (opaque, not decoded)
-/// - neither → user = `"anonymous"`
+/// - `username` present → `AuthContext { user: username, groups: [], roles: [], raw_token: bearer_token }`
+/// - `username` absent → user = `"anonymous"` (even if `bearer_token` is present; token is passed through as `raw_token`)
 ///
 /// `auth.required: true` with this provider rejects requests that have no username,
 /// but provides no JWT signature checks. Document clearly for operators.

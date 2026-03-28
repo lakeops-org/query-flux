@@ -48,15 +48,19 @@ clusterGroups:
 translation:
   errorOnUnsupported: false
   # Optional Python scripts run after every sqlglot translation.
-  # Locals: `ast` (sqlglot AST), `src` (source dialect), `dst` (target dialect),
-  #         `exp` (sqlglot.expressions). Mutate `ast` in-place — re-serialized automatically.
+  # Each script must define: def transform(ast, src, dst) -> None
+  # `ast` is a sqlglot AST to mutate in-place, `src`/`dst` are dialect names.
+  # Import sqlglot.expressions as needed (for example: `import sqlglot.expressions as exp`).
   # pythonScripts:
   #   - |
-  #     # Athena has no catalog layer — strip catalog from 3-part table references.
-  #     # hive.my_db.my_table  →  my_db.my_table
-  #     if dst == "athena":
-  #         for table in ast.find_all(exp.Table):
-  #             table.set("catalog", None)
+  #     import sqlglot.expressions as exp
+  #
+  #     def transform(ast, src, dst) -> None:
+  #         # Athena has no catalog layer — strip catalog from 3-part table references.
+  #         # hive.my_db.my_table  →  my_db.my_table
+  #         if dst == "athena":
+  #             for table in ast.find_all(exp.Table):
+  #                 table.set("catalog", None)
 
 routers:
   - type: protocolBased
