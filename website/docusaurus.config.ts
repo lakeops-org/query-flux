@@ -111,8 +111,8 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Default Open Graph / Twitter card image (path under static/).
-    image: 'img/queryflux-logo.png',
+    // 1200×630 recommended for og:image (not the square logo). Replace with branded art anytime.
+    image: 'img/queryflux-logo_default.png',
     colorMode: {
       defaultMode: 'dark',
       // If true, OS "prefers light" overrides defaultMode for first visit.
@@ -145,18 +145,27 @@ const config: Config = {
     },
     footer: {
       style: 'dark',
+      logo: {
+        alt: 'QueryFlux',
+        src: 'img/queryflux-logo.png',
+        height: 36,
+        href: 'https://github.com/lakeops-org/query-flux',
+      },
       links: [
         {
           title: 'Documentation',
           items: [
-            {
-              label: 'Getting started',
-              to: '/docs/getting-started',
-            },
-            {
-              label: 'Architecture',
-              to: '/docs/architecture/overview',
-            },
+            {label: 'Introduction', to: '/docs/intro'},
+            {label: 'Getting started', to: '/docs/getting-started'},
+            {label: 'Architecture', to: '/docs/architecture/overview'},
+          ],
+        },
+        {
+          title: 'Project',
+          items: [
+            {label: 'Configuration', to: '/docs/configuration'},
+            {label: 'Development', to: '/docs/development'},
+            {label: 'Contribute', to: '/docs/contribute'},
           ],
         },
         {
@@ -173,7 +182,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} QueryFlux contributors. Apache-2.0.`,
+      copyright: `Copyright © ${new Date().getFullYear()} QueryFlux contributors. Licensed under Apache-2.0.`,
     },
     prism: {
       theme: prismThemes.github,
@@ -189,6 +198,8 @@ const config: Config = {
       },
       {name: 'twitter:card', content: 'summary_large_image'},
       {property: 'og:type', content: 'website'},
+      {property: 'og:image:width', content: '1200'},
+      {property: 'og:image:height', content: '630'},
     ],
   } satisfies Preset.ThemeConfig,
 };

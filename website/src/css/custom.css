@@ -96,7 +96,92 @@ html[data-theme='dark'] .menu__caret:hover {
   background: var(--ifm-hover-overlay);
 }
 
-/* Footer links */
+/* Footer — layout & theme alignment */
+footer.footer {
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+footer.footer .container.container-fluid {
+  max-width: var(--ifm-container-width-xl, 1140px);
+  padding-left: var(--ifm-spacing-horizontal);
+  padding-right: var(--ifm-spacing-horizontal);
+}
+
+footer.footer .footer__links.row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2.5rem 3.5rem;
+  margin-bottom: 2rem;
+  text-align: left;
+}
+
+footer.footer .footer__col {
+  flex: 0 1 auto;
+  min-width: 11rem;
+  max-width: 16rem;
+}
+
+footer.footer .footer__title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.65rem;
+  opacity: 0.92;
+}
+
+footer.footer .footer__items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+footer.footer .footer__bottom {
+  padding-top: 1.75rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+footer.footer .footer__copyright {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-600);
+  max-width: 42rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Dark Infima footer in light site theme — match warm palette (avoid black slab) */
+html[data-theme='light'] footer.footer.footer--dark {
+  background-color: var(--ifm-footer-background-color);
+  color: var(--ifm-color-content);
+}
+
+html[data-theme='light'] footer.footer.footer--dark .footer__title {
+  color: var(--ifm-heading-color);
+}
+
+html[data-theme='light'] footer.footer.footer--dark .footer__link-item {
+  color: var(--ifm-color-emphasis-700);
+}
+
+html[data-theme='light'] footer.footer.footer--dark .footer__bottom {
+  border-top-color: var(--ifm-color-emphasis-200);
+}
+
+html[data-theme='light'] footer.footer.footer--dark .footer__copyright {
+  color: var(--ifm-color-emphasis-700);
+}
+
+html[data-theme='dark'] footer.footer.footer--dark {
+  border-top-color: rgba(34, 211, 238, 0.12);
+}
+
+html[data-theme='dark'] footer.footer.footer--dark .footer__copyright {
+  color: var(--ifm-color-emphasis-700);
+}
+
 .footer__link-item:hover {
   color: var(--qf-cyan);
 }
