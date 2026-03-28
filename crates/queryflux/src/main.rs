@@ -721,7 +721,7 @@ async fn main() -> Result<()> {
     });
 
     // Background task: clean up stale queued queries (client disconnected before getting
-    // cluster capacity). Mirrors trino-lb's LeftoverQueryDetector. Runs every 120s;
+    // cluster capacity). Runs every 120s;
     // deletes queued entries not accessed for > 5 minutes.
     tokio::spawn({
         let state = app_state.clone();

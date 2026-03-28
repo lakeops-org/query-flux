@@ -51,7 +51,7 @@ pub enum QueryCredentials {
     ///
     /// The adapter applies `cluster.auth` directly.
     /// For the Trino adapter, `SessionContext::TrinoHttp` headers (including the client's
-    /// `Authorization`) are still forwarded unchanged — this is the implicit trino-lb behavior.
+    /// `Authorization`) are still forwarded unchanged (implicit Trino HTTP client-header passthrough).
     ServiceAccount,
 
     /// Service account authenticates to the backend; user identity injected via engine header.

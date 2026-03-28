@@ -8,7 +8,7 @@ A universal SQL query proxy and router written in Rust. QueryFlux sits between S
 
 ## Overview
 
-QueryFlux lets you connect any SQL client using standard protocols (Trino HTTP, PostgreSQL wire, MySQL wire) and route queries to the right backend engine — Trino, DuckDB, StarRocks, or ClickHouse — based on flexible routing rules. SQL dialects are translated automatically when needed via [sqlglot](https://github.com/tobymao/sqlglot).
+QueryFlux lets you connect any SQL client using standard protocols (Trino HTTP, PostgreSQL wire, MySQL wire) and route queries to the right backend engine — Trino, DuckDB, StarRocks, Athena, or ClickHouse — based on flexible routing rules. SQL dialects are translated automatically when needed via [sqlglot](https://github.com/tobymao/sqlglot).
 
 ```
 Client (Trino CLI / psql / mysql)
@@ -30,6 +30,7 @@ Trino / DuckDB / StarRocks / ClickHouse
 - Trino — async HTTP polling
 - DuckDB — embedded, in-process execution
 - StarRocks — MySQL wire protocol
+- Athena — AWS SDK, async polling
 - ClickHouse — planned
 
 **Routing**
@@ -38,6 +39,7 @@ Trino / DuckDB / StarRocks / ClickHouse
 - Query regex matching
 - Client tags (Trino `X-Trino-Client-Tags`)
 - Python script (custom routing logic)
+- Compound (multiple conditions with AND/OR)
 - Fallback group
 
 **Other**
@@ -175,14 +177,22 @@ queryflux/
 │   ├── queryflux-persistence/      # State storage (in-memory / PostgreSQL)
 │   ├── queryflux-translation/      # SQL dialect translation (sqlglot via PyO3)
 │   ├── queryflux-metrics/          # Prometheus metrics
+│   ├── queryflux-auth/             # Authentication and authorization
+│   ├── queryflux-bench/            # Proxy overhead benchmarks
 │   └── queryflux-e2e-tests/        # Integration tests
-├── ui/queryflux-studio/            # Management UI (Next.js, in progress)
+├── queryflux-studio/               # Management UI (Next.js — Studio)
+├── examples/                       # Docker Compose quickstarts (see examples/README.md)
 ├── grafana/                        # Grafana dashboards
 ├── prometheus/                     # Prometheus config
 ├── config.example.yaml
 ├── docker/
-│   ├── docker-compose.yml          # Local dev stack
-│   └── docker-compose.test.yml     # E2E test stack
+│   ├── docker-compose.yml          # Local dev stack (`make dev`)
+│   ├── docker-compose.test.yml     # E2E test stack
+│   ├── fixtures/                   # SQL init, test data
+│   ├── queryflux/                  # QueryFlux Dockerfile
+│   └── queryflux-studio/           # Studio Dockerfile
+├── docs/                           # Architecture markdown
+├── website/                        # Docusaurus documentation site
 ```
 
 ## Development
@@ -200,6 +210,8 @@ See [development.md](development.md) for environment variables, workspace layout
 ## Architecture
 
 See [docs/README.md](docs/README.md) for the full architecture doc set (motivation, query translation, routing and clusters). The high-level overview lives in [docs/architecture.md](docs/architecture.md).
+
+**Docs website:** a Docusaurus mirror of this README and `docs/` lives under [`website/`](website/README.md); run `npm install` and `npm start` there for a local browseable site.
 
 ## License
 
