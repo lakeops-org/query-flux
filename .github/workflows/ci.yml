@@ -91,7 +91,7 @@ jobs:
 
       - run: cargo test --tests --workspace --exclude queryflux-e2e-tests --exclude queryflux-bench
 
-   e2e:
+  e2e:
      name: E2E tests (Docker)
      needs: [fmt, clippy, unit-test]
      runs-on: ubuntu-latest
