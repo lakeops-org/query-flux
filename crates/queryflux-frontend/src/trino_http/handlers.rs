@@ -18,7 +18,7 @@ use queryflux_core::{
 use queryflux_engine_adapters::trino::api::{
     queued_response, TrinoError, TrinoResponse, TrinoStats,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use super::result_sink::TrinoHttpResultSink;
@@ -47,7 +47,40 @@ fn raw_response_with_rewritten_next_uri(
         .unwrap()
 }
 
+/// Trino sometimes omits `failureInfo` or sets it to `null`; `trino-rust-client` requires an object.
+fn normalize_trino_error_failure_info_json(bytes: &[u8]) -> Bytes {
+    if !bytes.windows(7).any(|w| w == b"\"error\"") {
+        return Bytes::copy_from_slice(bytes);
+    }
+    let mut v: Value = match serde_json::from_slice(bytes) {
+        Ok(v) => v,
+        Err(_) => return Bytes::copy_from_slice(bytes),
+    };
+    let err_obj = match v.get_mut("error") {
+        Some(Value::Object(o)) => o,
+        _ => return Bytes::copy_from_slice(bytes),
+    };
+    let needs_default = matches!(err_obj.get("failureInfo"), None | Some(Value::Null));
+    if !needs_default {
+        return Bytes::copy_from_slice(bytes);
+    }
+    err_obj.insert(
+        "failureInfo".to_string(),
+        json!({
+            "type": "io.trino.spi.TrinoException",
+            "suppressed": [],
+            "stack": [],
+        }),
+    );
+    Bytes::from(serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()))
+}
+
 fn rewrite_next_uri_bytes(src: &[u8], new_uri: Option<&str>) -> Bytes {
+    let core = rewrite_next_uri_bytes_core(src, new_uri);
+    normalize_trino_error_failure_info_json(core.as_ref())
+}
+
+fn rewrite_next_uri_bytes_core(src: &[u8], new_uri: Option<&str>) -> Bytes {
     const KEY: &[u8] = b"\"nextUri\"";
     if let Some(key_pos) = find_subsequence(src, KEY) {
         let after_key = &src[key_pos + KEY.len()..];
@@ -656,7 +689,7 @@ pub async fn get_executing_statement(
                     error_code: Some(0),
                     error_name: Some("QUERY_FAILED".to_string()),
                     error_type: Some("USER_ERROR".to_string()),
-                    failure_info: None,
+                    failure_info: Default::default(),
                 }),
                 columns: None,
                 data: None,

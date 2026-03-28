@@ -1,5 +1,15 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+
+/// Deserialize `null` or a missing optional wrapper as `T::default()` (see `TrinoError.failure_info`).
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::<T>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
 
 /// Trino's query response JSON structure.
 /// We only parse the fields we need; everything else passes through as raw JSON.
@@ -84,6 +94,44 @@ pub struct TrinoStats {
     pub progress_percentage: Option<f32>,
 }
 
+/// Subset of Trino's `failureInfo` JSON; shape matches `trino-rust-client::FailureInfo` for clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrinoFailureInfo {
+    #[serde(rename = "type")]
+    pub ty: String,
+    #[serde(default)]
+    pub suppressed: Vec<TrinoFailureInfo>,
+    #[serde(default)]
+    pub stack: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<Box<TrinoFailureInfo>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_location: Option<TrinoErrorLocation>,
+}
+
+impl Default for TrinoFailureInfo {
+    fn default() -> Self {
+        Self {
+            ty: "io.trino.spi.TrinoException".to_string(),
+            suppressed: vec![],
+            stack: vec![],
+            message: None,
+            cause: None,
+            error_location: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrinoErrorLocation {
+    pub line_number: u32,
+    pub column_number: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrinoError {
@@ -91,7 +139,8 @@ pub struct TrinoError {
     pub error_code: Option<i32>,
     pub error_name: Option<String>,
     pub error_type: Option<String>,
-    pub failure_info: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
+    pub failure_info: TrinoFailureInfo,
 }
 
 /// Synthetic queued response returned to the client when QueryFlux has no cluster available.
