@@ -31,6 +31,11 @@ fn harness() -> &'static TestHarness {
 /// Per HTTP request timeout for `trino-rust-client` (default is 30s — too short for StarRocks Iceberg scans).
 const TRINO_CLIENT_HTTP_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// Build a Trino HTTP client for one engine group.
+///
+/// **Not safe for concurrent `get_all` on the same instance:** `trino-rust-client` keeps session
+/// state behind an internal lock and updates it from every response; parallel queries share URLs
+/// and headers and can yield `EmptyData` or other races.
 fn trino_client_for_group(group: &str) -> TrinoHttpClient {
     // QueryFlux exposes its Trino-compatible HTTP frontend at `harness().base_url()`.
     // The real Trino client sets `X-Trino-Client-Tags`, which we use for QueryFlux routing.
@@ -132,6 +137,8 @@ async fn iceberg_cross_engine_orders_count_matches() {
 /// Cross-engine compatibility (joins + aggregates). StarRocks Iceberg is slow; keep as one test
 /// with stderr progress. Run e2e with `--test-threads=1` (Makefile / CI) so tests do not
 /// stampede StarRocks and so libtest does not attribute **mutex wait** from `#[serial]` as runtime.
+///
+/// Each parallel branch uses its own `TrinoHttpClient` — the client is not concurrency-safe.
 #[tokio::test]
 #[ignore = "requires Trino + StarRocks + Lakekeeper — run with: make test-e2e"]
 async fn iceberg_cross_engine_advanced_compatibility_matches() {
@@ -141,8 +148,6 @@ async fn iceberg_cross_engine_advanced_compatibility_matches() {
     ensure_iceberg_e2e_data().await.expect("iceberg e2e seed");
 
     let timeout = Duration::from_secs(240);
-    let trino_client = trino_client_for_group(GROUP_TRINO);
-    let sr_client = trino_client_for_group(GROUP_STARROCKS);
 
     let sql_1 = "SELECT COUNT(*) AS n FROM lakekeeper.e2e.orders WHERE o_orderstatus = 'O'";
     let sql_2 =
@@ -165,19 +170,51 @@ async fn iceberg_cross_engine_advanced_compatibility_matches() {
         WHERE l_returnflag = 'R'
     "#;
 
-    eprintln!("[iceberg e2e] launching all Trino + StarRocks queries in parallel");
+    eprintln!(
+        "[iceberg e2e] launching all Trino + StarRocks queries in parallel (one client per query)"
+    );
 
     let (t1, t2, t3, t4, t5, s1, s2, s3, s4, s5) = tokio::join!(
-        execute_on_scalar_i64(&trino_client, sql_1, timeout),
-        execute_on_scalar_f64(&trino_client, sql_2, timeout),
-        execute_on_scalar_i64(&trino_client, sql_3, timeout),
-        execute_on_scalar_i64(&trino_client, sql_4, timeout),
-        execute_on_scalar_i64(&trino_client, sql_5, timeout),
-        execute_on_scalar_i64(&sr_client, sql_1, timeout),
-        execute_on_scalar_f64(&sr_client, sql_2, timeout),
-        execute_on_scalar_i64(&sr_client, sql_3, timeout),
-        execute_on_scalar_i64(&sr_client, sql_4, timeout),
-        execute_on_scalar_i64(&sr_client, sql_5, timeout),
+        async {
+            let c = trino_client_for_group(GROUP_TRINO);
+            execute_on_scalar_i64(&c, sql_1, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_TRINO);
+            execute_on_scalar_f64(&c, sql_2, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_TRINO);
+            execute_on_scalar_i64(&c, sql_3, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_TRINO);
+            execute_on_scalar_i64(&c, sql_4, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_TRINO);
+            execute_on_scalar_i64(&c, sql_5, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_STARROCKS);
+            execute_on_scalar_i64(&c, sql_1, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_STARROCKS);
+            execute_on_scalar_f64(&c, sql_2, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_STARROCKS);
+            execute_on_scalar_i64(&c, sql_3, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_STARROCKS);
+            execute_on_scalar_i64(&c, sql_4, timeout).await
+        },
+        async {
+            let c = trino_client_for_group(GROUP_STARROCKS);
+            execute_on_scalar_i64(&c, sql_5, timeout).await
+        },
     );
 
     eprintln!("[iceberg e2e] 1/5 filtered orders count");

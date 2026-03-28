@@ -134,10 +134,8 @@ jobs:
            echo "PYO3_PYTHON=${GITHUB_WORKSPACE}/.venv/bin/python3" >> "$GITHUB_ENV"
            echo "PYTHONPATH=$(.venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
 
-       # Compile shared deps + link the main binary before Docker (slow) and e2e tests.
-       # Tests still embed QueryFlux via TestHarness; this step validates `queryflux` builds.
-       - name: Build queryflux binary
-         run: cargo build --bin queryflux
+       # E2E compiles deps + integration tests via `cargo test` below. The `queryflux` binary is
+       # already covered by the clippy job (`--all-targets`).
 
        - name: Start e2e Docker stack
          run: docker compose -f docker/docker-compose.test.yml --project-directory . up -d --wait trino starrocks sentinel

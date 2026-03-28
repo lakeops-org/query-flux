@@ -78,7 +78,6 @@ test-e2e:
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
 	DUCKDB_DOWNLOAD_LIB=1 \
-	$(CARGO) build --bin queryflux
 	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
