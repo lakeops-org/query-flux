@@ -20,7 +20,7 @@ Every backend cluster has **two distinct credential relationships**, both config
 
 `queryAuth` has exactly **three explicit types**: `serviceAccount | impersonate | tokenExchange`
 
-There is no `passthrough` type. For same-engine routing (Trino HTTP → Trino backend), the Trino adapter already forwards all `SessionContext::TrinoHttp { headers }` verbatim — including the client's `Authorization` header — without any special config. This implicit forwarding is the trino-lb model and works today unchanged.
+There is no `passthrough` type. For same-engine routing (Trino HTTP → Trino backend), the Trino adapter already forwards all `SessionContext::TrinoHttp { headers }` verbatim — including the client's `Authorization` header — without any special config. This implicit client header passthrough is the default today.
 
 Health checks always use Type 1 (`auth`) directly, never `queryAuth`. This ensures they work even when a user's token is expired or missing.
 
@@ -484,7 +484,7 @@ All modes configured under `clusters[].queryAuth` (per-cluster, not per-group).
 
 ### Implicit header forwarding (Trino HTTP → Trino, no config needed)
 
-The Trino HTTP adapter forwards `SessionContext::TrinoHttp { headers }` verbatim to the backend — including `Authorization` and `X-Trino-User`. This is what trino-lb does. No `queryAuth` entry is needed; the default `serviceAccount` fallback does not suppress these headers in the Trino adapter because the Trino adapter applies session headers after cluster auth.
+The Trino HTTP adapter forwards `SessionContext::TrinoHttp { headers }` verbatim to the backend — including `Authorization` and `X-Trino-User`. No separate `queryAuth` entry is required for this path; the default `serviceAccount` fallback does not suppress these headers in the Trino adapter because the Trino adapter applies session headers after cluster auth.
 
 However: when `queryAuth: impersonate` is set on a Trino cluster, the adapter **must suppress the client's `Authorization` header** and use only Type 1 credentials for authentication. The `X-Trino-User` injection happens after the service account auth is applied. Failing to suppress the client `Authorization` would cause the backend to see conflicting auth credentials.
 
@@ -572,7 +572,7 @@ clusters:
 - Private keys must not be stored in config files in production; use `secretRef` to Secrets Manager
 
 ### Trino
-- Implicit header forwarding (trino-lb model) works for same-IdP deployments
+- Implicit header forwarding works for same-IdP deployments
 - `impersonate` requires Trino file-based ACL — high operator burden, document clearly
 - For `impersonate`: suppress client `Authorization`; apply service account auth; inject `X-Trino-User`
 

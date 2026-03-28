@@ -8,7 +8,7 @@ This folder describes how QueryFlux is put together: why it exists, how SQL is t
 
 | Document | What it covers |
 |----------|----------------|
-| [motivation-and-goals.md](motivation-and-goals.md) | Problem statement, goals, and relationship to prior art (e.g. trino-lb). |
+| [motivation-and-goals.md](motivation-and-goals.md) | Problem statement, goals, and how QueryFlux fits multi-engine estates. |
 | [architecture.md](architecture.md) | End-to-end query lifecycle, major crates, and component status (high level). |
 | [query-translation.md](query-translation.md) | Dialect detection, sqlglot integration, when translation runs, and schema-aware mode. |
 | [routing-and-clusters.md](routing-and-clusters.md) | Router chain, `routingFallback`, cluster groups, load-balancing strategies, and queueing. |
