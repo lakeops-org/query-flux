@@ -170,11 +170,9 @@ async fn iceberg_cross_engine_advanced_compatibility_matches() {
         WHERE l_returnflag = 'R'
     "#;
 
-    eprintln!(
-        "[iceberg e2e] launching all Trino + StarRocks queries in parallel (one client per query)"
-    );
-
-    let (t1, t2, t3, t4, t5, s1, s2, s3, s4, s5) = tokio::join!(
+    // Trino queries are fast — run them in parallel.
+    eprintln!("[iceberg e2e] launching Trino queries in parallel");
+    let (t1, t2, t3, t4, t5) = tokio::join!(
         async {
             let c = trino_client_for_group(GROUP_TRINO);
             execute_on_scalar_i64(&c, sql_1, timeout).await
@@ -193,29 +191,19 @@ async fn iceberg_cross_engine_advanced_compatibility_matches() {
         },
         async {
             let c = trino_client_for_group(GROUP_TRINO);
-            execute_on_scalar_i64(&c, sql_5, timeout).await
-        },
-        async {
-            let c = trino_client_for_group(GROUP_STARROCKS);
-            execute_on_scalar_i64(&c, sql_1, timeout).await
-        },
-        async {
-            let c = trino_client_for_group(GROUP_STARROCKS);
-            execute_on_scalar_f64(&c, sql_2, timeout).await
-        },
-        async {
-            let c = trino_client_for_group(GROUP_STARROCKS);
-            execute_on_scalar_i64(&c, sql_3, timeout).await
-        },
-        async {
-            let c = trino_client_for_group(GROUP_STARROCKS);
-            execute_on_scalar_i64(&c, sql_4, timeout).await
-        },
-        async {
-            let c = trino_client_for_group(GROUP_STARROCKS);
             execute_on_scalar_i64(&c, sql_5, timeout).await
         },
     );
+
+    // StarRocks Iceberg scans are slow and the allin1 container is resource-constrained in CI.
+    // Running multiple complex join queries concurrently causes the Trino-compatible HTTP API to
+    // return empty intermediate responses (EmptyData). Run sequentially to avoid this.
+    eprintln!("[iceberg e2e] running StarRocks queries sequentially");
+    let s1 = execute_on_scalar_i64(&trino_client_for_group(GROUP_STARROCKS), sql_1, timeout).await;
+    let s2 = execute_on_scalar_f64(&trino_client_for_group(GROUP_STARROCKS), sql_2, timeout).await;
+    let s3 = execute_on_scalar_i64(&trino_client_for_group(GROUP_STARROCKS), sql_3, timeout).await;
+    let s4 = execute_on_scalar_i64(&trino_client_for_group(GROUP_STARROCKS), sql_4, timeout).await;
+    let s5 = execute_on_scalar_i64(&trino_client_for_group(GROUP_STARROCKS), sql_5, timeout).await;
 
     eprintln!("[iceberg e2e] 1/5 filtered orders count");
     assert_eq!(
