@@ -39,7 +39,7 @@ services:
       - "9030:9030"
       - "8030:8030"
     healthcheck:
-      test: ["CMD", "curl", "-I", "http://starrocks:8030/api/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8030/api/health"]
       interval: 5s
       timeout: 10s
       retries: 30
