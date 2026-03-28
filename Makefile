@@ -75,6 +75,10 @@ benchmark:
 ## Iceberg/Lakekeeper tables are created by the e2e crate (no TPC-H loader).
 test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
+	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
+	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	DUCKDB_DOWNLOAD_LIB=1 \
+	$(CARGO) build --bin queryflux
 	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
