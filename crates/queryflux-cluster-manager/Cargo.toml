@@ -6,9 +6,6 @@ license.workspace = true
 
 [dependencies]
 queryflux-core = { workspace = true }
-queryflux-engine-adapters = { workspace = true }
 async-trait = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
 serde = { workspace = true }
-parking_lot = { workspace = true }
+

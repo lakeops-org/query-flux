@@ -61,7 +61,7 @@ impl TrinoHttpResultSink {
                     error_code: Some(0),
                     error_name: Some("QUERY_FAILED".to_string()),
                     error_type: Some("USER_ERROR".to_string()),
-                    failure_info: None,
+                    failure_info: Default::default(),
                 }),
                 columns: None,
                 data: None,

@@ -1,0 +1,12 @@
+# Mirrors ../../prometheus/prometheus.yml (intervals, job shape) but scrapes the
+# `queryflux` service on the compose network. Root prometheus/prometheus.yml uses
+# host.docker.internal:9000 when QueryFlux runs on the host — see docker/docker-compose.yml.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: queryflux
+    static_configs:
+      - targets: ["queryflux:9000"]
+    metrics_path: /metrics

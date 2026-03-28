@@ -87,15 +87,20 @@ impl FrontendProtocol {
 pub enum EngineType {
     Trino,
     DuckDb,
+    /// DuckDB running as a remote HTTP server.
+    DuckDbHttp,
     StarRocks,
     ClickHouse,
+    /// Amazon Athena (Presto/Trino-compatible SQL over S3).
+    Athena,
 }
 
 impl EngineType {
     pub fn dialect(&self) -> SqlDialect {
         match self {
             EngineType::Trino => SqlDialect::Trino,
-            EngineType::DuckDb => SqlDialect::DuckDb,
+            EngineType::Athena => SqlDialect::Athena,
+            EngineType::DuckDb | EngineType::DuckDbHttp => SqlDialect::DuckDb,
             EngineType::StarRocks => SqlDialect::StarRocks,
             EngineType::ClickHouse => SqlDialect::ClickHouse,
         }
@@ -106,6 +111,7 @@ impl EngineType {
 #[serde(rename_all = "camelCase")]
 pub enum SqlDialect {
     Trino,
+    Athena,
     DuckDb,
     StarRocks,
     ClickHouse,
@@ -130,6 +136,7 @@ impl SqlDialect {
     pub fn sqlglot_name(&self) -> &'static str {
         match self {
             SqlDialect::Trino => "trino",
+            SqlDialect::Athena => "athena",
             SqlDialect::DuckDb => "duckdb",
             SqlDialect::StarRocks => "starrocks",
             SqlDialect::ClickHouse => "clickhouse",
@@ -172,6 +179,12 @@ pub struct ExecutingQuery {
     pub translated_sql: Option<String>,
     pub cluster_group: ClusterGroupName,
     pub cluster_name: ClusterName,
+    /// Postgres `cluster_group_configs.id` when known (DB-backed config).
+    #[serde(default)]
+    pub cluster_group_config_id: Option<i64>,
+    /// Postgres `cluster_configs.id` when known.
+    #[serde(default)]
+    pub cluster_config_id: Option<i64>,
     /// The backend engine's query ID (e.g. Trino's `20260319_084733_00386_kqwci`).
     /// Used as the persistence key and embedded in the client-facing poll URL.
     pub backend_query_id: BackendQueryId,

@@ -1,0 +1,24 @@
+# VCS
+.git
+.github
+
+# Rust
+target/
+**/*.rs.bk
+
+# Python (host venv; image builds its own)
+.venv/
+venv/
+
+# UI (not part of QueryFlux image)
+queryflux-studio/
+ui/
+
+# Local / editor
+.idea
+.vscode
+.DS_Store
+*.log
+
+# Docker compose stacks (not needed for image build)
+docker/*.yml

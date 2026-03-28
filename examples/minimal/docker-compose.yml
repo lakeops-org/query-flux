@@ -1,0 +1,83 @@
+# Postgres + Trino + QueryFlux + Studio. Traffic through QueryFlux uses the Trino backend.
+#
+# From this directory:
+#   docker compose up -d --wait
+#
+# SQL via QueryFlux (Trino protocol): http://localhost:8080 · Trino direct: http://localhost:8081
+# Studio http://localhost:3000 · Admin http://localhost:9000 · Postgres host port 5433 → 5432
+
+name: queryflux-example-minimal
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432" # avoids clashing with a local Postgres on 5432
+    environment:
+      POSTGRES_DB: queryflux
+      POSTGRES_USER: queryflux
+      POSTGRES_PASSWORD: queryflux
+    volumes:
+      - queryflux-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queryflux"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  trino:
+    image: trinodb/trino:latest
+    environment:
+      - CATALOG_MANAGEMENT=dynamic
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  queryflux:
+    image: 343959804465.dkr.ecr.us-east-1.amazonaws.com/queryflux:latest
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    volumes:
+      - ./config.yaml:/etc/queryflux/config.yaml:ro
+    environment:
+      RUST_LOG: ${RUST_LOG:-queryflux=info,queryflux_frontend=info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    restart: unless-stopped
+    # Admin listens only after Postgres sqlx migrations + startup succeed. `docker compose up --wait`
+    # then blocks until QueryFlux is actually ready (not only Postgres/Trino).
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/opt/venv/bin/python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 90s
+
+  queryflux-studio:
+    image: 343959804465.dkr.ecr.us-east-1.amazonaws.com/queryflux-studio:latest
+    ports:
+      - "3000:3000"
+    environment:
+      ADMIN_API_URL: http://queryflux:9000
+    depends_on:
+      queryflux:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  queryflux-pg:

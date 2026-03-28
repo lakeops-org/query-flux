@@ -13,11 +13,18 @@ use crate::{SchemaContext, TranslatorTrait};
 pub struct SqlglotTranslator {
     source: SqlDialect,
     target: SqlDialect,
+    /// User-defined Python scripts executed in order after sqlglot translation.
+    /// Each script must define `def transform(ast, src: str, dst: str) -> None`.
+    python_scripts: Vec<String>,
 }
 
 impl SqlglotTranslator {
-    pub fn new(source: SqlDialect, target: SqlDialect) -> Self {
-        Self { source, target }
+    pub fn new(source: SqlDialect, target: SqlDialect, python_scripts: Vec<String>) -> Self {
+        Self {
+            source,
+            target,
+            python_scripts,
+        }
     }
 
     /// Verify that sqlglot is importable. Call once at startup.
@@ -48,10 +55,13 @@ impl TranslatorTrait for SqlglotTranslator {
         let src = self.source.sqlglot_name().to_string();
         let tgt = self.target.sqlglot_name().to_string();
         let schema_context = schema_context.clone();
+        let python_scripts = self.python_scripts.clone();
 
-        tokio::task::spawn_blocking(move || translate_with_gil(&sql, &src, &tgt, &schema_context))
-            .await
-            .map_err(|e| QueryFluxError::Translation(format!("spawn_blocking error: {e}")))?
+        tokio::task::spawn_blocking(move || {
+            translate_with_gil(&sql, &src, &tgt, &schema_context, &python_scripts)
+        })
+        .await
+        .map_err(|e| QueryFluxError::Translation(format!("spawn_blocking error: {e}")))?
     }
 }
 
@@ -60,18 +70,28 @@ fn translate_with_gil(
     src: &str,
     tgt: &str,
     schema_context: &SchemaContext,
+    python_scripts: &[String],
 ) -> Result<String> {
     Python::attach(|py| {
         let sqlglot = PyModule::import(py, "sqlglot")
             .map_err(|e| QueryFluxError::Translation(format!("Failed to import sqlglot: {e}")))?;
 
-        if schema_context.is_empty() {
+        // 1. Dialect translation (skipped when src == tgt; fixup scripts may still run).
+        let translated = if src == tgt {
+            sql.to_string()
+        } else if schema_context.is_empty() {
             debug!(src, tgt, "sqlglot dialect-only translation");
-            translate_dialect_only(py, &sqlglot, sql, src, tgt)
+            translate_dialect_only(py, &sqlglot, sql, src, tgt)?
         } else {
             debug!(src, tgt, "sqlglot schema-aware translation");
-            translate_with_schema(py, &sqlglot, sql, src, tgt, schema_context)
+            translate_with_schema(py, &sqlglot, sql, src, tgt, schema_context)?
+        };
+
+        // 2. Run user fixup scripts in order. Each may mutate the AST in-place.
+        if python_scripts.is_empty() {
+            return Ok(translated);
         }
+        run_fixup_scripts(py, &sqlglot, &translated, src, tgt, python_scripts)
     })
 }
 
@@ -154,4 +174,84 @@ fn translate_with_schema(
         .map_err(|e| QueryFluxError::Translation(format!("Failed to extract sql result: {e}")))?;
 
     Ok(translated)
+}
+
+/// Execute user-defined Python fixup scripts against the translated SQL.
+///
+/// Each script must define a function with this signature:
+/// ```python
+/// def transform(ast, src: str, dst: str) -> None:
+///     # ast: sqlglot AST (already translated to the dst dialect) — mutate in-place
+///     # src: source dialect name (e.g. "trino")
+///     # dst: target dialect name (e.g. "athena")
+/// ```
+///
+/// Imports and helper functions may appear at module level. Example:
+/// ```python
+/// import sqlglot.expressions as exp
+///
+/// def transform(ast, src: str, dst: str) -> None:
+///     if dst == "athena":
+///         for table in ast.find_all(exp.Table):
+///             table.set("catalog", None)
+/// ```
+///
+/// The AST is re-serialized once after all scripts run.
+fn run_fixup_scripts(
+    py: Python<'_>,
+    sqlglot: &Bound<'_, PyModule>,
+    sql: &str,
+    src: &str,
+    tgt: &str,
+    scripts: &[String],
+) -> Result<String> {
+    // Parse the already-translated SQL in the target dialect.
+    let parse_kwargs = PyDict::new(py);
+    parse_kwargs.set_item("dialect", tgt).ok();
+    let ast = sqlglot
+        .call_method("parse_one", (sql,), Some(&parse_kwargs))
+        .map_err(|e| QueryFluxError::Translation(format!("transform: parse_one failed: {e}")))?;
+
+    for (i, script) in scripts.iter().enumerate() {
+        // Execute the script in its own globals dict so that top-level imports
+        // and helper functions work correctly (same approach as PythonScriptRouter).
+        let globals = PyDict::new(py);
+        let script_cstr = std::ffi::CString::new(script.as_str()).map_err(|e| {
+            QueryFluxError::Translation(format!("translation script {i} contains null byte: {e}"))
+        })?;
+        py.run(script_cstr.as_c_str(), Some(&globals), None)
+            .map_err(|e| {
+                QueryFluxError::Translation(format!("translation script {i} error: {e}"))
+            })?;
+
+        let transform_fn = globals
+            .get_item("transform")
+            .map_err(|e| {
+                QueryFluxError::Translation(format!(
+                    "translation script {i} has no 'transform' function: {e}"
+                ))
+            })?
+            .ok_or_else(|| {
+                QueryFluxError::Translation(format!(
+                    "translation script {i} has no 'transform' function"
+                ))
+            })?;
+
+        transform_fn.call1((&ast, src, tgt)).map_err(|e| {
+            QueryFluxError::Translation(format!(
+                "translation script {i} transform() call failed: {e}"
+            ))
+        })?;
+    }
+
+    // Re-serialize once after all scripts have run.
+    let sql_kwargs = PyDict::new(py);
+    sql_kwargs.set_item("dialect", tgt).ok();
+    let result: String = ast
+        .call_method("sql", (), Some(&sql_kwargs))
+        .map_err(|e| QueryFluxError::Translation(format!("transform: ast.sql() failed: {e}")))?
+        .extract()
+        .map_err(|e| QueryFluxError::Translation(format!("transform: extract failed: {e}")))?;
+
+    Ok(result)
 }

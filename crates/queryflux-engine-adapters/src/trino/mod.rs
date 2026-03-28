@@ -13,7 +13,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use queryflux_core::{
     catalog::TableSchema,
-    config::ClusterAuth,
+    config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
     query::{
         BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryEngineStats,
@@ -27,6 +27,10 @@ use tracing::debug;
 
 use crate::EngineAdapterTrait;
 use api::TrinoResponse;
+
+use queryflux_core::engine_registry::{
+    AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
+};
 
 /// Trino HTTP adapter.
 ///
@@ -64,6 +68,30 @@ impl TrinoAdapter {
         }
     }
 
+    /// Build from persisted / YAML [`ClusterConfig`] (Trino-specific field usage).
+    pub fn try_from_cluster_config(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        cfg: &ClusterConfig,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
+        })?;
+        let tls_skip = cfg
+            .tls
+            .as_ref()
+            .map(|t| t.insecure_skip_verify)
+            .unwrap_or(false);
+        Ok(Self::new(
+            cluster_name,
+            group_name,
+            endpoint,
+            tls_skip,
+            cfg.auth.clone(),
+        ))
+    }
+
     /// Apply cluster-level auth credentials to a request builder.
     fn apply_cluster_auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.auth {
@@ -71,6 +99,10 @@ impl TrinoAdapter {
                 builder.basic_auth(username, Some(password))
             }
             Some(ClusterAuth::Bearer { token }) => builder.bearer_auth(token),
+            // AccessKey, KeyPair, RoleArn are not used by TrinoAdapter.
+            Some(ClusterAuth::AccessKey { .. })
+            | Some(ClusterAuth::KeyPair { .. })
+            | Some(ClusterAuth::RoleArn { .. }) => builder,
             None => builder,
         }
     }
@@ -98,7 +130,12 @@ impl TrinoAdapter {
 
 #[async_trait]
 impl EngineAdapterTrait for TrinoAdapter {
-    async fn submit_query(&self, sql: &str, session: &SessionContext) -> Result<QueryExecution> {
+    async fn submit_query(
+        &self,
+        sql: &str,
+        session: &SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
+    ) -> Result<QueryExecution> {
         let url = self.trino_url("/v1/statement");
         debug!(cluster = %self.cluster_name, url = %url, "Submitting query to Trino");
 
@@ -205,7 +242,7 @@ impl EngineAdapterTrait for TrinoAdapter {
                 processed_rows: Some(s.processed_rows),
                 processed_bytes: Some(s.processed_bytes),
                 physical_input_bytes: Some(s.physical_input_bytes),
-                peak_memory_bytes: Some(s.peak_user_memory_bytes),
+                peak_memory_bytes: Some(s.peak_memory_bytes),
                 spilled_bytes: Some(s.spilled_bytes),
                 total_splits: Some(s.total_splits),
             })
@@ -250,9 +287,16 @@ impl EngineAdapterTrait for TrinoAdapter {
         &self,
         sql: &str,
         session: &SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
     ) -> Result<crate::ArrowStream> {
         // Submit query — get initial body + first next_uri.
-        let execution = self.submit_query(sql, session).await?;
+        let execution = self
+            .submit_query(
+                sql,
+                session,
+                &queryflux_auth::QueryCredentials::ServiceAccount,
+            )
+            .await?;
         let QueryExecution::Async {
             initial_body,
             next_uri: first_next_uri,
@@ -292,6 +336,9 @@ impl EngineAdapterTrait for TrinoAdapter {
                         http_client.get(&uri).basic_auth(username, Some(password))
                     }
                     Some(ClusterAuth::Bearer { token }) => http_client.get(&uri).bearer_auth(token),
+                    Some(ClusterAuth::AccessKey { .. })
+                    | Some(ClusterAuth::KeyPair { .. })
+                    | Some(ClusterAuth::RoleArn { .. }) => http_client.get(&uri),
                     None => http_client.get(&uri),
                 };
                 let body = match req.send().await {
@@ -396,7 +443,13 @@ impl EngineAdapterTrait for TrinoAdapter {
                 "queryflux-catalog-discovery".to_string(),
             )]),
         };
-        let execution = self.submit_query(&sql, &session).await?;
+        let execution = self
+            .submit_query(
+                &sql,
+                &session,
+                &queryflux_auth::QueryCredentials::ServiceAccount,
+            )
+            .await?;
         if let QueryExecution::Async {
             initial_body: Some(body),
             ..
@@ -419,7 +472,13 @@ impl TrinoAdapter {
                 "queryflux-catalog-discovery".to_string(),
             )]),
         };
-        let execution = self.submit_query(sql, &session).await?;
+        let execution = self
+            .submit_query(
+                sql,
+                &session,
+                &queryflux_auth::QueryCredentials::ServiceAccount,
+            )
+            .await?;
         if let QueryExecution::Async {
             initial_body: Some(body),
             ..
@@ -672,5 +731,71 @@ fn parse_describe_result(
         database: database.to_string(),
         table: table.to_string(),
         columns,
+    }
+}
+
+impl TrinoAdapter {
+    pub fn descriptor() -> EngineDescriptor {
+        EngineDescriptor {
+            engine_key: "trino",
+            display_name: "Trino",
+            description: "Distributed SQL query engine using the Trino REST protocol (async submit/poll).",
+            hex: "DD00A1",
+            connection_type: ConnectionType::Http,
+            default_port: Some(8080),
+            endpoint_example: Some("http://trino-coordinator:8080"),
+            supported_auth: vec![AuthType::Basic, AuthType::Bearer],
+            implemented: true,
+            config_fields: vec![
+                ConfigField {
+                    key: "endpoint",
+                    label: "Endpoint",
+                    description: "HTTP(S) base URL of the Trino coordinator.",
+                    field_type: FieldType::Url,
+                    required: true,
+                    example: Some("http://trino-coordinator:8080"),
+                },
+                ConfigField {
+                    key: "auth.type",
+                    label: "Auth type",
+                    description: "Authentication mechanism. Choose 'basic' for username/password or 'bearer' for a JWT/OAuth2 token.",
+                    field_type: FieldType::Text,
+                    required: false,
+                    example: Some("basic"),
+                },
+                ConfigField {
+                    key: "auth.username",
+                    label: "Username",
+                    description: "Basic auth username (required when auth.type = basic).",
+                    field_type: FieldType::Text,
+                    required: false,
+                    example: Some("admin"),
+                },
+                ConfigField {
+                    key: "auth.password",
+                    label: "Password",
+                    description: "Basic auth password.",
+                    field_type: FieldType::Secret,
+                    required: false,
+                    example: None,
+                },
+                ConfigField {
+                    key: "auth.token",
+                    label: "Bearer token",
+                    description: "JWT or OAuth2 bearer token (required when auth.type = bearer).",
+                    field_type: FieldType::Secret,
+                    required: false,
+                    example: None,
+                },
+                ConfigField {
+                    key: "tls.insecureSkipVerify",
+                    label: "Skip TLS verification",
+                    description: "Disable TLS certificate verification. Use only in development.",
+                    field_type: FieldType::Boolean,
+                    required: false,
+                    example: Some("false"),
+                },
+            ],
+        }
     }
 }

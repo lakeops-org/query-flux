@@ -11,6 +11,10 @@ pub struct QuerySummary {
     pub backend_query_id: Option<String>,
     pub cluster_group: String,
     pub cluster_name: String,
+    /// FK to `cluster_group_configs.id`. `None` if the group was deleted after the query ran.
+    pub cluster_group_id: Option<i64>,
+    /// FK to `cluster_configs.id`. `None` if the cluster was deleted after the query ran.
+    pub cluster_id: Option<i64>,
     pub engine_type: String,
     /// The wire protocol used by the client (e.g. "TrinoHttp", "PostgresWire").
     #[sqlx(rename = "frontend_protocol")]

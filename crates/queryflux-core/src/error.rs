@@ -20,6 +20,12 @@ pub enum QueryFluxError {
     #[error("Config error: {0}")]
     Config(String),
 
+    #[error("Authentication error: {0}")]
+    Auth(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
     #[error("Query not found: {0}")]
     QueryNotFound(String),
 

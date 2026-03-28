@@ -16,10 +16,13 @@ use crate::{
     },
     metrics_store::{ClusterSnapshot, MetricsStore, QueryRecord},
     query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
-    ClusterConfigStore, Persistence, QueryHistoryStore,
+    script_library::{
+        is_valid_script_kind, UpsertUserScript, UserScriptRecord, KIND_TRANSLATION_FIXUP,
+    },
+    ClusterConfigStore, LoadedRoutingConfig, Persistence, ProxySettingsStore, QueryHistoryStore,
+    RoutingConfigStore, ScriptLibraryStore,
 };
 
-#[derive(Default)]
 pub struct InMemoryPersistence {
     // --- in-flight state ---
     /// Keyed by BackendQueryId (Trino's query ID) — matches the client poll URL.
@@ -35,6 +38,32 @@ pub struct InMemoryPersistence {
     // --- cluster / group config ---
     cluster_configs: DashMap<String, ClusterConfigRecord>,
     group_configs: DashMap<String, ClusterGroupConfigRecord>,
+    next_cluster_id: AtomicI64,
+    next_group_id: AtomicI64,
+    user_scripts: DashMap<i64, UserScriptRecord>,
+    next_script_id: AtomicI64,
+
+    // --- proxy-level settings ---
+    proxy_settings: std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl Default for InMemoryPersistence {
+    fn default() -> Self {
+        Self {
+            executing: DashMap::default(),
+            queued: DashMap::default(),
+            next_id: AtomicI64::new(0),
+            query_records: RwLock::new(Vec::new()),
+            _snapshots: RwLock::new(Vec::new()),
+            cluster_configs: DashMap::default(),
+            group_configs: DashMap::default(),
+            next_cluster_id: AtomicI64::new(1),
+            next_group_id: AtomicI64::new(1),
+            user_scripts: DashMap::default(),
+            next_script_id: AtomicI64::new(1),
+            proxy_settings: std::sync::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
 }
 
 impl InMemoryPersistence {
@@ -51,6 +80,8 @@ impl InMemoryPersistence {
             backend_query_id: record.backend_query_id,
             cluster_group: record.cluster_group.to_string(),
             cluster_name: record.cluster_name.to_string(),
+            cluster_group_id: record.cluster_group_config_id,
+            cluster_id: record.cluster_config_id,
             engine_type: format!("{:?}", record.engine_type),
             protocol: format!("{:?}", record.frontend_protocol),
             username: record.user,
@@ -296,18 +327,19 @@ impl ClusterConfigStore for InMemoryPersistence {
         cfg: &UpsertClusterConfig,
     ) -> Result<ClusterConfigRecord> {
         let now = Utc::now();
-        let existing_created_at = self.cluster_configs.get(name).map(|e| e.value().created_at);
+        let existing = self.cluster_configs.get(name).map(|e| e.value().clone());
+        let existing_created_at = existing.as_ref().map(|r| r.created_at);
+        let id = existing
+            .as_ref()
+            .map(|r| r.id)
+            .unwrap_or_else(|| self.next_cluster_id.fetch_add(1, Ordering::Relaxed));
         let record = ClusterConfigRecord {
+            id,
             name: name.to_string(),
             engine_key: cfg.engine_key.clone(),
-            endpoint: cfg.endpoint.clone(),
-            database_path: cfg.database_path.clone(),
-            auth_type: cfg.auth_type.clone(),
-            auth_username: cfg.auth_username.clone(),
-            auth_password: cfg.auth_password.clone(),
-            auth_token: cfg.auth_token.clone(),
-            tls_insecure_skip_verify: cfg.tls_insecure_skip_verify,
             enabled: cfg.enabled,
+            max_running_queries: cfg.max_running_queries,
+            config: cfg.config.clone(),
             created_at: existing_created_at.unwrap_or(now),
             updated_at: now,
         };
@@ -317,7 +349,19 @@ impl ClusterConfigStore for InMemoryPersistence {
     }
 
     async fn delete_cluster_config(&self, name: &str) -> Result<bool> {
-        Ok(self.cluster_configs.remove(name).is_some())
+        if self.cluster_configs.remove(name).is_none() {
+            return Ok(false);
+        }
+        let now = Utc::now();
+        for mut entry in self.group_configs.iter_mut() {
+            let record = entry.value_mut();
+            let before = record.members.len();
+            record.members.retain(|m| m != name);
+            if record.members.len() != before {
+                record.updated_at = now;
+            }
+        }
+        Ok(true)
     }
 
     async fn cluster_configs_count(&self) -> Result<i64> {
@@ -341,16 +385,45 @@ impl ClusterConfigStore for InMemoryPersistence {
         name: &str,
         cfg: &UpsertClusterGroupConfig,
     ) -> Result<ClusterGroupConfigRecord> {
+        for m in &cfg.members {
+            if !self.cluster_configs.contains_key(m) {
+                return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
+                    "Unknown cluster '{m}' in group members (clusters must exist first)"
+                )));
+            }
+        }
+
         let now = Utc::now();
-        let existing_created_at = self.group_configs.get(name).map(|e| e.value().created_at);
+        let existing = self.group_configs.get(name).map(|e| e.value().clone());
+        let id = existing
+            .as_ref()
+            .map(|r| r.id)
+            .unwrap_or_else(|| self.next_group_id.fetch_add(1, Ordering::Relaxed));
+        for sid in &cfg.translation_script_ids {
+            let ok = self
+                .user_scripts
+                .get(sid)
+                .map(|r| r.kind == KIND_TRANSLATION_FIXUP)
+                .unwrap_or(false);
+            if !ok {
+                return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
+                    "Unknown or invalid translation script id {sid}"
+                )));
+            }
+        }
+
         let record = ClusterGroupConfigRecord {
+            id,
             name: name.to_string(),
             enabled: cfg.enabled,
             members: cfg.members.clone(),
             max_running_queries: cfg.max_running_queries,
             max_queued_queries: cfg.max_queued_queries,
             strategy: cfg.strategy.clone(),
-            created_at: existing_created_at.unwrap_or(now),
+            allow_groups: cfg.allow_groups.clone(),
+            allow_users: cfg.allow_users.clone(),
+            translation_script_ids: cfg.translation_script_ids.clone(),
+            created_at: existing.as_ref().map(|r| r.created_at).unwrap_or(now),
             updated_at: now,
         };
         self.group_configs.insert(name.to_string(), record.clone());
@@ -363,6 +436,230 @@ impl ClusterConfigStore for InMemoryPersistence {
 
     async fn group_configs_count(&self) -> Result<i64> {
         Ok(self.group_configs.len() as i64)
+    }
+
+    async fn rename_cluster_config(
+        &self,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<ClusterConfigRecord> {
+        let old_name = old_name.trim();
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return Err(queryflux_core::error::QueryFluxError::Persistence(
+                "New cluster name must not be empty".to_string(),
+            ));
+        }
+        if old_name == new_name {
+            return self.get_cluster_config(old_name).await?.ok_or_else(|| {
+                queryflux_core::error::QueryFluxError::Persistence(format!(
+                    "Cluster '{old_name}' not found"
+                ))
+            });
+        }
+        if self.cluster_configs.contains_key(new_name) {
+            return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Cluster name '{new_name}' is already in use"
+            )));
+        }
+        let (_, mut record) = self.cluster_configs.remove(old_name).ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Cluster '{old_name}' not found"
+            ))
+        })?;
+        let now = Utc::now();
+        record.name = new_name.to_string();
+        record.updated_at = now;
+        self.cluster_configs
+            .insert(new_name.to_string(), record.clone());
+
+        for mut entry in self.group_configs.iter_mut() {
+            let gr = entry.value_mut();
+            let mut touched = false;
+            for m in gr.members.iter_mut() {
+                if m == old_name {
+                    *m = new_name.to_string();
+                    touched = true;
+                }
+            }
+            if touched {
+                gr.updated_at = now;
+            }
+        }
+
+        Ok(record)
+    }
+
+    async fn rename_group_config(
+        &self,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<ClusterGroupConfigRecord> {
+        let old_name = old_name.trim();
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return Err(queryflux_core::error::QueryFluxError::Persistence(
+                "New group name must not be empty".to_string(),
+            ));
+        }
+        if old_name == new_name {
+            return self.get_group_config(old_name).await?.ok_or_else(|| {
+                queryflux_core::error::QueryFluxError::Persistence(format!(
+                    "Group '{old_name}' not found"
+                ))
+            });
+        }
+        if self.group_configs.contains_key(new_name) {
+            return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Group name '{new_name}' is already in use"
+            )));
+        }
+        let (_, mut record) = self.group_configs.remove(old_name).ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Group '{old_name}' not found"
+            ))
+        })?;
+        let now = Utc::now();
+        record.name = new_name.to_string();
+        record.updated_at = now;
+        self.group_configs
+            .insert(new_name.to_string(), record.clone());
+        Ok(record)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ProxySettingsStore — in-memory key-value store for proxy-level config
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl ProxySettingsStore for InMemoryPersistence {
+    async fn get_proxy_setting(&self, key: &str) -> Result<Option<serde_json::Value>> {
+        Ok(self.proxy_settings.read().unwrap().get(key).cloned())
+    }
+
+    async fn set_proxy_setting(&self, key: &str, value: serde_json::Value) -> Result<()> {
+        self.proxy_settings
+            .write()
+            .unwrap()
+            .insert(key.to_string(), value);
+        Ok(())
+    }
+
+    async fn delete_proxy_setting(&self, key: &str) -> Result<()> {
+        self.proxy_settings.write().unwrap().remove(key);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl RoutingConfigStore for InMemoryPersistence {
+    async fn load_routing_config(&self) -> Result<Option<LoadedRoutingConfig>> {
+        Ok(None)
+    }
+
+    async fn replace_routing_config(
+        &self,
+        _routing_fallback: &str,
+        _routing_fallback_group_id: Option<i64>,
+        _routers: &[serde_json::Value],
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ScriptLibraryStore for InMemoryPersistence {
+    async fn list_user_scripts(&self, kind: Option<&str>) -> Result<Vec<UserScriptRecord>> {
+        let mut v: Vec<UserScriptRecord> = self
+            .user_scripts
+            .iter()
+            .map(|e| e.value().clone())
+            .filter(|r| kind.map(|k| r.kind == k).unwrap_or(true))
+            .collect();
+        v.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(v)
+    }
+
+    async fn get_user_script(&self, id: i64) -> Result<Option<UserScriptRecord>> {
+        Ok(self.user_scripts.get(&id).map(|e| e.value().clone()))
+    }
+
+    async fn create_user_script(&self, body: &UpsertUserScript) -> Result<UserScriptRecord> {
+        if !is_valid_script_kind(&body.kind) {
+            return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Invalid script kind '{}'",
+                body.kind
+            )));
+        }
+        if self
+            .user_scripts
+            .iter()
+            .any(|e| e.value().name == body.name)
+        {
+            return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Script name '{}' already exists",
+                body.name
+            )));
+        }
+        let id = self.next_script_id.fetch_add(1, Ordering::Relaxed);
+        let now = Utc::now();
+        let record = UserScriptRecord {
+            id,
+            name: body.name.clone(),
+            description: body.description.clone(),
+            kind: body.kind.clone(),
+            body: body.body.clone(),
+            created_at: now,
+            updated_at: now,
+        };
+        self.user_scripts.insert(id, record.clone());
+        Ok(record)
+    }
+
+    async fn update_user_script(
+        &self,
+        id: i64,
+        body: &UpsertUserScript,
+    ) -> Result<UserScriptRecord> {
+        if !is_valid_script_kind(&body.kind) {
+            return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Invalid script kind '{}'",
+                body.kind
+            )));
+        }
+        if self
+            .user_scripts
+            .iter()
+            .any(|e| *e.key() != id && e.value().name == body.name)
+        {
+            return Err(queryflux_core::error::QueryFluxError::Persistence(format!(
+                "Script name '{}' already exists",
+                body.name
+            )));
+        }
+        let out = {
+            let mut rm = self.user_scripts.get_mut(&id).ok_or_else(|| {
+                queryflux_core::error::QueryFluxError::Persistence(format!(
+                    "user script id {id} not found"
+                ))
+            })?;
+            let r = rm.value_mut();
+            r.name = body.name.clone();
+            r.description = body.description.clone();
+            r.kind = body.kind.clone();
+            r.body = body.body.clone();
+            r.updated_at = Utc::now();
+            r.clone()
+        };
+        Ok(out)
+    }
+
+    async fn delete_user_script(&self, id: i64) -> Result<bool> {
+        for mut e in self.group_configs.iter_mut() {
+            e.value_mut().translation_script_ids.retain(|s| *s != id);
+        }
+        Ok(self.user_scripts.remove(&id).is_some())
     }
 }
 

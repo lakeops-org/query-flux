@@ -6,10 +6,10 @@ license.workspace = true
 
 [dependencies]
 queryflux-core = { workspace = true }
+queryflux-auth = { workspace = true }
 async-trait = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
-regex = { workspace = true }
+regex = "1.12.3"
 pyo3 = { workspace = true }
 tracing = { workspace = true }

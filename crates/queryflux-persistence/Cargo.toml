@@ -7,11 +7,9 @@ license.workspace = true
 [dependencies]
 queryflux-core = { workspace = true }
 async-trait = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 dashmap = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }
 chrono = { workspace = true }
 utoipa = { workspace = true }

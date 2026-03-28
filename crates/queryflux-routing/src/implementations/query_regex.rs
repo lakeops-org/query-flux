@@ -47,6 +47,7 @@ impl RouterTrait for QueryRegexRouter {
         sql: &str,
         _session: &SessionContext,
         _frontend_protocol: &FrontendProtocol,
+        _auth_ctx: Option<&queryflux_auth::AuthContext>,
     ) -> Result<Option<ClusterGroupName>> {
         for (re, group) in &self.rules {
             if re.is_match(sql) {

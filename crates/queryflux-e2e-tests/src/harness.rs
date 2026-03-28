@@ -1,27 +1,24 @@
-/// Test harness that spins up a QueryFlux Trino HTTP server in-process on a
-/// random port, with DuckDB always available and Trino/StarRocks/Lakekeeper
-/// optional.
+/// Test harness: in-process QueryFlux Trino HTTP server on a random port.
 ///
-/// External engines are discovered via environment variables:
-///   TRINO_URL       — e.g. http://localhost:18081  (default if services are running)
-///   STARROCKS_URL   — e.g. mysql://root@localhost:19030
-///   LAKEKEEPER_URL  — e.g. http://localhost:18181  (REST catalog)
-///   MINIO_ENDPOINT  — e.g. localhost:19000          (for DuckDB S3 secret)
+/// Backends are optional and discovered via connectivity / env:
+///   TRINO_URL         — default http://localhost:18081
+///   STARROCKS_URL     — default mysql://root@localhost:19030
 ///
-/// If a variable is absent the group is omitted and tests that need it are skipped.
+/// Lakekeeper / Iceberg (optional):
+///   LAKEKEEPER_URL, MINIO_ENDPOINT — StarRocks external catalog DDL only.
 ///
-/// Iceberg catalog setup per engine:
-///   Trino     — the data-loader container (docker-compose) already ran
-///               CREATE CATALOG lakekeeper USING iceberg; no harness action needed.
-///   StarRocks — CREATE EXTERNAL CATALOG lakekeeper PROPERTIES (...) via MySQL wire.
-///   DuckDB    — INSTALL iceberg; LOAD iceberg; CREATE SECRET; ATTACH via execute_batch.
+/// At least one of Trino or StarRocks must be reachable or [`TestHarness::new`] fails.
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use axum::Router;
+use queryflux_auth::{
+    AllowAllAuthorization, AuthProvider, AuthorizationChecker, BackendIdentityResolver,
+    NoneAuthProvider,
+};
 use queryflux_cluster_manager::{
     cluster_state::ClusterState, simple::SimpleClusterGroupManager, strategy::strategy_from_config,
 };
@@ -30,18 +27,17 @@ use queryflux_core::{
     query::{ClusterGroupName, ClusterName, EngineType},
 };
 use queryflux_engine_adapters::{
-    duckdb::DuckDbAdapter, starrocks::StarRocksAdapter, trino::TrinoAdapter, EngineAdapterTrait,
+    starrocks::StarRocksAdapter, trino::TrinoAdapter, EngineAdapterTrait,
 };
-use queryflux_frontend::trino_http::{state::AppState, TrinoHttpFrontend};
+use queryflux_frontend::{
+    state::LiveConfig,
+    trino_http::{state::AppState, TrinoHttpFrontend},
+};
 use queryflux_metrics::{ClusterSnapshot, MetricsStore, QueryRecord};
 use queryflux_persistence::in_memory::InMemoryPersistence;
 use queryflux_routing::{chain::RouterChain, implementations::header::HeaderRouter, RouterTrait};
 use queryflux_translation::TranslationService;
 use tokio::net::TcpListener;
-
-// ---------------------------------------------------------------------------
-// No-op metrics store — discards everything, avoids Prometheus registry issues
-// ---------------------------------------------------------------------------
 
 struct NoOpMetrics;
 
@@ -55,39 +51,22 @@ impl MetricsStore for NoOpMetrics {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Group name constants used by tests
-// ---------------------------------------------------------------------------
-
-pub const GROUP_DUCKDB: &str = "duckdb";
 pub const GROUP_TRINO: &str = "trino";
 pub const GROUP_STARROCKS: &str = "starrocks";
-/// Available when Lakekeeper is reachable AND the shared Iceberg catalog has
-/// been set up in at least one engine. Tests that also need a specific engine
-/// should combine: require_group!(GROUP_LAKEKEEPER) + require_group!(GROUP_TRINO).
+/// Set when Lakekeeper port is reachable (Iceberg tables seeded by e2e tests via Trino).
 pub const GROUP_LAKEKEEPER: &str = "lakekeeper";
 
-// ---------------------------------------------------------------------------
-// TestHarness
-// ---------------------------------------------------------------------------
-
-/// A running QueryFlux Trino HTTP server bound to a random port.
 pub struct TestHarness {
-    /// Bound port — use `base_url()` to get the full URL.
     pub port: u16,
-    /// Which groups are available (depends on env / service discovery).
     pub groups: Vec<String>,
-    /// Shutdown signal — dropped when the harness is dropped.
     _shutdown_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 impl TestHarness {
-    /// Build a harness.  Always adds DuckDB.  Adds Trino/StarRocks/Lakekeeper
-    /// when their environment variables are set and connectivity succeeds.
     pub async fn new() -> Result<Self> {
         let _ = tracing_subscriber::fmt()
             .with_env_filter("error")
-            .try_init(); // ignore "already initialised" errors
+            .try_init();
 
         type GroupEntry = (
             Vec<Arc<ClusterState>>,
@@ -96,34 +75,12 @@ impl TestHarness {
         let mut group_states: HashMap<ClusterGroupName, GroupEntry> = HashMap::new();
         let mut adapters: HashMap<String, Arc<dyn EngineAdapterTrait>> = HashMap::new();
         let mut group_members: HashMap<String, Vec<String>> = HashMap::new();
+        let mut group_order: Vec<String> = Vec::new();
         let mut available_groups: Vec<String> = Vec::new();
         let mut routers: Vec<Box<dyn RouterTrait>> = Vec::new();
         let mut header_map: HashMap<String, ClusterGroupName> = HashMap::new();
 
-        // --- DuckDB (always available — embedded, keep concrete type for Iceberg setup) ---
-        let duck_cluster = ClusterName("duckdb-1".to_string());
-        let duck_group = ClusterGroupName(GROUP_DUCKDB.to_string());
-        let duck_adapter = DuckDbAdapter::new(duck_cluster.clone(), duck_group.clone(), None)
-            .expect("Failed to create in-memory DuckDB adapter");
-        {
-            let state = Arc::new(ClusterState::new(
-                duck_cluster.clone(),
-                duck_group.clone(),
-                EngineType::DuckDb,
-                None,
-                8,
-                true,
-            ));
-            group_states.insert(
-                duck_group.clone(),
-                (vec![state], strategy_from_config(None)),
-            );
-            group_members.insert(GROUP_DUCKDB.to_string(), vec![duck_cluster.0.clone()]);
-            available_groups.push(GROUP_DUCKDB.to_string());
-            header_map.insert(GROUP_DUCKDB.to_string(), duck_group.clone());
-        }
-
-        // --- Trino (optional — needs TRINO_URL or default test port reachable) ---
+        // --- Trino ---
         let trino_url =
             std::env::var("TRINO_URL").unwrap_or_else(|_| "http://localhost:18081".to_string());
         let trino_available = is_trino_ready(&trino_url).await;
@@ -133,6 +90,8 @@ impl TestHarness {
             let state = Arc::new(ClusterState::new(
                 cluster.clone(),
                 group.clone(),
+                None,
+                None,
                 EngineType::Trino,
                 Some(trino_url.clone()),
                 20,
@@ -148,14 +107,15 @@ impl TestHarness {
 
             group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
             group_members.insert(GROUP_TRINO.to_string(), vec![cluster.0.clone()]);
+            group_order.push(GROUP_TRINO.to_string());
             adapters.insert(cluster.0.clone(), adapter);
             available_groups.push(GROUP_TRINO.to_string());
             header_map.insert(GROUP_TRINO.to_string(), group);
         }
 
-        // --- StarRocks (optional — keep concrete type for Iceberg setup) ---
+        // --- StarRocks ---
         let sr_url = std::env::var("STARROCKS_URL")
-            .unwrap_or_else(|_| "mysql://root@localhost:19030".to_string());
+            .unwrap_or_else(|_| "mysql://root@localhost:9030".to_string());
         let sr_available = is_starrocks_ready(&sr_url).await;
         let sr_adapter = if sr_available {
             let group = ClusterGroupName(GROUP_STARROCKS.to_string());
@@ -163,6 +123,8 @@ impl TestHarness {
             let state = Arc::new(ClusterState::new(
                 cluster.clone(),
                 group.clone(),
+                None,
+                None,
                 EngineType::StarRocks,
                 Some(sr_url.clone()),
                 8,
@@ -170,11 +132,12 @@ impl TestHarness {
             ));
             let adapter = Arc::new(
                 StarRocksAdapter::new(cluster.clone(), group.clone(), sr_url, None)
-                    .expect("Failed to create StarRocks adapter"),
+                    .map_err(|e| anyhow!("StarRocks adapter: {e}"))?,
             );
 
             group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
             group_members.insert(GROUP_STARROCKS.to_string(), vec![cluster.0.clone()]);
+            group_order.push(GROUP_STARROCKS.to_string());
             available_groups.push(GROUP_STARROCKS.to_string());
             header_map.insert(GROUP_STARROCKS.to_string(), group);
             Some((cluster, adapter))
@@ -182,31 +145,10 @@ impl TestHarness {
             None
         };
 
-        // --- Lakekeeper (optional — enables Iceberg tests across all engines) ---
+        // --- Lakekeeper + StarRocks Iceberg catalog ---
         let lakekeeper_url = std::env::var("LAKEKEEPER_URL")
             .unwrap_or_else(|_| "http://localhost:18181".to_string());
-        let minio_endpoint =
-            std::env::var("MINIO_ENDPOINT").unwrap_or_else(|_| "localhost:19000".to_string());
-
         if is_lakekeeper_ready(&lakekeeper_url).await {
-            let catalog_endpoint = format!("{lakekeeper_url}/catalog");
-
-            // DuckDB: install iceberg extension, create S3 secret, attach catalog.
-            // sts-enabled=false in the warehouse so DuckDB uses static credentials.
-            let duck_setup = format!(
-                "INSTALL iceberg; \
-                 LOAD iceberg; \
-                 CREATE OR REPLACE SECRET lakekeeper_minio ( \
-                   TYPE S3, KEY_ID 'minio-root-user', SECRET 'minio-root-password', \
-                   ENDPOINT '{minio_endpoint}', USE_SSL false, URL_STYLE 'path', REGION 'local' \
-                 ); \
-                 ATTACH 'demo' AS lakekeeper ( \
-                   TYPE ICEBERG, ENDPOINT '{catalog_endpoint}', TOKEN '' \
-                 );",
-            );
-            duck_adapter.setup_batch(&duck_setup).await.ok();
-
-            // StarRocks: register external catalog (uses internal Docker addresses).
             if let Some((_, sr)) = &sr_adapter {
                 let sr_setup = "CREATE EXTERNAL CATALOG IF NOT EXISTS lakekeeper \
                      PROPERTIES ( \
@@ -222,59 +164,65 @@ impl TestHarness {
                      )";
                 sr.execute_ddl(sr_setup).await.ok();
             }
-
-            // Trino: the data-loader container already ran CREATE CATALOG lakekeeper.
-            // No harness action needed.
-
             available_groups.push(GROUP_LAKEKEEPER.to_string());
         }
 
-        // Register StarRocks adapter (after Iceberg setup).
         if let Some((cluster, sr)) = sr_adapter {
             adapters.insert(cluster.0.clone(), sr as Arc<dyn EngineAdapterTrait>);
         }
 
-        // Register DuckDB adapter (after Iceberg setup).
-        adapters.insert(
-            duck_cluster.0.clone(),
-            Arc::new(duck_adapter) as Arc<dyn EngineAdapterTrait>,
-        );
+        if group_states.is_empty() {
+            return Err(anyhow!(
+                "No backends reachable. Start docker compose (see docker/docker-compose.test.yml): \
+                 Trino :18081 and/or StarRocks :19030."
+            ));
+        }
 
-        // Router: X-Qf-Group header → cluster group
+        let fallback = pick_fallback_group(&group_order);
+        // Route compatibility:
+        // - `X-Qf-Group` is our internal E2E routing header (legacy tests).
+        // - `X-Trino-Client-Tags` is set by real Trino clients like `trino-rust-client`.
+        //   We route on it so e2e tests can behave like real-world Trino traffic.
+        let header_map_qf = header_map.clone();
         routers.push(Box::new(HeaderRouter::new(
             "x-qf-group".to_string(),
+            header_map_qf,
+        )));
+        routers.push(Box::new(HeaderRouter::new(
+            "x-trino-client-tags".to_string(),
             header_map,
         )));
 
         let cluster_manager = Arc::new(SimpleClusterGroupManager::new(group_states));
-
-        // Translation: disabled in tests (sqlglot may not be available)
         let translation = Arc::new(TranslationService::disabled());
+        let router_chain = RouterChain::new(routers, fallback);
 
-        let router_chain = RouterChain::new(
-            routers,
-            ClusterGroupName(GROUP_DUCKDB.to_string()), // fallback
-        );
-
-        // Bind port 0 (OS assigns a free port), then close before starting axum
-        // (tiny TOCTOU window, acceptable in tests).
         let tmp = TcpListener::bind("127.0.0.1:0").await?;
         let port = tmp.local_addr()?.port();
         drop(tmp);
 
-        let state = Arc::new(AppState {
-            external_address: format!("http://127.0.0.1:{port}"),
+        let live_config = LiveConfig {
+            router_chain,
             cluster_manager,
             adapters,
+            health_check_targets: vec![],
+            cluster_configs: HashMap::new(),
             group_members,
+            group_order,
+            group_translation_scripts: HashMap::new(),
+        };
+        let state = Arc::new(AppState {
+            external_address: format!("http://127.0.0.1:{port}"),
+            live: Arc::new(tokio::sync::RwLock::new(live_config)),
             persistence: Arc::new(InMemoryPersistence::new()),
-            router_chain,
             translation,
             metrics: Arc::new(NoOpMetrics),
+            auth_provider: Arc::new(NoneAuthProvider::new(false)) as Arc<dyn AuthProvider>,
+            authorization: Arc::new(AllowAllAuthorization) as Arc<dyn AuthorizationChecker>,
+            identity_resolver: Arc::new(BackendIdentityResolver::new()),
         });
 
         let router: Router = TrinoHttpFrontend::new(state, port).router();
-
         let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -286,7 +234,6 @@ impl TestHarness {
                 .ok();
         });
 
-        // Give the server a moment to be ready.
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         Ok(Self {
@@ -300,19 +247,20 @@ impl TestHarness {
         format!("http://127.0.0.1:{}", self.port)
     }
 
-    /// Returns true if `group` was configured (engine is reachable).
     pub fn has_group(&self, group: &str) -> bool {
         self.groups.iter().any(|g| g == group)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Connectivity probes
-// ---------------------------------------------------------------------------
+fn pick_fallback_group(group_order: &[String]) -> ClusterGroupName {
+    for preferred in [GROUP_TRINO, GROUP_STARROCKS] {
+        if group_order.iter().any(|g| g == preferred) {
+            return ClusterGroupName(preferred.to_string());
+        }
+    }
+    ClusterGroupName(group_order[0].clone())
+}
 
-/// TCP-only probe — check if a host:port is accepting connections.
-/// One attempt, short timeout. When `docker compose up --wait` has already
-/// guaranteed health, this just confirms the port is reachable from the host.
 async fn port_is_open(host: &str, port: u16) -> bool {
     tokio::time::timeout(
         Duration::from_secs(2),

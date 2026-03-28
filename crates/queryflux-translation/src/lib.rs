@@ -66,35 +66,57 @@ impl TranslatorTrait for PassthroughTranslator {
 ///
 /// Call `maybe_translate` before submitting SQL to a backend engine.
 /// Returns the original SQL unchanged when dialects match (zero overhead).
+///
+/// User-defined Python scripts run after every sqlglot translation. Each script
+/// must define `def transform(ast, src: str, dst: str) -> None:`. Top-level
+/// imports and helper functions are fully supported. Scripts mutate `ast`
+/// in-place.
 pub struct TranslationService {
     enabled: bool,
+    python_scripts: Vec<String>,
 }
 
 impl TranslationService {
-    /// Create a service backed by sqlglot. Verifies sqlglot is importable at startup.
-    pub fn new_sqlglot() -> Result<Self> {
+    /// Create a service backed by sqlglot with optional user fixup scripts.
+    /// Verifies sqlglot is importable at startup.
+    pub fn new_sqlglot(python_scripts: Vec<String>) -> Result<Self> {
         SqlglotTranslator::check_available()?;
-        Ok(Self { enabled: true })
+        Ok(Self {
+            enabled: true,
+            python_scripts,
+        })
     }
 
     /// Create a no-op service (translation disabled).
     pub fn disabled() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            python_scripts: Vec::new(),
+        }
     }
 
     /// Translate `sql` from `src` to `tgt` if they differ.
     /// Returns the original SQL unchanged when dialects match or translation is disabled.
+    ///
+    /// `group_fixups` are appended after global YAML `translation.pythonScripts` (same contract).
     pub async fn maybe_translate(
         &self,
         sql: &str,
         src: &SqlDialect,
         tgt: &SqlDialect,
         schema: &SchemaContext,
+        group_fixups: &[String],
     ) -> Result<String> {
-        if !self.enabled || src.is_compatible_with(tgt) {
+        if !self.enabled {
             return Ok(sql.to_string());
         }
-        let translator = SqlglotTranslator::new(src.clone(), tgt.clone());
+        let mut combined = self.python_scripts.clone();
+        combined.extend_from_slice(group_fixups);
+        // Skip sqlglot when dialects are compatible AND no fixup scripts need to run.
+        if src.is_compatible_with(tgt) && combined.is_empty() {
+            return Ok(sql.to_string());
+        }
+        let translator = SqlglotTranslator::new(src.clone(), tgt.clone(), combined);
         translator.translate(sql, schema).await
     }
 }

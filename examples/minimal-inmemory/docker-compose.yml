@@ -1,0 +1,49 @@
+# Trino + QueryFlux + Studio. No Postgres — persistence.type inMemory in config.yaml.
+#
+# From this directory:
+#   docker compose up -d --wait
+#
+# SQL via QueryFlux (Trino protocol): http://localhost:8080 · Trino direct: http://localhost:8081
+# Studio http://localhost:3000 · Admin http://localhost:9000
+#
+# Same host ports as examples/minimal — stop that stack before starting this one.
+
+name: queryflux-example-minimal-inmemory
+
+services:
+  trino:
+    image: trinodb/trino:latest
+    environment:
+      - CATALOG_MANAGEMENT=dynamic
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  queryflux:
+    image: 343959804465.dkr.ecr.us-east-1.amazonaws.com/queryflux:latest
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    volumes:
+      - ./config.yaml:/etc/queryflux/config.yaml:ro
+    environment:
+      RUST_LOG: ${RUST_LOG:-queryflux=info,queryflux_frontend=info}
+    depends_on:
+      trino:
+        condition: service_healthy
+    restart: unless-stopped
+
+  queryflux-studio:
+    image: 343959804465.dkr.ecr.us-east-1.amazonaws.com/queryflux-studio:latest
+    ports:
+      - "3000:3000"
+    environment:
+      ADMIN_API_URL: http://queryflux:9000
+    depends_on:
+      - queryflux
+    restart: unless-stopped

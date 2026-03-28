@@ -34,9 +34,55 @@ Configured under `routers:` in YAML (`queryflux_core::config::RouterConfig`). Wi
 | `header` | Matches a header value to a group (useful for Trino HTTP and similar). |
 | `queryRegex` | Ordered rules: first regex match on the SQL text wins. |
 | `clientTags` | Trino-style client tags header mapped to groups. |
-| `pythonScript` | Embedded or file-backed Python `route(sql, user, protocol)` returning a group name or `None`. |
+| `pythonScript` | Embedded or file-backed Python `route(query, ctx)` returning a group name or `None`. See [Python script router](#python-script-router-pythonscript) below. |
 
 All five router types are implemented. Unknown `type` values in config are skipped at startup with a warning.
+
+## Cached routing config and DB reload (Postgres)
+
+When **`persistence.type`** is **`postgres`**, routing rules and cluster/group definitions loaded from the database are held in memory inside **`LiveConfig`** (including the compiled **`RouterChain`**). Each request reads the current chain from that shared snapshot (`Arc<tokio::sync::RwLock<LiveConfig>>` in `queryflux-frontend`).
+
+- **Periodic refresh:** `queryflux.configReloadIntervalSecs` in YAML (default **30** when omitted) controls how often a background task re-reads Postgres and replaces **`LiveConfig`** in one atomic swap. Implementation: `crates/queryflux/src/main.rs` (reload task) and `reload_live_config` → `load_routing_config`.
+- **`0` disables polling only:** With **`configReloadIntervalSecs: 0`**, there is no timer-driven refresh; the in-memory config stays as loaded at startup until an **immediate refresh** runs (below).
+- **Immediate refresh:** After Studio/admin API writes to routing, clusters, or groups, the proxy **notifies** the same task so a reload runs without waiting for the interval (`config_reload_notify` in `admin.rs`).
+- **YAML-only mode:** With **`inMemory`** persistence there is no DB reload loop; routing comes from the process config at startup until restart.
+
+## Python script router (`pythonScript`)
+
+The script must define:
+
+```python
+def route(query: str, ctx: dict) -> str | None:
+    ...
+```
+
+- **`query`**: SQL text (the same string the router chain sees).
+- **`ctx`**: plain `dict` built by QueryFlux (string keys). **`protocol`** is always set; other keys depend on the frontend and session shape.
+
+| Key | When | Meaning |
+|-----|------|---------|
+| `protocol` | Always | One of `trinoHttp`, `postgresWire`, `mysqlWire`, `clickHouseHttp`, `flightSql` (camelCase, matching config / API). |
+| `headers` | Always | `dict[str, str]`. Client headers for HTTP-style frontends (Trino HTTP uses lowercase keys as stored by the proxy, e.g. `x-trino-user`). Empty `{}` for Postgres and MySQL wire. |
+| `database`, `user` | Postgres wire | From startup / auth; each may be Python `None`. |
+| `sessionParams` | Postgres wire | `dict[str, str]` (parameters from `SET`). |
+| `schema`, `user` | MySQL wire | Current schema and user; may be `None`. |
+| `sessionVars` | MySQL wire | `dict[str, str]` (`SET SESSION`). |
+| `queryParams` | ClickHouse HTTP | URL query string parameters (e.g. `?database=…`). |
+| `auth` | When the request was authenticated | `{"user": str, "groups": [str, …], "roles": [str, …]}`. Raw JWT / bearer tokens are **not** passed into Python. |
+
+**Flight SQL** reports `protocol: "flightSql"` but **`SessionContext` is still Trino-style**: `headers` are built from gRPC metadata (see `queryflux-frontend` Flight SQL service).
+
+**Example (Trino HTTP):**
+
+```python
+def route(query: str, ctx: dict) -> str | None:
+    if ctx.get("protocol") != "trinoHttp":
+        return None
+    user = (ctx.get("headers") or {}).get("x-trino-user")
+    if user == "batch":
+        return "heavy-trino"
+    return None
+```
 
 ## Routing trace
 

@@ -33,7 +33,7 @@ Adjust `PYTHONPATH` if your venv’s `lib/pythonX.Y` differs.
 | Format (if you use rustfmt manually) | `cargo fmt --all` |
 | Lint + unit tests (no Docker) | `make check` |
 | Release build | `make build` |
-| E2E tests (Docker + Trino/StarRocks stack) | `make test-e2e` |
+| E2E tests (Docker: Trino, StarRocks, Lakekeeper) | `make test-e2e` |
 | Start backing services (Docker) | `make dev` |
 | Stop Docker stack | `make stop` |
 | Follow container logs | `make logs` |
@@ -80,6 +80,6 @@ Authoritative shapes are the serde types in `queryflux-core` (`config.rs`) and w
 
 - **PyO3 / Python not found:** Set `PYO3_PYTHON` to the venv’s `python3` and ensure `make setup` completed.
 - **Port conflicts:** Adjust ports in `docker/docker-compose.yml` or disable conflicting local services.
-- **E2E failures:** Ensure `docker/docker-compose.test.yml` services are up and healthy before the test run; see `make test-e2e` in the `Makefile`.
+- **E2E failures:** Bring up `docker/docker-compose.test.yml` (Trino, StarRocks, Iceberg stack); see `make test-e2e`.
 
 For contribution expectations (PRs, tests, docs), see [contribute.md](contribute.md).

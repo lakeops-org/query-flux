@@ -17,6 +17,7 @@ services:
       retries: 15
       start_period: 30s
 
+ 
   starrocks:
     image: starrocks/allin1-ubuntu:latest
     ports:
@@ -165,7 +166,7 @@ services:
         --data @/config/create-warehouse.json;
         exit 0
     volumes:
-      - ./test-data/create-warehouse.json:/config/create-warehouse.json
+      - ./docker/fixtures/create-warehouse.json:/config/create-warehouse.json
 
   # Stays running after all init containers finish so `up --wait` has a stable
   # healthy service to watch instead of the one-shot containers.
@@ -188,10 +189,16 @@ services:
   data-loader:
     image: trinodb/trino:476
     profiles: ["loader"]
+    environment:
+      TPCH_SCALE: ${TPCH_SCALE:-tiny}
     entrypoint: ["/bin/bash", "-c"]
-    command: ["trino --server http://trino:8080 --user loader --file /test-data/init.sql"]
+    command:
+      - |
+        set -euo pipefail
+        sed "s/FROM tpch\\.tiny\\./FROM tpch.$${TPCH_SCALE}./g" /test-data/init.sql > /tmp/init.run.sql
+        exec trino --server http://trino:8080 --user loader --file /tmp/init.run.sql
     volumes:
-      - ./test-data/init.sql:/test-data/init.sql
+      - ./docker/fixtures/init.sql:/test-data/init.sql:ro
 
   # Register the Lakekeeper Iceberg external catalog in StarRocks.
   # Run separately: `docker compose run --rm -T starrocks-catalog-setup`
@@ -201,7 +208,7 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command: ["mysql -h starrocks -P 9030 -u root --connect-timeout=30 < /setup/starrocks-setup.sql"]
     volumes:
-      - ./test-data/starrocks-setup.sql:/setup/starrocks-setup.sql
+      - ./docker/fixtures/starrocks-setup.sql:/setup/starrocks-setup.sql
 
   # ---------------------------------------------------------------------------
   # Observability

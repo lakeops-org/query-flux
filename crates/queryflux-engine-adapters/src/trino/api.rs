@@ -1,5 +1,15 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+
+/// Deserialize `null` or a missing optional wrapper as `T::default()` (see `TrinoError.failure_info`).
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::<T>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
 
 /// Trino's query response JSON structure.
 /// We only parse the fields we need; everything else passes through as raw JSON.
@@ -23,7 +33,8 @@ pub struct TrinoResponse {
     pub update_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update_count: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    // `trino-rust-client` expects `warnings` to always be present.
+    #[serde(default)]
     pub warnings: Vec<Value>,
 }
 
@@ -48,6 +59,9 @@ pub struct TrinoStats {
     pub queued: bool,
     #[serde(default)]
     pub scheduled: bool,
+    /// Trino's query `nodes` count (required by `trino-rust-client`).
+    #[serde(default)]
+    pub nodes: u32,
     #[serde(default)]
     pub running_drivers: u32,
     #[serde(default)]
@@ -73,11 +87,49 @@ pub struct TrinoStats {
     #[serde(default)]
     pub physical_input_bytes: u64,
     #[serde(default)]
-    pub peak_user_memory_bytes: u64,
+    pub peak_memory_bytes: u64,
     #[serde(default)]
     pub spilled_bytes: u64,
     #[serde(default)]
     pub progress_percentage: Option<f32>,
+}
+
+/// Subset of Trino's `failureInfo` JSON; shape matches `trino-rust-client::FailureInfo` for clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrinoFailureInfo {
+    #[serde(rename = "type")]
+    pub ty: String,
+    #[serde(default)]
+    pub suppressed: Vec<TrinoFailureInfo>,
+    #[serde(default)]
+    pub stack: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<Box<TrinoFailureInfo>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_location: Option<TrinoErrorLocation>,
+}
+
+impl Default for TrinoFailureInfo {
+    fn default() -> Self {
+        Self {
+            ty: "io.trino.spi.TrinoException".to_string(),
+            suppressed: vec![],
+            stack: vec![],
+            message: None,
+            cause: None,
+            error_location: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrinoErrorLocation {
+    pub line_number: u32,
+    pub column_number: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +139,8 @@ pub struct TrinoError {
     pub error_code: Option<i32>,
     pub error_name: Option<String>,
     pub error_type: Option<String>,
-    pub failure_info: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
+    pub failure_info: TrinoFailureInfo,
 }
 
 /// Synthetic queued response returned to the client when QueryFlux has no cluster available.
@@ -101,6 +154,7 @@ pub fn queued_response(query_id: &str, elapsed_ms: u64, next_uri: String) -> Tri
             state: "QUEUED".to_string(),
             queued: true,
             scheduled: false,
+            nodes: 0,
             running_drivers: 0,
             completed_splits: 0,
             total_splits: 0,
@@ -109,7 +163,7 @@ pub fn queued_response(query_id: &str, elapsed_ms: u64, next_uri: String) -> Tri
             processed_rows: 0,
             processed_bytes: 0,
             physical_input_bytes: 0,
-            peak_user_memory_bytes: 0,
+            peak_memory_bytes: 0,
             spilled_bytes: 0,
             queued_time_millis: elapsed_ms,
             elapsed_time_millis: elapsed_ms,

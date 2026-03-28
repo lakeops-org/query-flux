@@ -1,0 +1,117 @@
+.features {
+  padding: 3.5rem 0 4.5rem;
+  width: 100%;
+}
+
+.sectionEyebrow {
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, var(--ifm-color-primary) 0%, #f0855a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin: 0 0 0.6rem;
+}
+
+html[data-theme='dark'] .sectionEyebrow {
+  background: linear-gradient(90deg, #f0652f 0%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.sectionHeading {
+  text-align: center;
+  font-size: clamp(1.45rem, 3vw, 1.85rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin: 0 auto 0.75rem;
+  max-width: 36rem;
+  line-height: 1.25;
+  color: var(--ifm-heading-color);
+}
+
+.sectionSub {
+  text-align: center;
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 40rem;
+  margin: 0 auto 2.5rem;
+}
+
+.featureRow {
+  justify-content: center;
+  margin-left: -0.75rem;
+  margin-right: -0.75rem;
+}
+
+.featureRow > [class*='col'] {
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
+.featureCol {
+  margin-bottom: 1.5rem;
+}
+
+.featureCard {
+  height: 100%;
+  padding: 1.5rem 1.35rem 1.6rem;
+  border-radius: 12px;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-background-surface-color);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.25s ease;
+}
+
+.featureCard:hover {
+  border-color: rgba(217, 74, 31, 0.35);
+  box-shadow: 0 12px 36px rgba(217, 74, 31, 0.1);
+}
+
+.featureTitle {
+  font-size: 1.12rem;
+  font-weight: 650;
+  margin: 0 0 0.65rem;
+  letter-spacing: -0.02em;
+  color: var(--ifm-heading-color);
+}
+
+.featureBody {
+  margin: 0;
+  font-size: 0.98rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+}
+
+html[data-theme='dark'] .featureCard {
+  border-color: rgba(34, 211, 238, 0.12);
+  background: linear-gradient(165deg, rgba(21, 27, 46, 0.95) 0%, rgba(11, 14, 20, 0.98) 100%);
+  box-shadow:
+    0 1px 0 rgba(240, 101, 47, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+html[data-theme='dark'] .featureCard:hover {
+  border-color: rgba(34, 211, 238, 0.38);
+  box-shadow:
+    0 0 0 1px rgba(240, 101, 47, 0.12),
+    0 16px 40px rgba(0, 0, 0, 0.35),
+    0 0 32px rgba(34, 211, 238, 0.06);
+}
+
+@media screen and (max-width: 996px) {
+  .features {
+    padding: 2.5rem 0 3.5rem;
+  }
+
+  .featureCard {
+    text-align: center;
+  }
+}

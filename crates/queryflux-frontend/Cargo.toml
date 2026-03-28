@@ -9,12 +9,12 @@ queryflux-core = { workspace = true }
 queryflux-engine-adapters = { workspace = true }
 queryflux-cluster-manager = { workspace = true }
 queryflux-routing = { workspace = true }
+queryflux-auth = { workspace = true }
 queryflux-persistence = { workspace = true }
 queryflux-translation = { workspace = true }
 queryflux-metrics = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -24,11 +24,10 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 utoipa = { workspace = true }
-dashmap = { workspace = true }
 arrow = { workspace = true }
 futures = { workspace = true }
 tokio-stream = { workspace = true }
-arrow-flight = { workspace = true }
-arrow-ipc = { workspace = true }
-tonic = { workspace = true }
-prost = { workspace = true }
+arrow-flight = { version = "58.1.0", features = ["flight-sql"] }
+arrow-ipc = "58.1.0"
+tonic = { version = "0.14.5", features = ["transport"] }
+prost = "0.14.3"

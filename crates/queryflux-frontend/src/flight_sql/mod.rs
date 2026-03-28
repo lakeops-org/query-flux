@@ -34,6 +34,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info};
 
+use queryflux_auth::Credentials;
 use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{FrontendProtocol, QueryStats},
@@ -163,12 +164,32 @@ impl FlightSqlService for QueryFluxFlightSql {
         let session = self.session_from_request(&request);
         let protocol = FrontendProtocol::FlightSql;
 
-        let (group, _trace) = self
+        // Authenticate — extract bearer token from gRPC metadata (Phase 1: NoneAuthProvider).
+        let bearer = request
+            .metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|t| t.to_string());
+        let creds = Credentials {
+            username: session.user().map(|s| s.to_string()),
+            bearer_token: bearer,
+            ..Default::default()
+        };
+        let auth_ctx = self
             .state
-            .router_chain
-            .route_with_trace(&sql, &session, &protocol)
+            .auth_provider
+            .authenticate(&creds)
             .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| Status::unauthenticated(e.to_string()))?;
+
+        let routing_result = {
+            let live = self.state.live.read().await;
+            live.router_chain
+                .route_with_trace(&sql, &session, &protocol, Some(&auth_ctx))
+                .await
+        };
+        let (group, _trace) = routing_result.map_err(|e| Status::internal(e.to_string()))?;
 
         // Channel: sink sends RecordBatches; FlightDataEncoderBuilder encodes them.
         let (tx, rx) =
@@ -179,7 +200,10 @@ impl FlightSqlService for QueryFluxFlightSql {
         let sql2 = sql.clone();
 
         tokio::spawn(async move {
-            let _ = execute_to_sink(&state2, sql2, session, protocol, group, &mut sink).await;
+            let _ = execute_to_sink(
+                &state2, sql2, session, protocol, group, &mut sink, &auth_ctx,
+            )
+            .await;
             // sink drops here → tx closes → rx stream ends
         });
 

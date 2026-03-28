@@ -2,9 +2,7 @@
 
 QueryFlux is a universal SQL query proxy and router. It accepts queries from clients over multiple protocols (Trino HTTP, PostgreSQL wire, MySQL wire, Arrow Flight SQL), routes them to the appropriate backend engine, optionally translates the SQL dialect, and streams results back in the client's native format.
 
-Inspired by [trino-lb](https://github.com/stackabletech/trino-lb), generalized to support multiple engines and protocols.
-
-**More documentation:** [docs/README.md](README.md) indexes deeper topics — [motivation-and-goals.md](motivation-and-goals.md) (why the project exists), [query-translation.md](query-translation.md) (sqlglot and dialects), [routing-and-clusters.md](routing-and-clusters.md) (routers, groups, load balancing), [observability.md](observability.md) (Prometheus, Grafana, Studio, Admin API).
+**More documentation:** [docs/README.md](README.md) indexes deeper topics — [motivation-and-goals.md](motivation-and-goals.md) (why the project exists), [query-translation.md](query-translation.md) (sqlglot and dialects), [routing-and-clusters.md](routing-and-clusters.md) (routers, groups, load balancing), [observability.md](observability.md) (Prometheus, Grafana, Studio, Admin API), [adding-engine-support.md](adding-engine-support.md) (new engines, Studio, and client protocols).
 
 ---
 
@@ -187,7 +185,7 @@ pub trait RouterTrait: Send + Sync {
 | `header` | HTTP header value (Trino HTTP only) |
 | `queryRegex` | Regex patterns against SQL text |
 | `clientTags` | Trino `X-Trino-Client-Tags` header |
-| `pythonScript` | Custom Python function (`def route(sql, user, protocol) -> str | None`) |
+| `pythonScript` | Custom Python function (`def route(query, ctx) -> str | None`) — see [routing-and-clusters.md](routing-and-clusters.md#python-script-router-pythonscript) |
 
 ### Persistence
 
@@ -284,8 +282,8 @@ routers:
 
   - type: pythonScript
     script: |
-      def route(sql, user, protocol):
-          if "big_table" in sql:
+      def route(query, ctx):
+          if "big_table" in query:
               return "trino-default"
           return None
 

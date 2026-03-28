@@ -1,13 +1,17 @@
-//! Static engine registry — describes every query engine QueryFlux can proxy.
+//! Engine registry — types and runtime registry for backend engine descriptors.
+//!
+//! Core defines only the *types* and the `EngineRegistry` container.
+//! The actual descriptor data lives in each engine adapter crate, which calls
+//! `EngineRegistry::new(descriptors)` at startup (in `main.rs`).
 //!
 //! Used for:
 //! - Startup validation of `ClusterConfig` (missing endpoint, unsupported auth, …)
 //! - Admin API `/admin/engine-registry` so the UI can render forms without hard-coded logic
-//! - Future: config wizard / validation in Studio
 
 use serde::Serialize;
 
 use crate::config::{ClusterAuth, ClusterConfig, EngineConfig};
+use crate::query::EngineType;
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -17,12 +21,14 @@ use crate::config::{ClusterAuth, ClusterConfig, EngineConfig};
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ConnectionType {
-    /// REST/HTTP — Trino protocol, ClickHouse HTTP interface
+    /// REST/HTTP — Trino protocol, ClickHouse HTTP interface, DuckDB HTTP server
     Http,
     /// MySQL wire protocol — StarRocks front-end
     MySqlWire,
     /// In-process embedded library — DuckDB (no network endpoint)
     Embedded,
+    /// SDK or cloud-managed — endpoint is implicit (e.g. Athena, BigQuery, Databricks)
+    ManagedApi,
 }
 
 /// Authentication mechanisms the engine supports.
@@ -33,6 +39,12 @@ pub enum AuthType {
     Basic,
     /// HTTP Bearer token (`Authorization: Bearer …`)
     Bearer,
+    /// RSA key-pair (Snowflake, Databricks).
+    KeyPair,
+    /// AWS static access key (Athena and other AWS backends).
+    AccessKey,
+    /// AWS IAM role assumption via STS `AssumeRole` (Athena).
+    RoleArn,
 }
 
 /// Describes a single configuration field that can appear on a `ClusterConfig`.
@@ -70,6 +82,9 @@ pub enum FieldType {
 }
 
 /// Full descriptor for one supported backend engine.
+///
+/// Each implemented adapter provides this via its own `descriptor()` method.
+/// Core never hard-codes descriptor data.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineDescriptor {
@@ -90,232 +105,55 @@ pub struct EngineDescriptor {
     /// Auth mechanisms this engine supports.
     pub supported_auth: Vec<AuthType>,
     /// Ordered list of config fields relevant to this engine.
-    /// Used by the UI to render a typed form and by validation to emit
-    /// helpful error messages.
     pub config_fields: Vec<ConfigField>,
     /// Whether a full adapter is implemented in this build.
-    /// `false` = defined in the config model but adapter is a stub / TODO.
     pub implemented: bool,
+}
+
+impl EngineDescriptor {
+    pub fn requires_endpoint(&self) -> bool {
+        matches!(
+            self.connection_type,
+            ConnectionType::Http | ConnectionType::MySqlWire
+        )
+    }
+
+    pub fn supports_tls(&self) -> bool {
+        self.connection_type == ConnectionType::Http
+    }
+
+    pub fn supports_database_path(&self) -> bool {
+        self.connection_type == ConnectionType::Embedded
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
-/// Returns all engine descriptors.
-pub fn engine_descriptors() -> Vec<EngineDescriptor> {
-    vec![
-        // ── Trino ────────────────────────────────────────────────────────────
-        EngineDescriptor {
-            engine_key: "trino",
-            display_name: "Trino",
-            description: "Distributed SQL query engine using the Trino REST protocol (async submit/poll).",
-            hex: "DD00A1",
-            connection_type: ConnectionType::Http,
-            default_port: Some(8080),
-            endpoint_example: Some("http://trino-host:8080"),
-            supported_auth: vec![AuthType::Basic, AuthType::Bearer],
-            implemented: true,
-            config_fields: vec![
-                ConfigField {
-                    key: "endpoint",
-                    label: "Endpoint",
-                    description: "HTTP(S) base URL of the Trino coordinator.",
-                    field_type: FieldType::Url,
-                    required: true,
-                    example: Some("http://trino-coordinator:8080"),
-                },
-                ConfigField {
-                    key: "auth.type",
-                    label: "Auth type",
-                    description: "Authentication mechanism. Choose 'basic' for username/password or 'bearer' for a JWT/OAuth2 token.",
-                    field_type: FieldType::Text,
-                    required: false,
-                    example: Some("basic"),
-                },
-                ConfigField {
-                    key: "auth.username",
-                    label: "Username",
-                    description: "Basic auth username (required when auth.type = basic).",
-                    field_type: FieldType::Text,
-                    required: false,
-                    example: Some("admin"),
-                },
-                ConfigField {
-                    key: "auth.password",
-                    label: "Password",
-                    description: "Basic auth password.",
-                    field_type: FieldType::Secret,
-                    required: false,
-                    example: None,
-                },
-                ConfigField {
-                    key: "auth.token",
-                    label: "Bearer token",
-                    description: "JWT or OAuth2 bearer token (required when auth.type = bearer).",
-                    field_type: FieldType::Secret,
-                    required: false,
-                    example: None,
-                },
-                ConfigField {
-                    key: "tls.insecureSkipVerify",
-                    label: "Skip TLS verification",
-                    description: "Disable TLS certificate verification. Use only in development.",
-                    field_type: FieldType::Boolean,
-                    required: false,
-                    example: Some("false"),
-                },
-            ],
-        },
-
-        // ── DuckDB ───────────────────────────────────────────────────────────
-        EngineDescriptor {
-            engine_key: "duckDb",
-            display_name: "DuckDB",
-            description: "Embedded in-process OLAP database. No network endpoint required.",
-            hex: "FCC021",
-            connection_type: ConnectionType::Embedded,
-            default_port: None,
-            endpoint_example: None,
-            supported_auth: vec![],
-            implemented: true,
-            config_fields: vec![
-                ConfigField {
-                    key: "databasePath",
-                    label: "Database path",
-                    description: "Path to the DuckDB database file. Omit (or leave empty) for an in-memory database.",
-                    field_type: FieldType::Path,
-                    required: false,
-                    example: Some("/data/analytics.duckdb"),
-                },
-            ],
-        },
-
-        // ── StarRocks ────────────────────────────────────────────────────────
-        EngineDescriptor {
-            engine_key: "starRocks",
-            display_name: "StarRocks",
-            description: "High-performance OLAP database. Connects via the MySQL wire protocol.",
-            hex: "EF4444",
-            connection_type: ConnectionType::MySqlWire,
-            default_port: Some(9030),
-            endpoint_example: Some("mysql://starrocks-fe:9030"),
-            supported_auth: vec![AuthType::Basic],
-            implemented: true,
-            config_fields: vec![
-                ConfigField {
-                    key: "endpoint",
-                    label: "Endpoint",
-                    description: "MySQL-protocol connection URL for the StarRocks front-end node.",
-                    field_type: FieldType::Url,
-                    required: true,
-                    example: Some("mysql://starrocks-fe:9030"),
-                },
-                ConfigField {
-                    key: "auth.type",
-                    label: "Auth type",
-                    description: "Must be 'basic' for StarRocks (username + password).",
-                    field_type: FieldType::Text,
-                    required: false,
-                    example: Some("basic"),
-                },
-                ConfigField {
-                    key: "auth.username",
-                    label: "Username",
-                    description: "MySQL username for the StarRocks connection.",
-                    field_type: FieldType::Text,
-                    required: false,
-                    example: Some("root"),
-                },
-                ConfigField {
-                    key: "auth.password",
-                    label: "Password",
-                    description: "MySQL password.",
-                    field_type: FieldType::Secret,
-                    required: false,
-                    example: None,
-                },
-            ],
-        },
-
-        // ── ClickHouse ───────────────────────────────────────────────────────
-        EngineDescriptor {
-            engine_key: "clickHouse",
-            display_name: "ClickHouse",
-            description: "Real-time OLAP database. Connects via the ClickHouse HTTP interface.",
-            hex: "FFCC01",
-            connection_type: ConnectionType::Http,
-            default_port: Some(8123),
-            endpoint_example: Some("http://clickhouse:8123"),
-            supported_auth: vec![AuthType::Basic],
-            implemented: false,
-            config_fields: vec![
-                ConfigField {
-                    key: "endpoint",
-                    label: "Endpoint",
-                    description: "HTTP base URL of the ClickHouse server.",
-                    field_type: FieldType::Url,
-                    required: true,
-                    example: Some("http://clickhouse:8123"),
-                },
-                ConfigField {
-                    key: "auth.type",
-                    label: "Auth type",
-                    description: "Must be 'basic' for ClickHouse (username + password).",
-                    field_type: FieldType::Text,
-                    required: false,
-                    example: Some("basic"),
-                },
-                ConfigField {
-                    key: "auth.username",
-                    label: "Username",
-                    description: "ClickHouse username.",
-                    field_type: FieldType::Text,
-                    required: false,
-                    example: Some("default"),
-                },
-                ConfigField {
-                    key: "auth.password",
-                    label: "Password",
-                    description: "ClickHouse password.",
-                    field_type: FieldType::Secret,
-                    required: false,
-                    example: None,
-                },
-                ConfigField {
-                    key: "tls.insecureSkipVerify",
-                    label: "Skip TLS verification",
-                    description: "Disable TLS certificate verification. Use only in development.",
-                    field_type: FieldType::Boolean,
-                    required: false,
-                    example: Some("false"),
-                },
-            ],
-        },
-    ]
+/// Runtime registry of engine descriptors, built at startup from adapter crates.
+///
+/// Each adapter supplies its own descriptor via `MyAdapter::descriptor()`.
+/// `main.rs` collects them and passes the full list to `EngineRegistry::new`.
+pub struct EngineRegistry {
+    descriptors: Vec<EngineDescriptor>,
 }
 
-/// Returns the descriptor for a given engine config variant.
-pub fn descriptor_for(engine: &EngineConfig) -> Option<&'static EngineDescriptor> {
-    let key = engine_key(engine);
-    // Walk the registry each time — the list is tiny (4 entries).
-    // We leak once so we can return a &'static reference without a global lazy.
-    all_descriptors().iter().find(|d| d.engine_key == key)
-}
-
-fn engine_key(engine: &EngineConfig) -> &'static str {
-    match engine {
-        EngineConfig::Trino => "trino",
-        EngineConfig::DuckDb => "duckDb",
-        EngineConfig::StarRocks => "starRocks",
-        EngineConfig::ClickHouse => "clickHouse",
+impl EngineRegistry {
+    pub fn new(descriptors: Vec<EngineDescriptor>) -> Self {
+        Self { descriptors }
     }
-}
 
-fn all_descriptors() -> &'static Vec<EngineDescriptor> {
-    use std::sync::OnceLock;
-    static REGISTRY: OnceLock<Vec<EngineDescriptor>> = OnceLock::new();
-    REGISTRY.get_or_init(engine_descriptors)
+    /// All registered descriptors (for the admin API list endpoint).
+    pub fn all(&self) -> &[EngineDescriptor] {
+        &self.descriptors
+    }
+
+    /// Look up the descriptor for a given engine config variant.
+    pub fn descriptor_for(&self, engine: &EngineConfig) -> Option<&EngineDescriptor> {
+        let key = engine_key(engine);
+        self.descriptors.iter().find(|d| d.engine_key == key)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -324,14 +162,18 @@ fn all_descriptors() -> &'static Vec<EngineDescriptor> {
 
 /// Validates a single cluster's configuration against the engine registry.
 /// Returns a list of human-readable error messages; empty = valid.
-pub fn validate_cluster_config(cluster_name: &str, config: &ClusterConfig) -> Vec<String> {
+pub fn validate_cluster_config(
+    registry: &EngineRegistry,
+    cluster_name: &str,
+    config: &ClusterConfig,
+) -> Vec<String> {
     let Some(engine) = &config.engine else {
         return vec![format!(
             "cluster '{cluster_name}': missing required 'engine' field"
         )];
     };
 
-    let Some(desc) = descriptor_for(engine) else {
+    let Some(desc) = registry.descriptor_for(engine) else {
         return vec![format!(
             "cluster '{cluster_name}': unknown engine '{}'",
             engine_key(engine)
@@ -357,7 +199,7 @@ pub fn validate_cluster_config(cluster_name: &str, config: &ClusterConfig) -> Ve
 
     if !desc.supports_database_path() && config.database_path.is_some() {
         errors.push(format!(
-            "cluster '{cluster_name}': 'databasePath' is only applicable to DuckDB, not '{}'",
+            "cluster '{cluster_name}': 'databasePath' is only applicable to embedded DuckDB, not '{}'",
             desc.display_name
         ));
     }
@@ -373,11 +215,17 @@ pub fn validate_cluster_config(cluster_name: &str, config: &ClusterConfig) -> Ve
         let has_auth_type = match auth {
             ClusterAuth::Basic { .. } => desc.supported_auth.contains(&AuthType::Basic),
             ClusterAuth::Bearer { .. } => desc.supported_auth.contains(&AuthType::Bearer),
+            ClusterAuth::KeyPair { .. } => desc.supported_auth.contains(&AuthType::KeyPair),
+            ClusterAuth::AccessKey { .. } => desc.supported_auth.contains(&AuthType::AccessKey),
+            ClusterAuth::RoleArn { .. } => desc.supported_auth.contains(&AuthType::RoleArn),
         };
         if !has_auth_type {
             let auth_label = match auth {
                 ClusterAuth::Basic { .. } => "basic",
                 ClusterAuth::Bearer { .. } => "bearer",
+                ClusterAuth::KeyPair { .. } => "keyPair",
+                ClusterAuth::AccessKey { .. } => "accessKey",
+                ClusterAuth::RoleArn { .. } => "roleArn",
             };
             errors.push(format!(
                 "cluster '{cluster_name}': engine '{}' does not support '{auth_label}' authentication",
@@ -390,19 +238,44 @@ pub fn validate_cluster_config(cluster_name: &str, config: &ClusterConfig) -> Ve
 }
 
 // ---------------------------------------------------------------------------
-// Convenience helpers on EngineDescriptor
+// Helpers
 // ---------------------------------------------------------------------------
 
-impl EngineDescriptor {
-    pub fn requires_endpoint(&self) -> bool {
-        self.connection_type != ConnectionType::Embedded
+/// Maps an `EngineConfig` variant to its canonical string key.
+/// Must stay in sync with adapter `descriptor().engine_key` values.
+pub fn engine_key(engine: &EngineConfig) -> &'static str {
+    match engine {
+        EngineConfig::Trino => "trino",
+        EngineConfig::DuckDb => "duckDb",
+        EngineConfig::DuckDbHttp => "duckDbHttp",
+        EngineConfig::StarRocks => "starRocks",
+        EngineConfig::ClickHouse => "clickHouse",
+        EngineConfig::Athena => "athena",
     }
+}
 
-    pub fn supports_tls(&self) -> bool {
-        self.connection_type == ConnectionType::Http
+/// Inverse of [`engine_key`]. Used when loading `engine_key` from Postgres / API.
+pub fn parse_engine_key(s: &str) -> Result<EngineConfig, String> {
+    match s {
+        "trino" => Ok(EngineConfig::Trino),
+        "duckDb" => Ok(EngineConfig::DuckDb),
+        "duckDbHttp" => Ok(EngineConfig::DuckDbHttp),
+        "starRocks" => Ok(EngineConfig::StarRocks),
+        "clickHouse" => Ok(EngineConfig::ClickHouse),
+        "athena" => Ok(EngineConfig::Athena),
+        other => Err(format!("Unknown engine key: '{other}'")),
     }
+}
 
-    pub fn supports_database_path(&self) -> bool {
-        self.connection_type == ConnectionType::Embedded
+impl From<&EngineConfig> for EngineType {
+    fn from(cfg: &EngineConfig) -> Self {
+        match cfg {
+            EngineConfig::Trino => EngineType::Trino,
+            EngineConfig::DuckDb => EngineType::DuckDb,
+            EngineConfig::DuckDbHttp => EngineType::DuckDbHttp,
+            EngineConfig::StarRocks => EngineType::StarRocks,
+            EngineConfig::ClickHouse => EngineType::ClickHouse,
+            EngineConfig::Athena => EngineType::Athena,
+        }
     }
 }

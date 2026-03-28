@@ -19,6 +19,10 @@ pub struct QueryRecord {
     pub backend_query_id: Option<String>,
     pub cluster_group: ClusterGroupName,
     pub cluster_name: ClusterName,
+    /// Postgres `cluster_group_configs.id` when config is DB-backed.
+    pub cluster_group_config_id: Option<i64>,
+    /// Postgres `cluster_configs.id` when config is DB-backed.
+    pub cluster_config_id: Option<i64>,
     pub engine_type: EngineType,
     pub frontend_protocol: FrontendProtocol,
     pub source_dialect: SqlDialect,
