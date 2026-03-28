@@ -14,7 +14,7 @@ pub struct SqlglotTranslator {
     source: SqlDialect,
     target: SqlDialect,
     /// User-defined Python scripts executed in order after sqlglot translation.
-    /// Each script must define a `fixup(ast, src, dst, exp)` function.
+    /// Each script must define `def transform(ast, src: str, dst: str) -> None`.
     python_scripts: Vec<String>,
 }
 

@@ -50,7 +50,8 @@ clippy:
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
 ## Run unit/integration tests (no external services needed).
-## PYO3_PYTHON is required because queryflux-routing links against pyo3 (Python script router).
+## PYO3_PYTHON + PYTHONPATH: PyO3 (routing + translation). The venv must include `sqlglot`
+## (`pip install -r requirements.txt` via `make setup`) for `queryflux-translation` transform tests.
 test:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \

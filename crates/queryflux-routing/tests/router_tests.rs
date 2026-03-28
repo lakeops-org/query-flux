@@ -1,7 +1,11 @@
-/// Unit tests for all router implementations and RouterChain.
+/// Unit tests for router implementations (`Header`, `ProtocolBased`, `ClientTags`, `QueryRegex`,
+/// `Compound`, `PythonScript`) and `RouterChain`.
+///
+/// Covers all `FrontendProtocol` variants on `ProtocolBasedRouter`, `CompoundCondition` kinds
+/// (including `Header` on Trino HTTP + ClickHouse HTTP), and chain fallthrough.
 ///
 /// No engine or HTTP server required — pure routing logic.
-/// All tests run with: cargo test -p queryflux-routing
+/// Run: `cargo test -p queryflux-routing`
 use std::collections::HashMap;
 
 use queryflux_auth::AuthContext;
@@ -38,6 +42,24 @@ fn postgres_session() -> SessionContext {
         database: None,
         user: Some("alice".to_string()),
         session_params: HashMap::new(),
+    }
+}
+
+fn mysql_session(user: Option<&str>) -> SessionContext {
+    SessionContext::MySqlWire {
+        schema: None,
+        user: user.map(String::from),
+        session_vars: HashMap::new(),
+    }
+}
+
+fn clickhouse_session(headers: &[(&str, &str)]) -> SessionContext {
+    SessionContext::ClickHouseHttp {
+        headers: headers
+            .iter()
+            .map(|(k, v)| (k.to_lowercase(), (*v).to_string()))
+            .collect(),
+        query_params: HashMap::new(),
     }
 }
 
@@ -170,6 +192,66 @@ async fn protocol_router_unconfigured() {
     assert_eq!(result, None);
 }
 
+#[tokio::test]
+async fn protocol_router_mysql_wire() {
+    let router = ProtocolBasedRouter {
+        trino_http: Some(group("trino-group")),
+        postgres_wire: None,
+        mysql_wire: Some(group("mysql-group")),
+        clickhouse_http: None,
+    };
+    let result = router
+        .route(
+            "SELECT 1",
+            &mysql_session(Some("root")),
+            &FrontendProtocol::MySqlWire,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("mysql-group")));
+}
+
+#[tokio::test]
+async fn protocol_router_clickhouse_http() {
+    let router = ProtocolBasedRouter {
+        trino_http: None,
+        postgres_wire: None,
+        mysql_wire: None,
+        clickhouse_http: Some(group("ch-group")),
+    };
+    let result = router
+        .route(
+            "SELECT 1",
+            &clickhouse_session(&[]),
+            &FrontendProtocol::ClickHouseHttp,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("ch-group")));
+}
+
+#[tokio::test]
+async fn protocol_router_flight_sql_not_routed() {
+    let router = ProtocolBasedRouter {
+        trino_http: Some(group("trino-group")),
+        postgres_wire: Some(group("pg-group")),
+        mysql_wire: Some(group("mysql-group")),
+        clickhouse_http: Some(group("ch-group")),
+    };
+    let result = router
+        .route(
+            "SELECT 1",
+            &trino_session(&[]),
+            &FrontendProtocol::FlightSql,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, None);
+}
+
 // ---------------------------------------------------------------------------
 // ClientTagsRouter
 // ---------------------------------------------------------------------------
@@ -226,6 +308,24 @@ async fn client_tags_absent_header() {
     let session = trino_session(&[]); // no client-tags header
     let result = router
         .route("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
+        .await
+        .unwrap();
+    assert_eq!(result, None);
+}
+
+#[tokio::test]
+async fn client_tags_non_trino_session_returns_none() {
+    let router = ClientTagsRouter::new(HashMap::from([(
+        "premium".to_string(),
+        group("premium-group"),
+    )]));
+    let result = router
+        .route(
+            "SELECT 1",
+            &postgres_session(),
+            &FrontendProtocol::PostgresWire,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(result, None);
@@ -314,6 +414,24 @@ async fn query_regex_invalid_regex_skipped() {
         .await
         .unwrap();
     assert_eq!(result, Some(group("orders-group")));
+}
+
+#[tokio::test]
+async fn query_regex_matches_under_postgres_protocol() {
+    let router = QueryRegexRouter::new(vec![(
+        r"(?i)\bcustomers\b".to_string(),
+        "cust-group".to_string(),
+    )]);
+    let result = router
+        .route(
+            "SELECT * FROM customers",
+            &postgres_session(),
+            &FrontendProtocol::PostgresWire,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("cust-group")));
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +568,191 @@ async fn compound_query_regex_condition() {
     assert_eq!(result, Some(group("lineitem-group")));
 }
 
+#[tokio::test]
+async fn compound_header_condition_trino_http() {
+    let router = CompoundRouter::new(
+        CompoundCombineMode::All,
+        vec![CompoundCondition::Header {
+            header_name: "X-Route-Key".to_string(),
+            header_value: "batch".to_string(),
+        }],
+        "batch-group".to_string(),
+    );
+    let session = trino_session(&[("x-route-key", "batch")]);
+    let result = router
+        .route("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("batch-group")));
+}
+
+#[tokio::test]
+async fn compound_header_condition_clickhouse_http() {
+    let router = CompoundRouter::new(
+        CompoundCombineMode::All,
+        vec![CompoundCondition::Header {
+            header_name: "X-Custom-Route".to_string(),
+            header_value: "olap".to_string(),
+        }],
+        "olap-group".to_string(),
+    );
+    let session = clickhouse_session(&[("x-custom-route", "olap")]);
+    let result = router
+        .route(
+            "SELECT 1",
+            &session,
+            &FrontendProtocol::ClickHouseHttp,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("olap-group")));
+}
+
+#[tokio::test]
+async fn compound_user_matches_mysql_session_user() {
+    let router = CompoundRouter::new(
+        CompoundCombineMode::All,
+        vec![CompoundCondition::User {
+            username: "reporter".to_string(),
+        }],
+        "mysql-users".to_string(),
+    );
+    let result = router
+        .route(
+            "SELECT 1",
+            &mysql_session(Some("reporter")),
+            &FrontendProtocol::MySqlWire,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("mysql-users")));
+}
+
+#[tokio::test]
+async fn compound_user_prefers_auth_context_over_session_header() {
+    let router = CompoundRouter::new(
+        CompoundCombineMode::All,
+        vec![CompoundCondition::User {
+            username: "alice".to_string(),
+        }],
+        "auth-wins".to_string(),
+    );
+    let session = trino_session(&[("x-trino-user", "bob")]);
+    let auth = AuthContext {
+        user: "alice".to_string(),
+        groups: vec![],
+        roles: vec![],
+        raw_token: None,
+    };
+    let result = router
+        .route(
+            "SELECT 1",
+            &session,
+            &FrontendProtocol::TrinoHttp,
+            Some(&auth),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("auth-wins")));
+}
+
+#[tokio::test]
+async fn compound_protocol_mysql_wire() {
+    let router = CompoundRouter::new(
+        CompoundCombineMode::All,
+        vec![CompoundCondition::Protocol {
+            protocol: "mysqlWire".to_string(),
+        }],
+        "mysql-only".to_string(),
+    );
+    let result = router
+        .route(
+            "SELECT 1",
+            &mysql_session(None),
+            &FrontendProtocol::MySqlWire,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("mysql-only")));
+}
+
+#[tokio::test]
+async fn compound_protocol_clickhouse_http() {
+    let router = CompoundRouter::new(
+        CompoundCombineMode::All,
+        vec![CompoundCondition::Protocol {
+            protocol: "clickhouseHttp".to_string(),
+        }],
+        "ch-only".to_string(),
+    );
+    let result = router
+        .route(
+            "SELECT 1",
+            &clickhouse_session(&[]),
+            &FrontendProtocol::ClickHouseHttp,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("ch-only")));
+}
+
+#[tokio::test]
+async fn compound_protocol_flight_sql() {
+    let router = CompoundRouter::new(
+        CompoundCombineMode::All,
+        vec![CompoundCondition::Protocol {
+            protocol: "flightSql".to_string(),
+        }],
+        "flight-only".to_string(),
+    );
+    let result = router
+        .route(
+            "SELECT 1",
+            &postgres_session(),
+            &FrontendProtocol::FlightSql,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("flight-only")));
+}
+
+#[tokio::test]
+async fn compound_empty_conditions_never_matches() {
+    let router = CompoundRouter::new(CompoundCombineMode::All, vec![], "empty-target".to_string());
+    let session = trino_session(&[("x-trino-user", "alice")]);
+    let result = router
+        .route("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
+        .await
+        .unwrap();
+    assert_eq!(result, None);
+}
+
+#[tokio::test]
+async fn compound_only_invalid_regex_conditions_never_matches() {
+    let router = CompoundRouter::new(
+        CompoundCombineMode::All,
+        vec![CompoundCondition::QueryRegex {
+            regex: "[unclosed".to_string(),
+        }],
+        "bad-regex-target".to_string(),
+    );
+    let result = router
+        .route(
+            "SELECT * FROM orders",
+            &trino_session(&[]),
+            &FrontendProtocol::TrinoHttp,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, None);
+}
+
 // ---------------------------------------------------------------------------
 // PythonScriptRouter
 // ---------------------------------------------------------------------------
@@ -498,6 +801,21 @@ def route(query, ctx):
         .await
         .unwrap();
     assert_eq!(out, Some(group("admin-group")));
+}
+
+#[tokio::test]
+async fn python_script_returns_none_passes() {
+    let script = r#"
+def route(query, ctx):
+    return None
+"#;
+    let router = PythonScriptRouter::new(script.to_string());
+    let session = trino_session(&[]);
+    let out = router
+        .route("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
+        .await
+        .unwrap();
+    assert_eq!(out, None);
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +996,34 @@ async fn chain_regex_miss_then_header_match() {
         .await
         .unwrap();
     assert_eq!(result, group("api-group"));
+    assert_eq!(trace.decisions.len(), 2);
+    assert!(!trace.decisions[0].matched);
+    assert!(trace.decisions[1].matched);
+}
+
+#[tokio::test]
+async fn chain_protocol_based_then_header_fallback() {
+    let chain = RouterChain::new(
+        vec![
+            Box::new(ProtocolBasedRouter {
+                trino_http: None,
+                postgres_wire: Some(group("pg-from-protocol")),
+                mysql_wire: None,
+                clickhouse_http: None,
+            }),
+            Box::new(HeaderRouter::new(
+                "x-tenant".to_string(),
+                HashMap::from([("acme".to_string(), group("tenant-acme"))]),
+            )),
+        ],
+        group("fallback-group"),
+    );
+    let session = trino_session(&[("x-tenant", "acme")]);
+    let (result, trace) = chain
+        .route_with_trace("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
+        .await
+        .unwrap();
+    assert_eq!(result, group("tenant-acme"));
     assert_eq!(trace.decisions.len(), 2);
     assert!(!trace.decisions[0].matched);
     assert!(trace.decisions[1].matched);
