@@ -99,6 +99,18 @@ jobs:
      steps:
        - uses: actions/checkout@44c2b7a8a4ea60a981eaca3cf939b5f4305c123b # v4.1.5
 
+       # StarRocks all-in-one + Trino + Lakekeeper stack needs many GB of layer space;
+       # default ubuntu-latest root FS often fills during `docker compose pull`.
+       - name: Free disk space
+         uses: jlumbroso/free-disk-space@v1.3.1
+         with:
+           tool-cache: false
+           android: true
+           dotnet: true
+           haskell: true
+           large-packages: true
+           swap-storage: true
+
        - name: Install mold linker
          uses: rui314/setup-mold@v1
 
