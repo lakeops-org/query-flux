@@ -142,9 +142,11 @@ jobs:
        - name: Start e2e Docker stack
          run: docker compose -f docker/docker-compose.test.yml --project-directory . up -d --wait trino starrocks sentinel
 
-       - name: StarRocks logs (debug on failure)
+       - name: Engine logs (debug on failure)
          if: failure()
-         run: docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 starrocks || true
+         run: |
+           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 trino || true
+           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 starrocks || true
 
        - name: E2E tests
          run: |

@@ -22,12 +22,14 @@ services:
     image: trinodb/trino:476
     environment:
       - CATALOG_MANAGEMENT=dynamic
+    # GHA runners are slow when StarRocks + Trino start together; avoid the old
+    # 10s start + 2 retries window that marks Trino unhealthy before JVM is ready.
     healthcheck:
-      test: ["CMD", "curl", "-I", "http://localhost:8080/v1/status"]
-      interval: 2s
-      timeout: 10s
-      retries: 2
-      start_period: 10s
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/v1/status"]
+      interval: 10s
+      timeout: 25s
+      retries: 30
+      start_period: 120s
     ports:
       - "18081:8080"
     networks:
