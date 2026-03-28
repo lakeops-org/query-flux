@@ -38,13 +38,19 @@ services:
     ports:
       - "9030:9030"
       - "8030:8030"
-    # all-in-one FE+BE is slow on cold CI runners; budget must exceed ~3.5m worst-case
+    # BE uses shared memory; default 64m Docker /dev/shm often breaks or slows all-in-one on CI.
+    shm_size: "2gb"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    # FE HTTP can take many minutes on starved GHA runners; use 127.0.0.1 (avoid localhost → IPv6).
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8030/api/health"]
-      interval: 5s
-      timeout: 15s
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8030/api/health"]
+      interval: 10s
+      timeout: 25s
       retries: 60
-      start_period: 120s
+      start_period: 180s
     networks:
       - test_net
 
