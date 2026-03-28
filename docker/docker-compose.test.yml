@@ -38,12 +38,13 @@ services:
     ports:
       - "9030:9030"
       - "8030:8030"
+    # all-in-one FE+BE is slow on cold CI runners; budget must exceed ~3.5m worst-case
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8030/api/health"]
       interval: 5s
-      timeout: 10s
-      retries: 30
-      start_period: 60s
+      timeout: 15s
+      retries: 60
+      start_period: 120s
     networks:
       - test_net
 
