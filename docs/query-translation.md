@@ -79,7 +79,9 @@ Top-level imports and helper functions are fully supported — the script is exe
 
 ### When scripts run
 
-Scripts run for **every translation** where `src != dst`. They do not run when dialects are compatible and translation is skipped. Use `src`/`dst` guards to apply logic only to specific pairs.
+Scripts run whenever they are configured, **including when `src == dst`** (dialects are compatible). The only time scripts are skipped entirely is when no scripts are configured and the dialects are compatible — in that case the SQL is returned unchanged with zero overhead.
+
+When dialects are compatible but scripts are present, sqlglot dialect translation is skipped, the SQL is parsed into an AST in the target dialect, and your scripts run against that AST. Use `src`/`dst` guards inside `transform` to apply logic only to specific pairs.
 
 ### Example — strip catalog prefix for Athena
 
