@@ -6,20 +6,20 @@ import type * as Preset from '@docusaurus/preset-classic';
 // https://<org>.github.io/<repo>/
 const siteUrl = 'https://lakeops-org.github.io';
 /** Public docs homepage (project Pages: host + repo path, no trailing slash). */
-const siteCanonicalUrl = `${siteUrl}/query-flux`;
+const siteCanonicalUrl = `${siteUrl}/queryflux`;
 
 const config: Config = {
   title: 'QueryFlux',
   tagline: 'Universal SQL query proxy and router in Rust',
   favicon: 'img/queryflux-logo.png',
 
-  // Must match GitHub Pages path: repo `query-flux` → baseUrl `/query-flux/`.
+  // Must match GitHub Pages path: repo `queryflux` → baseUrl `/queryflux/`.
   url: siteUrl,
-  baseUrl: '/query-flux/',
+  baseUrl: '/queryflux/',
 
   // Used by `npm run deploy` to pick the target repo — must match `git remote` (org/repo).
   organizationName: 'lakeops-org',
-  projectName: 'query-flux',
+  projectName: 'queryflux',
 
   // https://docusaurus.io/docs/deployment#deploying-to-github-pages
   trailingSlash: false,
@@ -47,7 +47,7 @@ const config: Config = {
         description:
           'Universal SQL query proxy and router in Rust. Front protocols include Trino HTTP, PostgreSQL wire, MySQL wire, and Arrow Flight; backends include Trino, DuckDB, StarRocks, and more with routing and sqlglot dialect translation.',
         url: siteCanonicalUrl,
-        codeRepository: 'https://github.com/lakeops-org/query-flux',
+        codeRepository: 'https://github.com/lakeops-org/queryflux',
         license: 'https://www.apache.org/licenses/LICENSE-2.0',
         programmingLanguage: 'Rust',
       }),
@@ -92,7 +92,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl:
-            'https://github.com/lakeops-org/query-flux/tree/main/website/',
+            'https://github.com/lakeops-org/queryflux/tree/main/website/',
           // https://docusaurus.io/docs/versioning — latest = first entry in versions.json
           versions: {
             current: {
@@ -137,7 +137,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/lakeops-org/query-flux',
+          href: 'https://github.com/lakeops-org/queryflux',
           label: 'GitHub',
           position: 'right',
         },
@@ -149,7 +149,7 @@ const config: Config = {
         alt: 'QueryFlux',
         src: 'img/queryflux-logo.png',
         height: 36,
-        href: 'https://github.com/lakeops-org/query-flux',
+        href: 'https://github.com/lakeops-org/queryflux',
       },
       links: [
         {
@@ -173,11 +173,11 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com/lakeops-org/query-flux',
+              href: 'https://github.com/lakeops-org/queryflux',
             },
             {
               label: 'Issues',
-              href: 'https://github.com/lakeops-org/query-flux/issues',
+              href: 'https://github.com/lakeops-org/queryflux/issues',
             },
           ],
         },

@@ -88,4 +88,4 @@ Authoritative shapes are the serde types in `queryflux-core` (`config.rs`) and w
 
 For contribution expectations (PRs, tests, docs), see **[Contributing](/docs/contribute)**.
 
-The same content is maintained in the repository as [`development.md`](https://github.com/lakeops-org/query-flux/blob/main/development.md).
+The same content is maintained in the repository as [`development.md`](https://github.com/lakeops-org/queryflux/blob/main/development.md).

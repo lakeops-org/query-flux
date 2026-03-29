@@ -22,7 +22,7 @@ Goal: a new `engine` value in cluster config, a live adapter, validation, transl
 Backends are **not** loaded dynamically. Each engine is compiled in and registered explicitly. Data flow:
 
 1. **Postgres / YAML** → `engine_key` column + `config` JSONB → `ClusterConfigRecord::to_core()` uses **`parse_engine_key`** and JSON helpers → typed **`ClusterConfig`**.
-2. **Binary** → `registered_engines::build_adapter(...)` matches **`EngineConfig`** and calls the adapter’s **`try_from_cluster_config`** (see [`crates/queryflux/src/registered_engines.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux/src/registered_engines.rs)).
+2. **Binary** → `registered_engines::build_adapter(...)` matches **`EngineConfig`** and calls the adapter’s **`try_from_cluster_config`** (see [`crates/queryflux/src/registered_engines.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux/src/registered_engines.rs)).
 3. **Adapter** → reads only the **`ClusterConfig`** fields it needs (endpoint, auth, region, …) and constructs itself; **startup** and **hot reload** both use the same factory.
 
 **JSONB** stores per-cluster, per-engine payload without schema migrations; **`ClusterConfig`** in core is the typed view after `to_core()`. Engine-specific wiring belongs in **`try_from_cluster_config`**, not in `main.rs`.
@@ -65,7 +65,7 @@ Implement on your adapter struct so all **field extraction and validation** for 
 
 - **Async** (e.g. Athena — AWS client setup): same parameters, `async fn`, returns `Result<Self>`.
 
-Use **`QueryFluxError::Engine(format!(…))`** for failures; include **`cluster_name_str`** in messages so startup and reload logs identify the cluster. Reference implementations: **`TrinoAdapter`** and **`StarRocksAdapter`** ([`trino/mod.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-engine-adapters/src/trino/mod.rs), [`starrocks/mod.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-engine-adapters/src/starrocks/mod.rs)), **`DuckDbAdapter`** / **`DuckDbHttpAdapter`** ([`duckdb/mod.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-engine-adapters/src/duckdb/mod.rs), [`duckdb/http.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-engine-adapters/src/duckdb/http.rs)), **`AthenaAdapter`** ([`athena/mod.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-engine-adapters/src/athena/mod.rs)).
+Use **`QueryFluxError::Engine(format!(…))`** for failures; include **`cluster_name_str`** in messages so startup and reload logs identify the cluster. Reference implementations: **`TrinoAdapter`** and **`StarRocksAdapter`** ([`trino/mod.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/trino/mod.rs), [`starrocks/mod.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/starrocks/mod.rs)), **`DuckDbAdapter`** / **`DuckDbHttpAdapter`** ([`duckdb/mod.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/duckdb/mod.rs), [`duckdb/http.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/duckdb/http.rs)), **`AthenaAdapter`** ([`athena/mod.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/athena/mod.rs)).
 
 Keep **`pub fn new(...)`** (or **`async fn new`**) as the low-level constructor if you want tests to build adapters without a full **`ClusterConfig`**; **`try_from_cluster_config`** can delegate to **`new`** after parsing **`cfg`**.
 
@@ -73,7 +73,7 @@ Keep **`pub fn new(...)`** (or **`async fn new`**) as the low-level constructor 
 
 Registration is centralized in **`crates/queryflux/src/registered_engines.rs`**:
 
-- **`all_descriptors()`** — Append **`MyEngineAdapter::descriptor()`** to the returned `vec!`. [`main.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux/src/main.rs) builds **`EngineRegistry::new(registered_engines::all_descriptors())`** for validation and **`GET /admin/engine-registry`**.
+- **`all_descriptors()`** — Append **`MyEngineAdapter::descriptor()`** to the returned `vec!`. [`main.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux/src/main.rs) builds **`EngineRegistry::new(registered_engines::all_descriptors())`** for validation and **`GET /admin/engine-registry`**.
 - **`build_adapter(cluster_name, placeholder_group, cluster_cfg, cluster_name_str).await`** — Returns **`anyhow::Result<Arc<dyn EngineAdapterTrait>>`**. Add a **`match`** arm on **`EngineConfig::MyEngine`** that calls **`MyEngineAdapter::try_from_cluster_config(...)`**, maps **`QueryFluxError`** to **`anyhow::Error`** (same helper as other arms), and wraps **`Arc::new(...)`**. **Startup** uses **`.context(...)?`** on the result; **hot reload** in **`build_live_config`** logs a warning and **`continue`** on error — behavior stays in **`main.rs`**, not in the factory.
 
 Do **not** add a second adapter-construction **`match`** in **`main.rs`**.
@@ -305,6 +305,6 @@ Studio does **not** implement wire protocols; it only talks to the **Admin API**
 
 **Rust files referenced above**
 
-- [`crates/queryflux/src/registered_engines.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux/src/registered_engines.rs) — `all_descriptors`, `build_adapter`  
-- [`crates/queryflux-core/src/engine_registry.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-core/src/engine_registry.rs) — `engine_key`, `parse_engine_key`, `EngineRegistry`, `From<&EngineConfig> for EngineType`  
-- [`crates/queryflux-persistence/src/cluster_config.rs`](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-persistence/src/cluster_config.rs) — `to_core` / `from_core` vs `engine_key` + JSONB  
+- [`crates/queryflux/src/registered_engines.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux/src/registered_engines.rs) — `all_descriptors`, `build_adapter`  
+- [`crates/queryflux-core/src/engine_registry.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-core/src/engine_registry.rs) — `engine_key`, `parse_engine_key`, `EngineRegistry`, `From<&EngineConfig> for EngineType`  
+- [`crates/queryflux-persistence/src/cluster_config.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-persistence/src/cluster_config.rs) — `to_core` / `from_core` vs `engine_key` + JSONB  

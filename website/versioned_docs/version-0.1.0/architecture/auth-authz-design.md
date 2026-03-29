@@ -721,13 +721,13 @@ auth:
 
 | File | Change |
 |------|--------|
-| [queryflux-core/src/config.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-core/src/config.rs) | Add AuthConfig, QueryAuthConfig (3 variants), AuthorizationConfig; `ClusterGroupMember`, `EngineConnectionOptions` (per-engine variants); `authProfiles` + `defaultAuthProfile`; `secretRef`; extend ClusterAuth with KeyPair |
-| [queryflux-core/src/session.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-core/src/session.rs) | No change — AuthContext is in queryflux-auth |
-| [queryflux-frontend/src/state.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-frontend/src/state.rs) | Add auth_provider, authorization checker |
-| [queryflux-frontend/src/dispatch.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-frontend/src/dispatch.rs) | Thread AuthContext + QueryCredentials; authz check as first step before acquire_cluster |
-| [queryflux-frontend/src/trino_http/handlers.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-frontend/src/trino_http/handlers.rs) | Authenticate before routing; pass AuthContext to routers; authorization-aware first-fit when used_fallback==true |
-| [queryflux-frontend/src/postgres_wire/mod.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-frontend/src/postgres_wire/mod.rs) | Same as Trino HTTP: authenticate, pass AuthContext to routers, default routing |
-| [queryflux-routing/src/lib.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-routing/src/lib.rs) | Add `Option<&AuthContext>` to `RouterTrait.route()` signature; UserGroup router uses verified identity |
-| [queryflux-engine-adapters/src/lib.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-engine-adapters/src/lib.rs) | Add QueryCredentials alongside SessionContext in submit_query / execute_as_arrow signatures |
-| [queryflux-engine-adapters/src/trino/mod.rs](https://github.com/lakeops-org/query-flux/blob/main/crates/queryflux-engine-adapters/src/trino/mod.rs) | serviceAccount (current behaviour) + impersonate (suppress + inject) |
+| [queryflux-core/src/config.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-core/src/config.rs) | Add AuthConfig, QueryAuthConfig (3 variants), AuthorizationConfig; `ClusterGroupMember`, `EngineConnectionOptions` (per-engine variants); `authProfiles` + `defaultAuthProfile`; `secretRef`; extend ClusterAuth with KeyPair |
+| [queryflux-core/src/session.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-core/src/session.rs) | No change — AuthContext is in queryflux-auth |
+| [queryflux-frontend/src/state.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-frontend/src/state.rs) | Add auth_provider, authorization checker |
+| [queryflux-frontend/src/dispatch.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-frontend/src/dispatch.rs) | Thread AuthContext + QueryCredentials; authz check as first step before acquire_cluster |
+| [queryflux-frontend/src/trino_http/handlers.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-frontend/src/trino_http/handlers.rs) | Authenticate before routing; pass AuthContext to routers; authorization-aware first-fit when used_fallback==true |
+| [queryflux-frontend/src/postgres_wire/mod.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-frontend/src/postgres_wire/mod.rs) | Same as Trino HTTP: authenticate, pass AuthContext to routers, default routing |
+| [queryflux-routing/src/lib.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-routing/src/lib.rs) | Add `Option<&AuthContext>` to `RouterTrait.route()` signature; UserGroup router uses verified identity |
+| [queryflux-engine-adapters/src/lib.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/lib.rs) | Add QueryCredentials alongside SessionContext in submit_query / execute_as_arrow signatures |
+| [queryflux-engine-adapters/src/trino/mod.rs](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/trino/mod.rs) | serviceAccount (current behaviour) + impersonate (suppress + inject) |
 | New: `crates/queryflux-auth/` | AuthProvider trait + all implementations + BackendIdentityResolver + OpenFGA client |

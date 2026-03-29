@@ -40,7 +40,7 @@ function HomepageHeader(): ReactNode {
           </Link>
           <Link
             className={clsx('button button--lg button--outline', styles.ctaGhost)}
-            href="https://github.com/lakeops-org/query-flux">
+            href="https://github.com/lakeops-org/queryflux">
             GitHub
           </Link>
         </div>

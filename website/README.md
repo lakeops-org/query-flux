@@ -1,6 +1,6 @@
 # QueryFlux documentation site
 
-This directory is a [Docusaurus](https://docusaurus.io/) site that mirrors the root [`README.md`](https://github.com/lakeops-org/query-flux/blob/main/README.md) and the [`docs/`](https://github.com/lakeops-org/query-flux/tree/main/docs) Markdown in `docs/` here. **Canonical sources** stay in the repository root (`README.md`, `development.md`, `contribute.md`, `docs/`); edit those and refresh the copies under `website/docs/` when they drift, or automate sync in CI if you prefer.
+This directory is a [Docusaurus](https://docusaurus.io/) site that mirrors the root [`README.md`](https://github.com/lakeops-org/queryflux/blob/main/README.md) and the [`docs/`](https://github.com/lakeops-org/queryflux/tree/main/docs) Markdown in `docs/` here. **Canonical sources** stay in the repository root (`README.md`, `development.md`, `contribute.md`, `docs/`); edit those and refresh the copies under `website/docs/` when they drift, or automate sync in CI if you prefer.
 
 ## Commands
 

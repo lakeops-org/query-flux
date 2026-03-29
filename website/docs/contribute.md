@@ -8,7 +8,7 @@ Thank you for helping improve QueryFlux. This document describes how we expect c
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same terms as the project ([Apache License 2.0](https://github.com/lakeops-org/query-flux/blob/main/LICENSE)).
+By contributing, you agree that your contributions will be licensed under the same terms as the project ([Apache License 2.0](https://github.com/lakeops-org/queryflux/blob/main/LICENSE)).
 
 ## Before you start
 
@@ -48,4 +48,4 @@ Be respectful and assume good intent. Technical disagreement should stay about t
 
 If you are unsure whether an idea fits, open an issue with a short design sketch before investing in a big PR.
 
-The same content is maintained in the repository as [`contribute.md`](https://github.com/lakeops-org/query-flux/blob/main/contribute.md).
+The same content is maintained in the repository as [`contribute.md`](https://github.com/lakeops-org/queryflux/blob/main/contribute.md).

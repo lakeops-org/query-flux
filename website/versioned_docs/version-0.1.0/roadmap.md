@@ -127,4 +127,4 @@ The roadmap reflects:
 2. **What delivers the cost/performance story end-to-end** — cost-aware routing closes the loop between the motivation (wrong engine for the workload) and the solution (QueryFlux routes it correctly).
 3. **What the open table format ecosystem needs** — Snowflake and BigQuery backends, federated planning, and cache complete the "compute interoperability" layer above Iceberg/Delta/Hudi.
 
-Contributions are welcome — see [Contributing](/docs/contribute). If a feature here is blocking your use case, open an issue on [GitHub](https://github.com/lakeops-org/query-flux/issues) to help prioritize.
+Contributions are welcome — see [Contributing](/docs/contribute). If a feature here is blocking your use case, open an issue on [GitHub](https://github.com/lakeops-org/queryflux/issues) to help prioritize.

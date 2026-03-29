@@ -18,4 +18,4 @@ This section describes how QueryFlux is put together: why it exists, how SQL is 
 
 Start with [Motivation and goals](motivation-and-goals.md) if you are new to the project; use [System map](system-map.md) as the single-page map of the system.
 
-The canonical Markdown sources live under [`docs/`](https://github.com/lakeops-org/query-flux/tree/main/docs) in the repository.
+The canonical Markdown sources live under [`docs/`](https://github.com/lakeops-org/queryflux/tree/main/docs) in the repository.

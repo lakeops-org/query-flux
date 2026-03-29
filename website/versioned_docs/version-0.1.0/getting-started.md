@@ -4,15 +4,15 @@ sidebar_position: 1
 
 # Getting started
 
-The fastest way to run QueryFlux is one of the **Docker Compose examples** under [`examples/`](https://github.com/lakeops-org/query-flux/tree/main/examples) in the repository. Run commands **from inside the chosen example directory** so paths like `./config.yaml` resolve.
+The fastest way to run QueryFlux is one of the **Docker Compose examples** under [`examples/`](https://github.com/lakeops-org/queryflux/tree/main/examples) in the repository. Run commands **from inside the chosen example directory** so paths like `./config.yaml` resolve.
 
-See the **[examples README](https://github.com/lakeops-org/query-flux/blob/main/examples/README.md)** for a comparison table, image/registry notes, and environment variables (`RUST_LOG`, `TPCH_SCALE` for the full stack).
+See the **[examples README](https://github.com/lakeops-org/queryflux/blob/main/examples/README.md)** for a comparison table, image/registry notes, and environment variables (`RUST_LOG`, `TPCH_SCALE` for the full stack).
 
 :::tip Same ports in some examples
 
-[`minimal`](https://github.com/lakeops-org/query-flux/tree/main/examples/minimal) and [`minimal-inmemory`](https://github.com/lakeops-org/query-flux/tree/main/examples/minimal-inmemory) both publish **8080**, **8081**, **3000**, and **9000**. Only run one at a time, or change published ports in `docker-compose.yml`.
+[`minimal`](https://github.com/lakeops-org/queryflux/tree/main/examples/minimal) and [`minimal-inmemory`](https://github.com/lakeops-org/queryflux/tree/main/examples/minimal-inmemory) both publish **8080**, **8081**, **3000**, and **9000**. Only run one at a time, or change published ports in `docker-compose.yml`.
 
-[`with-prometheus-grafana`](https://github.com/lakeops-org/query-flux/tree/main/examples/with-prometheus-grafana) uses **3000 for Grafana** (not Studio). Do not run it alongside an example that uses 3000 for Studio unless you remap a port.
+[`with-prometheus-grafana`](https://github.com/lakeops-org/queryflux/tree/main/examples/with-prometheus-grafana) uses **3000 for Grafana** (not Studio). Do not run it alongside an example that uses 3000 for Studio unless you remap a port.
 
 :::
 
@@ -26,7 +26,7 @@ See the **[examples README](https://github.com/lakeops-org/query-flux/blob/main/
 **Best for:** production-like **Postgres** persistence, full **Studio** (query history, clusters/groups/routing via API once seeded).
 
 ```bash
-git clone https://github.com/lakeops-org/query-flux.git
+git clone https://github.com/lakeops-org/queryflux.git
 cd queryflux/examples/minimal
 docker compose up -d --wait
 ```
@@ -39,11 +39,11 @@ docker compose up -d --wait
 | Studio | http://localhost:3000 |
 | Postgres (from host) | `localhost:5433` — user `queryflux`, password `queryflux`, database `queryflux` |
 
-**Next steps:** Trino CLI from the host or from inside the `trino` container, verifying traffic goes through QueryFlux — full walkthrough in **[`examples/minimal/README.md`](https://github.com/lakeops-org/query-flux/blob/main/examples/minimal/README.md)** (including Studio **Queries** and the port/hostname cheat sheet).
+**Next steps:** Trino CLI from the host or from inside the `trino` container, verifying traffic goes through QueryFlux — full walkthrough in **[`examples/minimal/README.md`](https://github.com/lakeops-org/queryflux/blob/main/examples/minimal/README.md)** (including Studio **Queries** and the port/hostname cheat sheet).
 
 ## Example: minimal in-memory
 
-**Best for:** fastest local tryout; **no Postgres**. Routing/clusters come from [`config.yaml`](https://github.com/lakeops-org/query-flux/blob/main/examples/minimal-inmemory/config.yaml); **restart QueryFlux** after edits. Studio pages that need Postgres may **503** — see **[`examples/minimal-inmemory/README.md`](https://github.com/lakeops-org/query-flux/blob/main/examples/minimal-inmemory/README.md)**.
+**Best for:** fastest local tryout; **no Postgres**. Routing/clusters come from [`config.yaml`](https://github.com/lakeops-org/queryflux/blob/main/examples/minimal-inmemory/config.yaml); **restart QueryFlux** after edits. Studio pages that need Postgres may **503** — see **[`examples/minimal-inmemory/README.md`](https://github.com/lakeops-org/queryflux/blob/main/examples/minimal-inmemory/README.md)**.
 
 ```bash
 cd queryflux/examples/minimal-inmemory
@@ -69,7 +69,7 @@ docker compose up -d --wait
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 (login **admin** / **admin**) |
 
-Details: **[`examples/with-prometheus-grafana/README.md`](https://github.com/lakeops-org/query-flux/blob/main/examples/with-prometheus-grafana/README.md)**.
+Details: **[`examples/with-prometheus-grafana/README.md`](https://github.com/lakeops-org/queryflux/blob/main/examples/with-prometheus-grafana/README.md)**.
 
 ## Example: full stack (Trino + StarRocks + Iceberg)
 
@@ -92,7 +92,7 @@ docker compose --profile loader run --rm -T starrocks-catalog-setup
 | Lakekeeper REST | http://localhost:8181 |
 | QueryFlux Postgres | **localhost:5433** |
 
-More detail on loader scripts and fixtures: **[examples README — Full stack](https://github.com/lakeops-org/query-flux/blob/main/examples/README.md#full-stack-full-stack)**.
+More detail on loader scripts and fixtures: **[examples README — Full stack](https://github.com/lakeops-org/queryflux/blob/main/examples/README.md#full-stack-full-stack)**.
 
 ## Quick smoke test (any stack with Trino HTTP on 8080)
 
