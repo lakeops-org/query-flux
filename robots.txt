@@ -2,4 +2,4 @@
 User-agent: *
 Disallow:
 
-Sitemap: https://lakeops-org.github.io/query-flux/sitemap.xml
+Sitemap: https://lakeops-org.github.io/queryflux/sitemap.xml
