@@ -19,15 +19,16 @@
 }
 
 html[data-theme='dark'] .hero {
-  border-bottom-color: rgba(167, 139, 250, 0.15);
-  color: #e2e8f0;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+  color: #e7e7e7;
 }
 
 html[data-theme='dark'] .heroGlow {
   background:
-    linear-gradient(to bottom, rgba(30, 27, 75, 0.35) 0%, rgba(15, 23, 42, 0.9) 50%, #0f172a 100%),
-    radial-gradient(ellipse 65% 50% at 50% 0%, rgba(124, 58, 237, 0.25) 0%, transparent 55%),
-    radial-gradient(ellipse 50% 40% at 85% 15%, rgba(139, 92, 246, 0.12) 0%, transparent 50%);
+    linear-gradient(to bottom, rgba(88, 28, 135, 0.2) 0%, rgba(0, 0, 0, 0.92) 55%, #000000 100%),
+    radial-gradient(ellipse 68% 52% at 50% 0%, rgba(124, 58, 237, 0.22) 0%, transparent 58%),
+    radial-gradient(ellipse 48% 38% at 82% 12%, rgba(234, 88, 12, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 32% at 18% 28%, rgba(167, 139, 250, 0.06) 0%, transparent 50%);
 }
 
 .heroInner {
@@ -56,12 +57,37 @@ html[data-theme='dark'] .heroImage {
   letter-spacing: -0.03em;
   line-height: 1.15;
   margin: 0 0 0.5rem;
-  color: #0f172a;
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0;
 }
 
-html[data-theme='dark'] .heroTitle {
-  color: #f8fafc;
-  text-shadow: 0 0 48px rgba(167, 139, 250, 0.15);
+.heroTitleQuery {
+  color: #0f172a;
+  transition: color 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.heroTitleFlux {
+  color: var(--brand-flux, #ff7619);
+}
+
+html[data-theme='dark'] .heroTitleQuery {
+  color: #fafafa;
+  text-shadow: 0 0 42px rgba(167, 139, 250, 0.12);
+}
+
+.heroTitle:hover .heroTitleQuery {
+  color: #5b21b6;
+}
+
+html[data-theme='dark'] .heroTitle:hover .heroTitleQuery {
+  color: #e9d5ff;
+}
+
+html[data-theme='dark'] .heroTitleFlux {
+  text-shadow: 0 0 32px rgba(255, 118, 25, 0.2);
 }
 
 .heroTagline {
@@ -97,20 +123,20 @@ html[data-theme='dark'] .heroLeadin {
 }
 
 .ctaPrimary {
-  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 50%, #6d28d9 100%);
-  border: 1px solid rgba(196, 181, 253, 0.45);
+  background: linear-gradient(135deg, #7c3aed 0%, #9333ea 38%, #c026d3 72%, #ea580c 100%);
+  border: 1px solid rgba(255, 200, 150, 0.25);
   color: #fff !important;
   box-shadow:
-    0 4px 18px rgba(124, 58, 237, 0.35),
-    0 0 24px rgba(139, 92, 246, 0.12);
+    0 4px 20px rgba(124, 58, 237, 0.35),
+    0 0 28px rgba(234, 88, 12, 0.12);
 }
 
 .ctaPrimary:hover {
-  background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 45%, #7c3aed 100%);
+  background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 35%, #d946ef 65%, #fb923c 100%);
   color: #fff !important;
   box-shadow:
-    0 6px 24px rgba(124, 58, 237, 0.45),
-    0 0 32px rgba(167, 139, 250, 0.15);
+    0 6px 28px rgba(124, 58, 237, 0.4),
+    0 0 36px rgba(251, 146, 60, 0.18);
 }
 
 .ctaGhost {

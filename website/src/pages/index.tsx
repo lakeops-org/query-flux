@@ -26,7 +26,8 @@ function HomepageHeader(): ReactNode {
           decoding="async"
         />
         <Heading as="h1" className={styles.heroTitle}>
-          {siteConfig.title}
+          <span className={styles.heroTitleQuery}>Query</span>
+          <span className={styles.heroTitleFlux}>Flux</span>
         </Heading>
         <p className={styles.heroTagline}>{siteConfig.tagline}</p>
         <p className={styles.heroLeadin}>

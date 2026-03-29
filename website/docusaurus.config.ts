@@ -131,8 +131,8 @@ const config: Config = {
     // 1200×630 recommended for og:image (not the square logo). Replace with branded art anytime.
     image: 'img/queryflux-logo_default.png',
     colorMode: {
-      defaultMode: 'light',
-      respectPrefersColorScheme: true,
+      defaultMode: 'dark',
+      respectPrefersColorScheme: false,
     },
     navbar: {
       title: 'QueryFlux',
@@ -145,29 +145,24 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          type: 'search',
-          position: 'right',
-        },
-        {
           type: 'docsVersionDropdown',
-          position: 'right',
+          position: 'left',
         },
         {
-          href: 'https://github.com/lakeops-org/queryflux',
-          label: 'GitHub',
+          type: 'search',
+          position: 'left',
+        },
+        {
+          href: 'https://github.com/lakeops-org/queryflux/tree/main',
           position: 'right',
           className: 'navbar-link-github',
+          'aria-label': 'QueryFlux repository on GitHub',
+          html: '<svg width="22" height="22" viewBox="0 0 98 96" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.195-22.179-5.378-22.179-24.057 0-5.378 1.939-9.778 5.014-13.173-.503-1.196-2.184-6.02.478-12.518 0 0 4.075-1.302 13.406 4.994 4.002-1.079 8.29-1.619 12.548-1.619 4.259 0 8.546.54 12.548 1.619 9.318-6.296 13.393-4.994 13.393-4.994 2.662 6.498 1.003 11.322.478 12.518 3.08 3.395 5.014 7.795 5.014 13.173 0 18.795-11.354 22.848-22.194 24.043 1.741 1.508 3.302 4.407 3.302 8.927 0 6.434-.057 11.621-.057 13.173 0 1.304.869 2.852 3.316 2.367 19.394-6.518 33.382-24.934 33.382-46.69C97.708 22 75.788 0 48.854 0z"/></svg>',
         },
       ],
     },
     footer: {
       style: 'dark',
-      logo: {
-        alt: 'QueryFlux',
-        src: 'img/queryflux-logo.png',
-        height: 36,
-        href: 'https://github.com/lakeops-org/queryflux',
-      },
       links: [
         {
           title: 'Documentation',

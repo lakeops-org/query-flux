@@ -3,10 +3,7 @@
   align-items: center;
   margin-right: 0.75rem;
   flex-shrink: 0;
-}
-
-.brand:hover {
-  opacity: 0.92;
+  text-decoration: none;
 }
 
 .brand:focus-visible {
@@ -16,19 +13,45 @@
 }
 
 .wordmark {
+  display: inline-flex;
+  align-items: baseline;
   font-size: 1.125rem;
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1;
-  background: linear-gradient(108deg, #5b21b6 0%, #6d28d9 35%, #7c3aed 70%, #8b5cf6 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
 }
 
-html[data-theme='dark'] .wordmark {
-  background: linear-gradient(108deg, #f5f3ff 0%, #e9d5ff 35%, #c4b5fd 70%, #a78bfa 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+/* "Query" — light-on-dark; shifts to violet-tint on hover */
+.query {
+  color: var(--brand-query, #0f172a);
+  transition: color 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-theme='dark'] .query {
+  color: var(--brand-query-dark, #fafafa);
+}
+
+.brand:hover .query {
+  color: var(--brand-query-hover, #5b21b6);
+}
+
+html[data-theme='dark'] .brand:hover .query {
+  color: var(--brand-query-hover-dark, #e9d5ff);
+}
+
+/* "Flux" — brand orange, stable on hover */
+.flux {
+  color: var(--brand-flux, #ff7619);
+  transition: filter 0.2s ease;
+}
+
+.brand:hover .flux {
+  filter: brightness(1.08);
+}
+
+.wordmarkFallback {
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--ifm-color-primary);
 }
