@@ -1,3 +1,6 @@
+# Next.js standalone — **local / dev** builds of Studio only.
+# Release images bundle server + Studio via ../queryflux-unified/Dockerfile (multi-arch).
+#
 # Next.js standalone build (see `output: "standalone"` in next.config.ts).
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app

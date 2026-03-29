@@ -2,7 +2,7 @@
 
 Several stacks for **QueryFlux** + **Trino** (and optional add-ons). Run commands **from inside** each example directory so paths like `./config.yaml` resolve.
 
-**Images** in each `docker-compose.yml` point at `343959804465.dkr.ecr.us-east-1.amazonaws.com/...` — change registry/tag there or build from [`docker/`](../docker/).
+**Images** in each `docker-compose.yml` may point at a private registry (for example legacy ECR URLs) — switch the `image:` line to **`ghcr.io/<owner>/<repo>:<tag>`** (see [contribute.md](../contribute.md) for release tags) or build from [`docker/`](../docker/).
 
 | Example | Postgres | Best for |
 |--------|----------|----------|
@@ -104,4 +104,4 @@ QueryFlux Postgres is exposed on **localhost:5433** (same as the main dev compos
 | `RUST_LOG` | QueryFlux logging (default in compose: `queryflux=info,queryflux_frontend=info`) |
 | `TPCH_SCALE` | Full stack, `loader` profile: `tiny` (default), `sf1`, … — see `docker/fixtures/init.sql` |
 
-CI/build references: [`.github/workflows/ecr-queryflux-runtime.yml`](../.github/workflows/ecr-queryflux-runtime.yml) and Dockerfiles under [`docker/`](../docker/).
+CI/build: each release pushes **two** images to **GHCR** (`ghcr.io/<owner>/<repo>`): **server-only** (`:vX.Y.Z`, prod also `:latest-slim`) and **server + Studio** (`:vX.Y.Z-full`, prod also `:latest`). Workflows: [`.github/workflows/docker-release-rc.yml`](../.github/workflows/docker-release-rc.yml), [`.github/workflows/docker-release-prod.yml`](../.github/workflows/docker-release-prod.yml). PRs verify both Dockerfiles via [`.github/workflows/docker-verify.yml`](../.github/workflows/docker-verify.yml).
