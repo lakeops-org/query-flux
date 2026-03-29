@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Unified image: QueryFlux server (Rust + PyO3 + DuckDB) + QueryFlux Studio (Next.js standalone).
 # Multi-arch: build with buildx, e.g.
-#   docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386 \
+#   docker buildx build --platform linux/amd64,linux/arm64 \
 #     -f docker/queryflux-unified/Dockerfile -t queryflux:unified --push .
 #
 # Server-only image remains at docker/queryflux/Dockerfile.
