@@ -60,6 +60,7 @@ const HOME_DESCRIPTION =
 const HOME_PAGE_TITLE = 'QueryFlux — Universal SQL proxy & router';
 
 export default function Home(): ReactNode {
+  const {siteConfig} = useDocusaurusContext();
   return (
     <Layout title={HOME_PAGE_TITLE} description={HOME_DESCRIPTION}>
       <HomepageHeader />
