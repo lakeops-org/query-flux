@@ -8,6 +8,11 @@ const siteUrl = 'https://lakeops-org.github.io';
 /** Public docs homepage (project Pages: host + repo path, no trailing slash). */
 const siteCanonicalUrl = `${siteUrl}/queryflux`;
 
+/** Local dev: `npm run dev` sets this so the site is at http://localhost:3000/ (not /queryflux/). */
+const useRootBaseUrl =
+  process.env.DOCUSAURUS_USE_ROOT_BASE === 'true' ||
+  process.env.DOCUSAURUS_USE_ROOT_BASE === '1';
+
 const config: Config = {
   title: 'QueryFlux',
   tagline: 'Universal SQL query proxy and router in Rust',
@@ -15,7 +20,7 @@ const config: Config = {
 
   // Must match GitHub Pages path: repo `queryflux` → baseUrl `/queryflux/`.
   url: siteUrl,
-  baseUrl: '/queryflux/',
+  baseUrl: useRootBaseUrl ? '/' : '/queryflux/',
 
   // Used by `npm run deploy` to pick the target repo — must match `git remote` (org/repo).
   organizationName: 'lakeops-org',
@@ -66,6 +71,18 @@ const config: Config = {
           'Documentation and resources for QueryFlux, a universal SQL query proxy and router.',
       }),
     },
+    // Confirms you hit `npm run dev` (root baseUrl), not production or `npm start` (/queryflux/).
+    ...(useRootBaseUrl
+      ? [
+          {
+            tagName: 'meta',
+            attributes: {
+              name: 'queryflux-dev',
+              content: 'root-baseUrl',
+            },
+          },
+        ]
+      : []),
   ],
 
   i18n: {
@@ -114,17 +131,12 @@ const config: Config = {
     // 1200×630 recommended for og:image (not the square logo). Replace with branded art anytime.
     image: 'img/queryflux-logo_default.png',
     colorMode: {
-      defaultMode: 'dark',
-      // If true, OS "prefers light" overrides defaultMode for first visit.
-      respectPrefersColorScheme: false,
+      defaultMode: 'light',
+      respectPrefersColorScheme: true,
     },
     navbar: {
       title: 'QueryFlux',
-      logo: {
-        alt: 'QueryFlux',
-        src: 'img/queryflux-logo.png',
-        style: {height: '1.85rem', width: 'auto'},
-      },
+      hideOnScroll: false,
       items: [
         {
           type: 'docSidebar',
@@ -133,13 +145,18 @@ const config: Config = {
           label: 'Docs',
         },
         {
+          type: 'search',
+          position: 'right',
+        },
+        {
           type: 'docsVersionDropdown',
-          position: 'left',
+          position: 'right',
         },
         {
           href: 'https://github.com/lakeops-org/queryflux',
           label: 'GitHub',
           position: 'right',
+          className: 'navbar-link-github',
         },
       ],
     },
@@ -181,8 +198,12 @@ const config: Config = {
             },
           ],
         },
+        {
+          title: 'LakeOps',
+          items: [{label: 'lakeops.dev', href: 'https://lakeops.dev'}],
+        },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} QueryFlux contributors. Licensed under Apache-2.0.`,
+      copyright: `Copyright © ${new Date().getFullYear()} LakeOps. QueryFlux documentation — Apache-2.0.`,
     },
     prism: {
       theme: prismThemes.github,
@@ -194,7 +215,7 @@ const config: Config = {
       {
         name: 'keywords',
         content:
-          'QueryFlux, SQL proxy, query router, Trino, PostgreSQL, MySQL, Arrow Flight, DuckDB, StarRocks, Rust, sqlglot, load balancing, Iceberg',
+          'LakeOps, QueryFlux, SQL proxy, query router, Trino, PostgreSQL, MySQL, Arrow Flight, DuckDB, StarRocks, Rust, sqlglot, data lake',
       },
       {name: 'twitter:card', content: 'summary_large_image'},
       {property: 'og:type', content: 'website'},

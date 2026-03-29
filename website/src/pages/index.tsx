@@ -11,18 +11,18 @@ import styles from './index.module.css';
 
 function HomepageHeader(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
-  const logoUrl = useBaseUrl('/img/queryflux-logo.png');
+  const heroUrl = useBaseUrl('/img/queryflux-hero-cover.jpg');
 
   return (
     <header className={styles.hero}>
       <div className={styles.heroGlow} aria-hidden />
       <div className={clsx('container', styles.heroInner)}>
         <img
-          className={styles.heroLogo}
-          src={logoUrl}
-          alt="QueryFlux"
-          width={560}
-          height={200}
+          className={styles.heroImage}
+          src={heroUrl}
+          alt="QueryFlux — multi-engine SQL routing in Rust, connecting clients to Trino, DuckDB, StarRocks, Snowflake, Databricks, and more"
+          width={1024}
+          height={682}
           decoding="async"
         />
         <Heading as="h1" className={styles.heroTitle}>

@@ -97,7 +97,10 @@ export default function NavbarContent(): ReactNode {
       right={
         <>
           <NavbarItems items={rightItems} />
-          <NavbarColorModeToggle className={styles.colorModeToggle} />
+          <NavbarColorModeToggle
+            className={styles.colorModeToggle}
+            aria-label="Toggle light and dark theme"
+          />
           {!searchBarItem && (
             <NavbarSearch>
               <SearchBar />

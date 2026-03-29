@@ -9,7 +9,7 @@
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  background: linear-gradient(90deg, var(--ifm-color-primary) 0%, #f0855a 100%);
+  background: linear-gradient(90deg, #7c3aed 0%, #8b5cf6 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -17,7 +17,7 @@
 }
 
 html[data-theme='dark'] .sectionEyebrow {
-  background: linear-gradient(90deg, #f0652f 0%, #22d3ee 100%);
+  background: linear-gradient(90deg, #c4b5fd 0%, #a78bfa 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -71,8 +71,8 @@ html[data-theme='dark'] .sectionEyebrow {
 }
 
 .featureCard:hover {
-  border-color: rgba(217, 74, 31, 0.35);
-  box-shadow: 0 12px 36px rgba(217, 74, 31, 0.1);
+  border-color: rgba(124, 58, 237, 0.35);
+  box-shadow: 0 12px 36px rgba(124, 58, 237, 0.12);
 }
 
 .featureTitle {
@@ -91,19 +91,19 @@ html[data-theme='dark'] .sectionEyebrow {
 }
 
 html[data-theme='dark'] .featureCard {
-  border-color: rgba(34, 211, 238, 0.12);
-  background: linear-gradient(165deg, rgba(21, 27, 46, 0.95) 0%, rgba(11, 14, 20, 0.98) 100%);
+  border-color: rgba(167, 139, 250, 0.15);
+  background: linear-gradient(165deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
   box-shadow:
-    0 1px 0 rgba(240, 101, 47, 0.06),
+    0 1px 0 rgba(124, 58, 237, 0.08),
     0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
 html[data-theme='dark'] .featureCard:hover {
-  border-color: rgba(34, 211, 238, 0.38);
+  border-color: rgba(167, 139, 250, 0.4);
   box-shadow:
-    0 0 0 1px rgba(240, 101, 47, 0.12),
+    0 0 0 1px rgba(124, 58, 237, 0.12),
     0 16px 40px rgba(0, 0, 0, 0.35),
-    0 0 32px rgba(34, 211, 238, 0.06);
+    0 0 32px rgba(167, 139, 250, 0.08);
 }
 
 @media screen and (max-width: 996px) {

@@ -55,7 +55,7 @@ export default function HomepageFeatures(): ReactNode {
   return (
     <section className={styles.features}>
       <div className="container">
-        <p className={styles.sectionEyebrow}>Why QueryFlux</p>
+        <p className={styles.sectionEyebrow}>LakeOps · QueryFlux</p>
         <h2 className={styles.sectionHeading}>Built for multi-engine SQL estates</h2>
         <p className={styles.sectionSub}>
           Same patterns you expect from a serious proxy — explicit routing, capacity
