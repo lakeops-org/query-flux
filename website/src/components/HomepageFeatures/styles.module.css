@@ -3,59 +3,53 @@
   width: 100%;
 }
 
-.sectionEyebrow {
-  text-align: center;
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  background: linear-gradient(92deg, #7c3aed 0%, #c026d3 42%, #ea580c 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  margin: 0 0 0.6rem;
-}
-
-html[data-theme='dark'] .sectionEyebrow {
-  background: linear-gradient(92deg, #e9d5ff 0%, #d8b4fe 38%, #fb923c 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+/* 12-column grid aligned with site --qf-page-gutter / --qf-grid-gap */
+.featuresGrid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--qf-grid-gap);
 }
 
 .sectionHeading {
+  grid-column: 1 / -1;
+  justify-self: center;
   text-align: center;
   font-size: clamp(1.45rem, 3vw, 1.85rem);
   font-weight: 700;
   letter-spacing: -0.025em;
-  margin: 0 auto 0.75rem;
-  max-width: 36rem;
+  margin: 0 0 0.75rem;
+  max-width: var(--qf-section-heading-max);
+  width: 100%;
   line-height: 1.25;
   color: var(--ifm-heading-color);
 }
 
 .sectionSub {
+  grid-column: 1 / -1;
+  justify-self: center;
   text-align: center;
   font-size: 1.05rem;
   line-height: 1.65;
   color: var(--ifm-color-emphasis-700);
-  max-width: 40rem;
-  margin: 0 auto 2.5rem;
+  max-width: var(--qf-section-sub-max);
+  width: 100%;
+  margin: 0 0 2.5rem;
 }
 
 .featureRow {
-  justify-content: center;
-  margin-left: -0.75rem;
-  margin-right: -0.75rem;
-}
-
-.featureRow > [class*='col'] {
-  padding-left: 0.75rem;
-  padding-right: 0.75rem;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--qf-grid-gap);
+  row-gap: var(--qf-grid-gap);
+  width: 100%;
+  margin: 0;
 }
 
 .featureCol {
-  margin-bottom: 1.5rem;
+  grid-column: span 4;
+  margin-bottom: 0;
+  min-width: 0;
 }
 
 .featureCard {
@@ -109,6 +103,10 @@ html[data-theme='dark'] .featureCard:hover {
 @media screen and (max-width: 996px) {
   .features {
     padding: 2.5rem 0 3.5rem;
+  }
+
+  .featureCol {
+    grid-column: 1 / -1;
   }
 
   .featureCard {

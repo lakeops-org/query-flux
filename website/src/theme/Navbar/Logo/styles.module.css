@@ -1,24 +1,32 @@
 .brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  margin-right: 0.75rem;
+  margin-right: 1rem;
   flex-shrink: 0;
   text-decoration: none;
+  min-height: var(--qf-navbar-target, 2.875rem);
 }
 
 .brand:focus-visible {
   outline: 2px solid var(--ifm-color-primary);
-  outline-offset: 4px;
-  border-radius: 8px;
+  outline-offset: 3px;
+  border-radius: 0.25rem;
 }
 
+/* Match lakeops.dev wordmark: text-lg → text-xl from md */
 .wordmark {
   display: inline-flex;
   align-items: baseline;
   font-size: 1.125rem;
   font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+@media (min-width: 997px) {
+  .wordmark {
+    font-size: 1.25rem;
+  }
 }
 
 /* "Query" — light-on-dark; shifts to violet-tint on hover */
@@ -52,6 +60,13 @@ html[data-theme='dark'] .brand:hover .query {
 .wordmarkFallback {
   font-size: 1.125rem;
   font-weight: 700;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
   color: var(--ifm-color-primary);
+}
+
+@media (min-width: 997px) {
+  .wordmarkFallback {
+    font-size: 1.25rem;
+  }
 }

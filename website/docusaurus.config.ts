@@ -194,8 +194,9 @@ const config: Config = {
           ],
         },
         {
-          title: 'LakeOps',
-          items: [{label: 'lakeops.dev', href: 'https://lakeops.dev'}],
+          title: null,
+          className: 'footer__col--lakeops',
+          items: [],
         },
       ],
       copyright: `Copyright © ${new Date().getFullYear()} LakeOps. QueryFlux documentation — Apache-2.0.`,

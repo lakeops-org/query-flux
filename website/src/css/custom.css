@@ -14,6 +14,31 @@
   --lo-violet-600: #7c3aed;
   --lo-violet-700: #6d28d9;
 
+  /*
+   * Site grid: one max width + horizontal rhythm. Infima `.container`, navbar
+   * inner, and footer fluid container all use --qf-page-max + --qf-page-gutter.
+   * Homepage features use nested 12-column grids with --qf-grid-gap.
+   */
+  --qf-page-max: 72rem;
+  --qf-page-gutter: 1.25rem;
+  --qf-grid-columns: 12;
+  --qf-grid-gap: 1.5rem;
+  --qf-content-max: 56rem;
+  --qf-leadin-max: 52rem;
+  --qf-section-sub-max: 40rem;
+  --qf-section-heading-max: 36rem;
+
+  --ifm-container-width: var(--qf-page-max);
+  --ifm-container-width-xl: var(--qf-page-max);
+  --ifm-spacing-horizontal: var(--qf-page-gutter);
+
+  /* Navbar: Infima defaults (3.75rem fixed height + padding) clash with our inner min-height — unify here */
+  --qf-navbar-pad-y: 0.625rem;
+  --qf-navbar-target: 2.875rem;
+  --ifm-navbar-height: 4.25rem;
+  --ifm-navbar-padding-vertical: 0;
+  --ifm-navbar-padding-horizontal: 0;
+
   --ifm-color-primary: #7c3aed;
   --ifm-color-primary-dark: #6d28d9;
   --ifm-color-primary-darker: #5b21b6;
@@ -64,9 +89,58 @@ html[data-theme='dark'] {
   --ifm-code-background: rgba(167, 139, 250, 0.07);
 }
 
-/* ——— Navbar: tight, editorial bar ——— */
+@media (max-width: 996px) {
+  :root {
+    --qf-page-gutter: 1rem;
+    --qf-grid-gap: 1.25rem;
+  }
+}
+
+/* Docs — slightly larger type for long-form reading (body + headings + code) */
+.theme-doc-markdown.markdown {
+  --ifm-font-size-base: 106.25%;
+  --ifm-line-height-base: 1.72;
+  --ifm-code-font-size: 95%;
+  font-size: var(--ifm-font-size-base);
+  --ifm-h1-font-size: 2.125rem;
+  --ifm-h2-font-size: 1.6rem;
+  --ifm-h3-font-size: 1.35rem;
+  --ifm-h4-font-size: 1.0625rem;
+  --ifm-h5-font-size: 0.9375rem;
+  --ifm-h6-font-size: 0.9rem;
+}
+
+.theme-doc-markdown.markdown h1:first-child {
+  --ifm-h1-font-size: 3.2rem;
+}
+
+.theme-doc-markdown.markdown > h2 {
+  --ifm-h2-font-size: 2.125rem;
+}
+
+.theme-doc-markdown.markdown > h3 {
+  --ifm-h3-font-size: 1.6rem;
+}
+
+@media (max-width: 576px) {
+  .theme-doc-markdown.markdown h1:first-child {
+    --ifm-h1-font-size: 2.125rem;
+  }
+
+  .theme-doc-markdown.markdown > h2 {
+    --ifm-h2-font-size: 1.6rem;
+  }
+
+  .theme-doc-markdown.markdown > h3 {
+    --ifm-h3-font-size: 1.35rem;
+  }
+}
+
+/* ——— Navbar ——— */
 .navbar {
   padding: 0;
+  height: auto;
+  min-height: var(--ifm-navbar-height);
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
   background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(14px);
@@ -80,14 +154,25 @@ html[data-theme='dark'] .navbar {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
 }
 
+.navbar__brand {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  margin-right: 0;
+}
+
 .navbar__inner {
-  max-width: 1280px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  max-width: var(--qf-page-max);
+  width: 100%;
   margin-left: auto;
   margin-right: auto;
-  padding-left: 1.25rem;
-  padding-right: 1.25rem;
-  min-height: 3.5rem;
-  gap: 0.5rem;
+  padding: var(--qf-navbar-pad-y) var(--qf-page-gutter);
+  box-sizing: border-box;
+  gap: 0.875rem;
+  min-height: 0;
 }
 
 .navbar__items:not(.navbar__items--right) {
@@ -100,28 +185,34 @@ html[data-theme='dark'] .navbar {
 .navbar__items--right {
   flex: 0 0 auto;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.625rem;
 }
 
 @media (max-width: 996px) {
+  :root {
+    --ifm-navbar-height: 4rem;
+    --qf-navbar-pad-y: 0.5625rem;
+  }
+
   .navbar__inner {
-    padding-left: 1rem;
-    padding-right: 1rem;
+    gap: 0.625rem;
   }
 
   .navbar__items--right {
-    gap: 0.35rem;
+    gap: 0.5rem;
   }
 }
 
+/* Nav links — extra vertical padding for clear space above/below text */
 .navbar__link {
   font-weight: 500;
-  font-size: 0.875rem;
+  font-size: 1rem;
+  line-height: 1.5;
   border-radius: 0.375rem;
-  padding: 0.35rem 0.5rem;
-  transition:
-    color 0.15s ease,
-    background 0.15s ease;
+  padding: 0.6875rem 0.8125rem;
+  display: inline-flex;
+  align-items: center;
+  transition: color 0.18s ease;
 }
 
 .navbar__link:hover,
@@ -130,20 +221,29 @@ html[data-theme='dark'] .navbar {
 }
 
 html[data-theme='light'] .navbar__link:hover {
-  background: rgba(124, 58, 237, 0.06);
+  background: transparent;
 }
 
 html[data-theme='dark'] .navbar__link:hover {
-  background: rgba(167, 139, 250, 0.12);
+  background: transparent;
   color: #fafafa;
 }
 
 /* Version dropdown trigger */
 .navbar__item.dropdown .navbar__link {
-  font-size: 0.8125rem;
+  font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.02em;
+  line-height: 1.5;
   color: var(--ifm-color-emphasis-700);
+  padding: 0.6875rem 0.6875rem 0.6875rem 0.8125rem;
+}
+
+/* Remove Infima’s extra .navbar__item padding so only .navbar__link padding controls rhythm */
+.navbar__item {
+  display: flex;
+  align-items: center;
+  padding: 0;
 }
 
 .navbar__item.dropdown .navbar__link:hover,
@@ -153,20 +253,27 @@ html[data-theme='dark'] .navbar__link:hover {
 
 /* Local search (@cmfcmf) — pill-shaped field */
 .navbar .dsla-search-wrapper {
-  flex: 0 1 15rem;
-  min-width: 7.5rem;
+  flex: 0 1 16.5rem;
+  min-width: 8.5rem;
+  display: flex;
+  align-items: center;
+  align-self: center;
 }
 
 @media (min-width: 997px) {
   .navbar .dsla-search-wrapper {
-    max-width: 16rem;
+    max-width: 18rem;
   }
 }
 
 .navbar .dsla-search-field {
+  display: flex;
+  align-items: center;
+  min-height: var(--qf-navbar-target);
   border-radius: 9999px;
   border: 1px solid var(--ifm-color-emphasis-300);
   background: var(--ifm-background-surface-color);
+  box-sizing: border-box;
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease;
@@ -195,16 +302,26 @@ html[data-theme='dark'] .navbar .dsla-search-field:hover {
   border: none !important;
   border-radius: 9999px !important;
   background: transparent !important;
-  font-size: 0.8125rem !important;
-  min-height: 2.25rem;
+  font-size: 1rem !important;
+  line-height: 1.5 !important;
+  min-height: var(--qf-navbar-target);
+  padding-top: 0.5625rem !important;
+  padding-bottom: 0.5625rem !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
   box-shadow: none !important;
 }
 
 .navbar .dsla-search-field .aa-DetachedSearchButton {
   border-radius: 9999px !important;
   border: none !important;
-  min-height: 2.25rem;
-  font-size: 0.8125rem !important;
+  min-height: var(--qf-navbar-target);
+  font-size: 1rem !important;
+  line-height: 1.5 !important;
+  padding-top: 0.5625rem !important;
+  padding-bottom: 0.5625rem !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
 }
 
 /* Algolia theme search input (if used) */
@@ -212,8 +329,11 @@ html[data-theme='dark'] .navbar .dsla-search-field:hover {
   border-radius: 9999px !important;
   border: 1px solid var(--ifm-color-emphasis-300) !important;
   background: var(--ifm-background-surface-color) !important;
-  font-size: 0.8125rem !important;
-  padding: 0.4rem 0.95rem !important;
+  font-size: 1rem !important;
+  line-height: 1.5 !important;
+  padding: 0.5625rem 1.0625rem !important;
+  min-height: var(--qf-navbar-target) !important;
+  box-sizing: border-box !important;
 }
 
 .navbar__search-input:focus {
@@ -221,57 +341,117 @@ html[data-theme='dark'] .navbar .dsla-search-field:hover {
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.18) !important;
 }
 
-/* GitHub — icon link (navbar right) */
+/* GitHub — icon only, height matches link row */
 .navbar__link.navbar-link-github {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: var(--qf-navbar-target);
+  height: var(--qf-navbar-target);
   padding: 0;
-  border-radius: 0.5rem;
-  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 0;
+  border: none;
   line-height: 0;
   color: var(--ifm-heading-color) !important;
   background: transparent;
-  transition:
-    border-color 0.15s ease,
-    color 0.15s ease,
-    box-shadow 0.15s ease;
+  flex-shrink: 0;
+  box-shadow: none;
+  transition: color 0.18s ease, opacity 0.18s ease;
 }
 
 .navbar__link.navbar-link-github svg {
   display: block;
   flex-shrink: 0;
+  width: 1.4375rem;
+  height: 1.4375rem;
 }
 
 .navbar__link.navbar-link-github:hover {
-  border-color: var(--ifm-color-primary);
   color: var(--ifm-color-primary) !important;
-  box-shadow: 0 2px 12px rgba(124, 58, 237, 0.12);
+  opacity: 0.88;
+  box-shadow: none;
 }
 
 html[data-theme='dark'] .navbar__link.navbar-link-github {
-  border-color: rgba(255, 255, 255, 0.14);
   color: #fafafa !important;
 }
 
 html[data-theme='dark'] .navbar__link.navbar-link-github:hover {
-  border-color: var(--brand-flux);
   color: var(--brand-flux) !important;
-  box-shadow: 0 0 20px rgba(255, 118, 25, 0.15);
+  opacity: 0.92;
+}
+
+/* Color mode toggle — same vertical footprint as links + search */
+.navbar__items--right > div:has(> button.clean-btn) {
+  width: var(--qf-navbar-target);
+  height: var(--qf-navbar-target);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.navbar__items--right > div:has(> button.clean-btn) button.clean-btn {
+  border-radius: 0;
+}
+
+.navbar__items--right > div:has(> button.clean-btn) button.clean-btn:hover {
+  background: transparent;
+  opacity: 0.85;
+}
+
+html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) button.clean-btn:hover {
+  background: transparent;
+  opacity: 0.88;
+}
+
+.navbar__items--right > div:has(> button.clean-btn) svg {
+  width: 1.375rem !important;
+  height: 1.375rem !important;
+}
+
+/* Mobile menu toggle — lives in .navbar__items--right (far right); drop Infima’s left-bar margin */
+.navbar__toggle {
+  margin-right: 0;
+  margin-left: 0;
+  padding: 0.5rem;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.navbar__toggle svg {
+  width: 1.5rem;
+  height: 1.5rem;
 }
 
 /* Focus rings */
 .navbar__link:focus-visible,
 .navbar__toggle:focus-visible,
-.navbar__search-input:focus-visible {
+.navbar__search-input:focus-visible,
+.navbar__items--right > div:has(> button.clean-btn) button.clean-btn:focus-visible {
   outline: 2px solid var(--ifm-color-primary);
   outline-offset: 2px;
 }
 
+/* Footer — spacing scale + grid alignment (4 columns → 2 → 1) */
 footer.footer {
+  --qf-footer-pt: 2.75rem;
+  --qf-footer-pb: 2.25rem;
+  --qf-footer-title-fs: 0.6875rem;
+  --qf-footer-title-lh: 1.35;
+  --qf-footer-title-mb: 0.8125rem;
+  --qf-footer-link-stack: 0.4375rem;
+  --qf-footer-cols-gap-x: var(--qf-grid-gap);
+  --qf-footer-cols-gap-y: 2rem;
+  --qf-footer-links-mb: 2.25rem;
+  --qf-footer-bottom-pt: 1.875rem;
+  /* Fixed stack between LakeOps wordmark and mascot (px = stable across zoom rounding) */
+  --qf-footer-lakeops-stack: 10px;
+
   border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding: var(--qf-footer-pt) 0 var(--qf-footer-pb);
 }
 
 html[data-theme='dark'] footer.footer {
@@ -280,44 +460,90 @@ html[data-theme='dark'] footer.footer {
 }
 
 footer.footer .container.container-fluid {
-  max-width: var(--ifm-container-width-xl, 1140px);
-  padding-left: var(--ifm-spacing-horizontal);
-  padding-right: var(--ifm-spacing-horizontal);
+  max-width: var(--qf-page-max);
+  padding-left: var(--qf-page-gutter);
+  padding-right: var(--qf-page-gutter);
 }
 
 footer.footer .footer__links.row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 2.5rem 3.5rem;
-  margin-bottom: 2rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: var(--qf-footer-cols-gap-x);
+  row-gap: var(--qf-footer-cols-gap-y);
+  margin-left: 0;
+  margin-right: 0;
+  margin-bottom: var(--qf-footer-links-mb);
   text-align: left;
+  align-items: start;
+}
+
+@media (max-width: 996px) {
+  footer.footer .footer__links.row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 1.5rem;
+    row-gap: 1.75rem;
+  }
+}
+
+@media (max-width: 576px) {
+  footer.footer .footer__links.row {
+    grid-template-columns: 1fr;
+    row-gap: 1.625rem;
+  }
 }
 
 footer.footer .footer__col {
-  flex: 0 1 auto;
-  min-width: 11rem;
-  max-width: 16rem;
+  flex: unset;
+  min-width: 0;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+@media (max-width: 996px) {
+  footer.footer .footer__col {
+    margin-bottom: 0;
+  }
 }
 
 footer.footer .footer__title {
-  font-size: 0.75rem;
+  font-size: var(--qf-footer-title-fs);
   font-weight: 700;
-  letter-spacing: 0.06em;
+  line-height: var(--qf-footer-title-lh);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  margin-bottom: 0.65rem;
+  margin-bottom: var(--qf-footer-title-mb);
+  margin-top: 0;
   opacity: 0.92;
 }
 
 footer.footer .footer__items {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  align-items: flex-start;
+  gap: var(--qf-footer-link-stack);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+footer.footer .footer__item {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+footer.footer .footer__link-item {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.5;
+  padding: 0.1875rem 0;
+  border-radius: 0.25rem;
 }
 
 footer.footer .footer__bottom {
-  padding-top: 1.75rem;
-  margin-top: 0.5rem;
+  padding-top: var(--qf-footer-bottom-pt);
+  margin-top: 0;
   border-top: 1px solid rgba(148, 163, 184, 0.15);
 }
 
@@ -327,11 +553,12 @@ html[data-theme='dark'] footer.footer .footer__bottom {
 
 footer.footer .footer__copyright {
   font-size: 0.8125rem;
-  line-height: 1.6;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
   color: var(--ifm-color-emphasis-600);
-  max-width: 42rem;
-  margin-left: auto;
-  margin-right: auto;
+  max-width: var(--qf-section-sub-max);
+  margin: 0 auto;
+  padding: 0 0.5rem;
 }
 
 html[data-theme='light'] footer.footer.footer--dark {
@@ -408,6 +635,218 @@ html[data-theme='dark'] .table-of-contents__link:hover {
   color: var(--brand-flux);
 }
 
+/* Doc pagination — Infima pins “next” to column 2, so a lone Next leaves an empty column */
+.pagination-nav {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pagination-nav__link {
+  padding: 1rem 1.25rem;
+}
+
+.pagination-nav__link--next:first-child:last-child,
+.pagination-nav__link--prev:first-child:last-child {
+  grid-column: 1 / -1;
+  text-align: left;
+}
+
+.pagination-nav__link--next:first-child:last-child .pagination-nav__label::after,
+.pagination-nav__link--prev:first-child:last-child .pagination-nav__label::before {
+  content: none;
+}
+
+.pagination-nav__link--next:first-child:last-child .pagination-nav__label,
+.pagination-nav__link--prev:first-child:last-child .pagination-nav__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pagination-nav__link--next:first-child:last-child .pagination-nav__label::after {
+  content: '→';
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.pagination-nav__link--prev:first-child:last-child .pagination-nav__label::before {
+  content: '←';
+  font-weight: 600;
+  opacity: 0.85;
+  margin-right: 0.35rem;
+}
+
+html[data-theme='dark'] .pagination-nav__link {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .pagination-nav__link:hover {
   border-color: var(--ifm-color-primary);
+}
+
+html[data-theme='dark'] .pagination-nav__link:hover {
+  border-color: var(--brand-flux);
+}
+
+/* Wide code blocks stay within the doc column; flex children can shrink for horizontal scroll */
+.docMainContainer {
+  min-width: 0;
+}
+
+.theme-doc-markdown.markdown .theme-code-block {
+  max-width: 100%;
+}
+
+/* Breadcrumbs — avoid cramped wrap on narrow doc column */
+.theme-doc-breadcrumbs {
+  margin-bottom: 0.5rem;
+}
+
+.breadcrumbs__link {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 996px) {
+  .breadcrumbs__link {
+    max-width: 10rem;
+  }
+}
+
+/* Admonitions — clearer border on black canvas */
+html[data-theme='dark'] .admonition {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: var(--ifm-background-surface-color);
+}
+
+/* Footer link row + icons */
+.footer__link-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.footer__link-icon {
+  flex-shrink: 0;
+  opacity: 0.95;
+}
+
+/* LakeOps column — top-aligned with other footer columns (grid align-items: start) */
+.footer__col--lakeops {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.footer__lakeops-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--qf-footer-lakeops-stack);
+  width: 100%;
+  max-width: 9.5rem;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 0;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  box-shadow: none;
+  transition: color 0.18s ease, opacity 0.18s ease;
+}
+
+.footer__lakeops-brand:hover {
+  text-decoration: none;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  opacity: 1;
+}
+
+.footer__lakeops-brand:active {
+  transform: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+html[data-theme='dark'] .footer__lakeops-brand:hover,
+html[data-theme='dark'] .footer__lakeops-brand:active {
+  box-shadow: none;
+  background: transparent;
+}
+
+.footer__lakeops-brand:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
+.footer__lakeops-wordmark {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  text-align: center;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--lo-violet-600);
+  transition: color 0.18s ease;
+}
+
+html[data-theme='dark'] .footer__lakeops-wordmark {
+  color: var(--ifm-color-primary-light);
+}
+
+.footer__lakeops-brand:hover .footer__lakeops-wordmark {
+  color: var(--lo-violet-700);
+}
+
+html[data-theme='dark'] .footer__lakeops-brand:hover .footer__lakeops-wordmark {
+  color: var(--ifm-color-primary-lighter);
+}
+
+.footer__lakeops-mascot {
+  width: 6.25rem;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  flex-shrink: 0;
+  object-fit: contain;
+  transition: opacity 0.18s ease, filter 0.18s ease;
+  pointer-events: none;
+}
+
+.footer__lakeops-brand:hover .footer__lakeops-mascot {
+  transform: none;
+  opacity: 0.9;
+  filter: brightness(1.04);
+}
+
+.footer__lakeops-brand:active .footer__lakeops-mascot {
+  transform: none;
+  opacity: 0.88;
+}
+
+.footer__link-external-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.1rem;
+  opacity: 0.75;
+  vertical-align: middle;
+}
+
+.footer__link-external-icon svg {
+  display: block;
 }

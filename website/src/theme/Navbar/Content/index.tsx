@@ -89,7 +89,6 @@ export default function NavbarContent(): ReactNode {
     <NavbarContentLayout
       left={
         <>
-          {!mobileSidebar.disabled && <NavbarMobileSidebarToggle />}
           <NavbarLogo />
           <NavbarItems items={leftItems} />
         </>
@@ -106,6 +105,7 @@ export default function NavbarContent(): ReactNode {
               <SearchBar />
             </NavbarSearch>
           )}
+          {!mobileSidebar.disabled && <NavbarMobileSidebarToggle />}
         </>
       }
     />

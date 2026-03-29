@@ -34,7 +34,10 @@ html[data-theme='dark'] .heroGlow {
 .heroInner {
   position: relative;
   text-align: center;
-  max-width: 56rem;
+  width: 100%;
+  max-width: var(--qf-content-max);
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .heroImage {
@@ -107,7 +110,7 @@ html[data-theme='dark'] .heroTagline {
   line-height: 1.65;
   color: #475569;
   margin: 0 auto 1.75rem;
-  max-width: 52rem;
+  max-width: var(--qf-leadin-max);
 }
 
 html[data-theme='dark'] .heroLeadin {

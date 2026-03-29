@@ -40,7 +40,7 @@ const FeatureList: FeatureItem[] = [
 
 function Feature({title, description}: FeatureItem): ReactNode {
   return (
-    <div className={clsx('col col--4', styles.featureCol)}>
+    <div className={styles.featureCol}>
       <div className={styles.featureCard}>
         <Heading as="h3" className={styles.featureTitle}>
           {title}
@@ -54,14 +54,13 @@ function Feature({title, description}: FeatureItem): ReactNode {
 export default function HomepageFeatures(): ReactNode {
   return (
     <section className={styles.features}>
-      <div className="container">
-        <p className={styles.sectionEyebrow}>LakeOps · QueryFlux</p>
+      <div className={clsx('container', styles.featuresGrid)}>
         <h2 className={styles.sectionHeading}>Built for multi-engine SQL estates</h2>
         <p className={styles.sectionSub}>
           Same patterns you expect from a serious proxy — explicit routing, capacity
           limits, and observability — without locking teams to a single database.
         </p>
-        <div className={clsx('row', styles.featureRow)}>
+        <div className={styles.featureRow}>
           {FeatureList.map((props, idx) => (
             <Feature key={idx} {...props} />
           ))}
