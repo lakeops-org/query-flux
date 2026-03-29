@@ -8,14 +8,21 @@ const siteUrl = 'https://lakeops-org.github.io';
 /** Public docs homepage (project Pages: host + repo path, no trailing slash). */
 const siteCanonicalUrl = `${siteUrl}/queryflux`;
 
+/**
+ * GitHub Pages serves the site under `/queryflux/`. For local dev, `npm start` sets
+ * `DOCUSAURUS_USE_ROOT_BASE=true` so the app lives at http://localhost:3000/ (not /queryflux/).
+ * For `npm run build` / deploy, do not set that env var.
+ */
+const baseUrl =
+  process.env.DOCUSAURUS_USE_ROOT_BASE === 'true' ? '/' : '/queryflux/';
+
 const config: Config = {
   title: 'QueryFlux',
   tagline: 'Universal SQL query proxy and router in Rust',
   favicon: 'img/queryflux-logo.png',
 
-  // Must match GitHub Pages path: repo `queryflux` → baseUrl `/queryflux/`.
   url: siteUrl,
-  baseUrl: '/queryflux/',
+  baseUrl,
 
   // Used by `npm run deploy` to pick the target repo — must match `git remote` (org/repo).
   organizationName: 'lakeops-org',
@@ -174,10 +181,12 @@ const config: Config = {
             {
               label: 'GitHub',
               href: 'https://github.com/lakeops-org/queryflux',
+              className: 'footer__link-item--github',
             },
             {
               label: 'Issues',
               href: 'https://github.com/lakeops-org/queryflux/issues',
+              className: 'footer__link-item--github',
             },
           ],
         },

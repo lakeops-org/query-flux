@@ -30,14 +30,16 @@ html[data-theme='light'] {
   --ifm-background-surface-color: #fffcf8;
   --ifm-navbar-background-color: #faf7f4;
   --ifm-footer-background-color: #ebe8e3;
+  --ifm-color-content: #334155;
   --ifm-color-emphasis-200: #e2dfda;
+  --ifm-color-emphasis-600: #64748b;
   --ifm-color-emphasis-700: #475569;
   --ifm-heading-color: #1e293b;
   --ifm-menu-color: #334155;
   --ifm-toc-border-color: rgba(217, 74, 31, 0.15);
 }
 
-[data-theme='dark'] {
+html[data-theme='dark'] {
   --ifm-color-primary: #f0652f;
   --ifm-color-primary-dark: #ea5924;
   --ifm-color-primary-darker: #d94a1f;
@@ -53,6 +55,7 @@ html[data-theme='light'] {
   --ifm-footer-background-color: #070a0f;
   --ifm-color-content: #e2e8f0;
   --ifm-heading-color: #f1f5f9;
+  --ifm-color-emphasis-600: #94a3b8;
   --ifm-color-emphasis-700: #94a3b8;
   --ifm-menu-color: #cbd5e1;
   --ifm-hover-overlay: rgba(34, 211, 238, 0.08);
@@ -135,6 +138,23 @@ footer.footer .footer__items {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+footer.footer .footer__link-item.footer__link-item--github {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+footer.footer .footer__link-icon--github {
+  flex-shrink: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  opacity: 0.88;
+}
+
+footer.footer .footer__link-item.footer__link-item--github:hover .footer__link-icon--github {
+  opacity: 1;
 }
 
 footer.footer .footer__bottom {

@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "docusaurus": "docusaurus",
-    "start": "docusaurus start",
+    "dev": "DOCUSAURUS_USE_ROOT_BASE=true docusaurus start",
+    "start": "DOCUSAURUS_USE_ROOT_BASE=true docusaurus start",
     "build": "docusaurus build",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
