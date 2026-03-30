@@ -1,0 +1,52 @@
+# QueryFlux + Studio (unified image) + Postgres — no external query engine required.
+# DuckDB is embedded in the image and used as the default query engine.
+#
+# From this directory:
+#   docker compose up -d --wait
+#
+# Studio:      http://localhost:3000
+# SQL (Trino protocol): http://localhost:8080
+# Admin API:   http://localhost:9000
+
+name: queryflux-quickstart
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432" # avoids clashing with a local Postgres on 5432
+    environment:
+      POSTGRES_DB: queryflux
+      POSTGRES_USER: queryflux
+      POSTGRES_PASSWORD: queryflux
+    volumes:
+      - queryflux-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queryflux"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  queryflux:
+    image: ghcr.io/lakeops-org/queryflux:latest-main
+    ports:
+      - "3000:3000"  # Studio UI
+      - "8080:8080"  # Trino HTTP frontend
+      - "9000:9000"  # Admin API
+    volumes:
+      - ./config.yaml:/etc/queryflux/config.yaml:ro
+    environment:
+      RUST_LOG: ${RUST_LOG:-queryflux=info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  queryflux-pg:

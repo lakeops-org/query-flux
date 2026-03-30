@@ -9,10 +9,16 @@ import type {
 } from "./api-types";
 import { normalizeClusterGroupRecord } from "./group-config-helpers";
 
-const ADMIN_API_URL = process.env.ADMIN_API_URL ?? "http://localhost:9000";
+/** Server: direct admin API. Browser: same-origin proxy (see `app/api/admin-proxy/`). */
+function adminApiOrigin(): string {
+  if (typeof window !== "undefined") {
+    return "/api/admin-proxy";
+  }
+  return process.env.ADMIN_API_URL ?? "http://localhost:9000";
+}
 
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${ADMIN_API_URL}${path}`, { cache: "no-store" });
+  const res = await fetch(`${adminApiOrigin()}${path}`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`Admin API ${path} → ${res.status}: ${await res.text()}`);
   }
@@ -20,7 +26,7 @@ async function apiFetch<T>(path: string): Promise<T> {
 }
 
 async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${ADMIN_API_URL}${path}`, {
+  const res = await fetch(`${adminApiOrigin()}${path}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -33,7 +39,7 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function apiPut<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${ADMIN_API_URL}${path}`, {
+  const res = await fetch(`${adminApiOrigin()}${path}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -46,7 +52,7 @@ async function apiPut<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${ADMIN_API_URL}${path}`, {
+  const res = await fetch(`${adminApiOrigin()}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -125,7 +131,7 @@ export async function renameClusterConfig(
 
 export async function deleteClusterConfig(name: string): Promise<void> {
   const res = await fetch(
-    `${ADMIN_API_URL}/admin/config/clusters/${encodeURIComponent(name)}`,
+    `${adminApiOrigin()}/admin/config/clusters/${encodeURIComponent(name)}`,
     { method: "DELETE", cache: "no-store" },
   );
   if (!res.ok && res.status !== 204) {
@@ -171,7 +177,7 @@ export async function renameGroupConfig(
 
 export async function deleteGroupConfig(name: string): Promise<void> {
   const res = await fetch(
-    `${ADMIN_API_URL}/admin/config/groups/${encodeURIComponent(name)}`,
+    `${adminApiOrigin()}/admin/config/groups/${encodeURIComponent(name)}`,
     { method: "DELETE", cache: "no-store" },
   );
   if (!res.ok && res.status !== 204) {
@@ -202,7 +208,7 @@ export async function updateUserScript(
 }
 
 export async function deleteUserScript(id: number): Promise<void> {
-  const res = await fetch(`${ADMIN_API_URL}/admin/config/scripts/${id}`, {
+  const res = await fetch(`${adminApiOrigin()}/admin/config/scripts/${id}`, {
     method: "DELETE",
     cache: "no-store",
   });
@@ -235,7 +241,7 @@ export async function getRoutingConfig(): Promise<import("./api-types").RoutingC
 }
 
 export async function putSecurityConfig(body: import("./api-types").UpsertSecurityConfig): Promise<void> {
-  const res = await fetch(`${ADMIN_API_URL}/admin/config/security`, {
+  const res = await fetch(`${adminApiOrigin()}/admin/config/security`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -245,7 +251,7 @@ export async function putSecurityConfig(body: import("./api-types").UpsertSecuri
 }
 
 export async function putRoutingConfig(body: import("./api-types").UpsertRoutingConfig): Promise<void> {
-  const res = await fetch(`${ADMIN_API_URL}/admin/config/routing`, {
+  const res = await fetch(`${adminApiOrigin()}/admin/config/routing`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

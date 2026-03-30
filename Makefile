@@ -29,7 +29,7 @@ server:
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
 	RUST_LOG=queryflux=info,queryflux_frontend=info \
-	export DUCKDB_DOWNLOAD_LIB=1 \
+	DUCKDB_DOWNLOAD_LIB=1 \
 	$(CARGO) run --bin queryflux -- --config config.local.yaml
 ## Stop Docker services and any running QueryFlux process
 stop:

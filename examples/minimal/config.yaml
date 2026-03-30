@@ -1,0 +1,34 @@
+queryflux:
+  externalAddress: http://localhost:8080
+  frontends:
+    trinoHttp:
+      enabled: true
+      port: 8080
+  persistence:
+    type: postgres
+    url: postgres://queryflux:queryflux@postgres:5432/queryflux
+  adminApi:
+    port: 9000
+
+clusters:
+  trino-1:
+    engine: trino
+    enabled: true
+    endpoint: http://trino:8080
+
+clusterGroups:
+  trino:
+    enabled: true
+    maxRunningQueries: 100
+    members: [trino-1]
+    strategy:
+      type: roundRobin
+
+routers:
+  - type: protocolBased
+    trinoHttp: trino
+
+routingFallback: trino
+
+translation:
+  errorOnUnsupported: false

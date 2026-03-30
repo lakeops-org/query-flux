@@ -88,6 +88,7 @@ The loader uses [`docker/fixtures/init.docker-network.sql`](../docker/fixtures/i
 |---------|-----|
 | Trino via QueryFlux | http://localhost:8080 |
 | MySQL wire (StarRocks via QueryFlux) | `mysql` client → **localhost:3306** |
+| Node.js sample (same MySQL wire) | [`node-starrocks-via-queryflux/`](node-starrocks-via-queryflux/) — `npm install && npm start` |
 | Studio | http://localhost:3000 |
 | Trino (direct) | http://localhost:8081 |
 | MinIO console | http://localhost:19001 |

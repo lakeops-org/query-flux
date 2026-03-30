@@ -413,6 +413,12 @@ pub async fn execute_to_sink(
             let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
             let elapsed_ms = start.elapsed().as_millis() as u64;
             let err_msg = e.to_string();
+            warn!(
+                id = %query_id,
+                cluster = %cluster_name,
+                sql = %translated,
+                "execute_as_arrow failed: {err_msg}"
+            );
             state.record_query(
                 &query_id,
                 None,

@@ -1,0 +1,15 @@
+queryflux:
+  externalAddress: http://localhost:8080
+  frontends:
+    mysqlWire:
+      enabled: true
+      port: 3306
+  persistence:
+    type: postgres
+    url: postgres://queryflux:queryflux@postgres:5432/queryflux
+  adminApi:
+    port: 9000
+
+
+translation:
+  errorOnUnsupported: false

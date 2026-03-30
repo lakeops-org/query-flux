@@ -40,7 +40,7 @@ services:
       start_period: 30s
 
   queryflux:
-    image: 343959804465.dkr.ecr.us-east-1.amazonaws.com/queryflux:latest
+    image: ghcr.io/lakeops-org/queryflux:latest-main
     ports:
       - "8080:8080"
       - "9000:9000"

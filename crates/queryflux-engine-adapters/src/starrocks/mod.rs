@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use arrow::array::{
     ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
@@ -95,8 +96,9 @@ impl StarRocksAdapter {
     }
 
     async fn connect(&self) -> Result<Conn> {
-        Conn::new(self.opts.clone())
+        tokio::time::timeout(Duration::from_secs(10), Conn::new(self.opts.clone()))
             .await
+            .map_err(|_| QueryFluxError::Engine("StarRocks connect timed out (10s)".to_string()))?
             .map_err(|e| QueryFluxError::Engine(format!("StarRocks connect failed: {e}")))
     }
 
