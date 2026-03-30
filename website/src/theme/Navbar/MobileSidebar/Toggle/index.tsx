@@ -1,0 +1,51 @@
+/**
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+import React, {useRef, type ReactNode} from 'react';
+import {useNavbarMobileSidebar} from '@docusaurus/theme-common/internal';
+import {translate} from '@docusaurus/Translate';
+import IconMenu from '@theme/Icon/Menu';
+import {
+  clearNavbarMenuCloseTimer,
+  scheduleNavbarMenuClose,
+} from '../../navbarMenuHoverTimer';
+
+import styles from './styles.module.css';
+
+export default function MobileSidebarToggle(): ReactNode {
+  const {toggle, shown} = useNavbarMobileSidebar();
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+
+  return (
+    <div
+      className={styles.toggleWrap}
+      onMouseEnter={() => {
+        clearNavbarMenuCloseTimer();
+        if (!shownRef.current) {
+          toggle();
+        }
+      }}
+      onMouseLeave={() =>
+        scheduleNavbarMenuClose(() => shownRef.current, toggle)
+      }>
+      <button
+        onClick={toggle}
+        aria-label={translate({
+          id: 'theme.docs.sidebar.toggleSidebarButtonAriaLabel',
+          message: 'Toggle navigation bar',
+          description:
+            'The ARIA label for hamburger menu button of mobile navigation',
+        })}
+        aria-expanded={shown}
+        className="navbar__toggle clean-btn"
+        type="button">
+        <IconMenu />
+      </button>
+    </div>
+  );
+}

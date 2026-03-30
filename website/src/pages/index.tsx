@@ -7,6 +7,9 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
+import HomepageUseCases from '@site/src/components/HomepageUseCases';
+import HomepageBenefits from '@site/src/components/HomepageBenefits';
+import HomepageNextSteps from '@site/src/components/HomepageNextSteps';
 import styles from './index.module.css';
 
 function HomepageHeader(): ReactNode {
@@ -67,6 +70,9 @@ export default function Home(): ReactNode {
       <HomepageHeader />
       <main className={styles.mainBelowFold}>
         <HomepageFeatures />
+        <HomepageUseCases />
+        <HomepageBenefits />
+        <HomepageNextSteps />
       </main>
     </Layout>
   );
