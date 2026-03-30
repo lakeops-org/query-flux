@@ -117,7 +117,6 @@ RUN npm run build
 # =============================================================================
 FROM python:3.12.13-slim-trixie AS runtime
 
-ARG TARGETARCH=amd64
 ARG NODE_VERSION=20.18.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -125,12 +124,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     xz-utils \
     tini \
-    && case "$TARGETARCH" in \
+    && DPKG_ARCH=$(dpkg --print-architecture) \
+    && case "$DPKG_ARCH" in \
          amd64) NODE_ARCH=x64 ;; \
          arm64) NODE_ARCH=arm64 ;; \
-         arm) NODE_ARCH=armv7l ;; \
-         386) NODE_ARCH=x86 ;; \
-         *) echo "unsupported TARGETARCH=$TARGETARCH"; exit 1 ;; \
+         armhf) NODE_ARCH=armv7l ;; \
+         i386)  NODE_ARCH=x86 ;; \
+         *) echo "unsupported arch=$DPKG_ARCH"; exit 1 ;; \
        esac \
     && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
          | tar -xJf - -C /usr/local --strip-components=1 \
