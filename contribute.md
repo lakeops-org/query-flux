@@ -39,6 +39,7 @@ By contributing, you agree that your contributions will be licensed under the sa
 - Backward-incompatible configuration changes (prefer migration paths or deprecation when possible).
 
 ## Releases and container images
+ 
 
 Maintainers cut **git tags** to publish **two** multi-arch images to **GitHub Container Registry** ([GHCR](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)) and to create entries on the GitHub [**Releases**](https://github.com/lakeops-org/query-flux/releases) page.
 
