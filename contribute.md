@@ -14,11 +14,12 @@ By contributing, you agree that your contributions will be licensed under the sa
 ## Pull requests
 
 1. **Keep changes focused.** One logical change per PR is easier to review than a large refactor mixed with a feature fix.
-2. **Match existing style.** Rust: same patterns as surrounding code, `rustfmt`-compatible formatting, and no new Clippy warnings (see checks below).
-3. **Test your change.**
+2. **PR title:** use Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, optional `(scope)` and `!`); CI checks [.github/pr-title-checker-config.json](.github/pr-title-checker-config.json). Optional local commit hook: [development.md](development.md#conventional-commits-optional-git-hook).
+3. **Match existing style.** Rust: same patterns as surrounding code, `rustfmt`-compatible formatting, and no new Clippy warnings (see checks below).
+4. **Test your change.**
    - Run `make check` (Clippy with `-D warnings` + unit tests; no Docker required).
    - If you touch integration behavior (routing, Trino HTTP, adapters), run `make test-e2e` when you can (Docker required).
-4. **Update docs when behavior changes.** Config keys, router types, or public HTTP/admin behavior should be reflected in `README.md`, `docs/`, or `config.example.yaml` as appropriate.
+5. **Update docs when behavior changes.** Config keys, router types, or public HTTP/admin behavior should be reflected in `README.md`, `docs/`, or `config.example.yaml` as appropriate.
 
 ## Code review expectations
 
