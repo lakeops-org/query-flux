@@ -94,15 +94,16 @@ html[data-theme='dark'] .heroTitleFlux {
 }
 
 .heroTagline {
-  font-size: clamp(1.05rem, 2vw, 1.2rem);
-  font-weight: 500;
-  color: #475569;
-  margin: 0 0 1.125rem;
+  font-size: clamp(1.14rem, 2.2vw, 1.34rem);
+  font-weight: 650;
+  color: #334155;
+  margin: 0 0 1rem;
   line-height: 1.5;
 }
 
 html[data-theme='dark'] .heroTagline {
-  color: #94a3b8;
+  color: #e2e8f0;
+  text-shadow: 0 0 24px rgba(124, 58, 237, 0.15);
 }
 
 .heroLeadin {

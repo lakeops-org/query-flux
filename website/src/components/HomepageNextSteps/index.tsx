@@ -1,37 +1,95 @@
 import type {ReactNode} from 'react';
 import clsx from 'clsx';
+import Link from '@docusaurus/Link';
 import Heading from '@theme/Heading';
 import styles from './styles.module.css';
 
-const nextSteps: string[] = [
-  'Getting started — Docker Compose examples (minimal, full stack), curl, and make dev for contributors',
-  'Architecture — system map, routing mechanics, dialect translation, observability',
-  'Motivation and goals — the full analysis: fragmented engine landscape, cost modeling, and the case for a proxy',
-  'Configuration reference — complete YAML reference for clusters, routers, auth, and persistence',
-  'Roadmap — what is shipped, what is next (ClickHouse, cost-aware routing, Snowflake, BigQuery)',
+type OptionItem = {
+  title: string;
+  to: string;
+  body: string;
+  cta: string;
+};
+
+const options: OptionItem[] = [
+  {
+    title: 'Architecture',
+    to: '/docs/architecture/overview',
+    body:
+      'This section describes how QueryFlux is put together: why it exists, how SQL is translated, and how traffic is routed to cluster groups and individual clusters.',
+    cta: 'Explore architecture',
+  },
+  {
+    title: 'Motivation and goals',
+    to: '/docs/architecture/motivation-and-goals',
+    body:
+      'Modern data stacks are fragmented by design. Different engines exist because different problems demand different trade-offs.',
+    cta: 'Read the motivation',
+  },
+  {
+    title: 'Configuration reference',
+    to: '/docs/configuration',
+    body: 'Copy config.example.yaml in the repository root and adjust for your environment.',
+    cta: 'Open configuration',
+  },
+  {
+    title: 'Roadmap',
+    to: '/docs/roadmap',
+    body:
+      'QueryFlux is under active development. This page tracks what is shipped, what is in progress, and where the project is headed.',
+    cta: 'See roadmap',
+  },
 ];
 
-function StepCard({text, full}: {text: string; full?: boolean}): ReactNode {
+function OptionCard({title, to, body, cta}: OptionItem): ReactNode {
   return (
-    <article className={clsx(styles.cardCol, full && styles.cardColFull)}>
-      <div className={styles.card}>
+    <article className={styles.optionCol}>
+      <Link className={styles.optionCard} to={to}>
         <div className={styles.cardAccent} aria-hidden />
-        <p className={styles.cardText}>{text}</p>
-      </div>
+        <Heading as="h3" className={styles.optionTitle}>
+          {title}
+        </Heading>
+        <p className={styles.optionText}>{body}</p>
+        <span className={styles.optionAction}>{cta} →</span>
+      </Link>
     </article>
   );
 }
 
 export default function HomepageNextSteps(): ReactNode {
   return (
-    <section className={styles.section} aria-labelledby="homepage-next-steps-heading">
+    <section className={styles.section} aria-labelledby="homepage-getting-started-heading">
       <div className={clsx('container', styles.grid)}>
-        <h2 id="homepage-next-steps-heading" className={styles.sectionHeading}>
-          Next steps
+        <h2 id="homepage-getting-started-heading" className={styles.sectionHeading}>
+          Getting started
         </h2>
-        <div className={styles.cardRow}>
-          {nextSteps.map((text, idx) => (
-            <StepCard key={text} text={text} full={idx === nextSteps.length - 1} />
+        <p className={styles.sectionSub}>
+          Start fast, then dive deeper by track.
+        </p>
+
+        <section className={styles.primaryCta} aria-label="Get started">
+          <div className={styles.cardAccent} aria-hidden />
+          <p className={styles.primaryEyebrow}>Quick start</p>
+          <Heading as="h3" className={styles.primaryTitle}>
+            Getting started
+          </Heading>
+          <p className={styles.primaryText}>
+            The fastest way to run QueryFlux is one of the Docker Compose examples under
+            examples/ in the repository.
+          </p>
+          <div className={styles.primaryActions}>
+            <Link className={clsx('button button--lg', styles.primaryButton)} to="/docs/getting-started">
+              Get started
+            </Link>
+            <Link className={styles.secondaryLink} to="/docs/intro">
+              Read intro
+            </Link>
+          </div>
+        </section>
+
+        <div className={styles.optionRow}>
+          {options.map((item) => (
+            <OptionCard key={item.title} {...item} />
           ))}
         </div>
       </div>

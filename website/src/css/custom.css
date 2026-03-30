@@ -174,7 +174,13 @@ main .pagination-nav__sublabel {
 
 /* Mobile drawer uses same menu as docs — match sidebar step */
 .navbar-sidebar .menu__link {
-  font-size: 1.125rem;
+  font-size: 1.2rem;
+  line-height: 1.6;
+}
+
+.navbar-sidebar .menu__list-item-collapsible .menu__link {
+  font-size: 1.24rem;
+  font-weight: 600;
 }
 
 /* ——— Navbar ——— */
@@ -306,7 +312,7 @@ html[data-theme='dark'] .navbar__link:hover {
 
 /* Local search (@cmfcmf) — pill-shaped field */
 .navbar .dsla-search-wrapper {
-  flex: 0 1 16.5rem;
+  flex: 0 1 18rem;
   min-width: 8.5rem;
   display: flex;
   align-items: center;
@@ -315,7 +321,7 @@ html[data-theme='dark'] .navbar__link:hover {
 
 @media (min-width: 997px) {
   .navbar .dsla-search-wrapper {
-    max-width: 18rem;
+    max-width: 20rem;
   }
 }
 
@@ -468,6 +474,27 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
  * display here outside that breakpoint — Infima uses display:none on desktop.
  */
 @media (max-width: 996px) {
+  /* Keep only Docs visible on the left; version dropdown collapses into hamburger */
+  .navbar__item.navbar-item-docs-mobile {
+    display: inline-flex !important;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .navbar__item.navbar-item-docs-mobile.navbar__link {
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+  }
+
+  .navbar__item.navbar-item-collapse-mobile {
+    display: none !important;
+  }
+
+  /* Right actions should collapse to hamburger; keep toggle pinned to far right */
+  .navbar__items--right {
+    margin-left: auto;
+  }
+
   .navbar__toggle {
     margin-right: 0;
     margin-left: 0;
@@ -491,7 +518,7 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
     display: flex !important;
     flex: 1 1 auto;
     min-width: 0;
-    max-width: min(14rem, 42vw);
+    max-width: min(15.5rem, 46vw);
   }
 
   .navbar__inner .dsla-search-field,
@@ -570,6 +597,11 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
 
 /* Extra-narrow: shrink search before hiding so the bar stays usable */
 @media (max-width: 420px) {
+  .navbar__item.navbar-item-docs-mobile.navbar__link {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
   .navbar__inner .dsla-search-wrapper,
   .navbar__inner [class*='navbarSearchContainer'] {
     max-width: min(9.5rem, 36vw);

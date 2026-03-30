@@ -28,6 +28,9 @@ export default function HomepageBenefits(): ReactNode {
         <h2 id="homepage-benefits-heading" className={styles.sectionHeading}>
           Benefits
         </h2>
+        <p className={styles.sectionSub}>
+          Cost control, SLA protection, and operational consistency across engines.
+        </p>
         <div className={styles.blocks}>
           <BenefitBlock title="Cut query costs by routing to the right engine">
             <p className={styles.prose}>
