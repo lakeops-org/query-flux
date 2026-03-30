@@ -1,0 +1,26 @@
+# Validates PR titles against .github/pr-title-checker-config.json (Conventional Commits subset).
+# Uses pull_request_target so forks are checked; see https://github.com/thehanimo/pr-title-checker
+
+name: PR title
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - labeled
+      - unlabeled
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: thehanimo/pr-title-checker@v1.4.3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          pass_on_octokit_error: false
+          configuration_path: .github/pr-title-checker-config.json
