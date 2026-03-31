@@ -23,6 +23,23 @@ use queryflux_core::{
 use tracing::warn;
 
 use crate::EngineAdapterTrait;
+
+/// Walk the `std::error::Error` source chain and join all messages with ": ".
+/// AWS SDK errors expose the real Athena message (e.g. "InvalidRequestException:
+/// Query string is null or empty") only via the source chain; `Display` on the
+/// outer `SdkError` just says "service error".
+fn aws_err(e: &impl std::error::Error) -> String {
+    let mut parts = vec![e.to_string()];
+    let mut src = e.source();
+    while let Some(s) = src {
+        let s_str = s.to_string();
+        if !parts.contains(&s_str) {
+            parts.push(s_str);
+        }
+        src = s.source();
+    }
+    parts.join(": ")
+}
 use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
@@ -195,7 +212,9 @@ impl AthenaAdapter {
                 .query_execution_id(execution_id)
                 .send()
                 .await
-                .map_err(|e| QueryFluxError::Engine(format!("Athena GetQueryExecution: {e}")))?;
+                .map_err(|e| {
+                    QueryFluxError::Engine(format!("Athena GetQueryExecution: {}", aws_err(&e)))
+                })?;
 
             let state = resp
                 .query_execution()
@@ -248,10 +267,9 @@ impl AthenaAdapter {
             if let Some(t) = next_token {
                 req = req.next_token(t);
             }
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| QueryFluxError::Engine(format!("Athena GetQueryResults: {e}")))?;
+            let resp = req.send().await.map_err(|e| {
+                QueryFluxError::Engine(format!("Athena GetQueryResults: {}", aws_err(&e)))
+            })?;
 
             let result_set = resp.result_set();
 
@@ -376,10 +394,9 @@ impl EngineAdapterTrait for AthenaAdapter {
                     .build(),
             );
 
-        let resp = start
-            .send()
-            .await
-            .map_err(|e| QueryFluxError::Engine(format!("Athena StartQueryExecution: {e}")))?;
+        let resp = start.send().await.map_err(|e| {
+            QueryFluxError::Engine(format!("Athena StartQueryExecution: {}", aws_err(&e)))
+        })?;
 
         let execution_id = resp
             .query_execution_id()
@@ -423,12 +440,9 @@ impl EngineAdapterTrait for AthenaAdapter {
     // --- Catalog discovery via Glue ---
 
     async fn list_catalogs(&self) -> Result<Vec<String>> {
-        let resp = self
-            .client
-            .list_data_catalogs()
-            .send()
-            .await
-            .map_err(|e| QueryFluxError::Engine(format!("Athena ListDataCatalogs: {e}")))?;
+        let resp = self.client.list_data_catalogs().send().await.map_err(|e| {
+            QueryFluxError::Engine(format!("Athena ListDataCatalogs: {}", aws_err(&e)))
+        })?;
         let mut names: Vec<String> = resp
             .data_catalogs_summary()
             .iter()
@@ -453,10 +467,9 @@ impl EngineAdapterTrait for AthenaAdapter {
             if let Some(t) = next_token {
                 req = req.next_token(t);
             }
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| QueryFluxError::Engine(format!("Athena ListDatabases: {e}")))?;
+            let resp = req.send().await.map_err(|e| {
+                QueryFluxError::Engine(format!("Athena ListDatabases: {}", aws_err(&e)))
+            })?;
             for db in resp.database_list() {
                 names.push(db.name().to_string());
             }
@@ -485,10 +498,9 @@ impl EngineAdapterTrait for AthenaAdapter {
             if let Some(t) = next_token {
                 req = req.next_token(t);
             }
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| QueryFluxError::Engine(format!("Athena ListTableMetadata: {e}")))?;
+            let resp = req.send().await.map_err(|e| {
+                QueryFluxError::Engine(format!("Athena ListTableMetadata: {}", aws_err(&e)))
+            })?;
             for tbl in resp.table_metadata_list() {
                 names.push(tbl.name().to_string());
             }

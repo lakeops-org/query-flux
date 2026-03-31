@@ -3,7 +3,7 @@
 //! Accepts connections from ADBC clients (pandas, Polars, R, Julia), DBeaver
 //! (via Flight SQL plugin), and any other Arrow-native tool.
 //!
-//! Implements only the minimal RPC surface needed for query execution (V1):
+//! Implements only the minimal-trino RPC surface needed for query execution (V1):
 //!   GetFlightInfo(CommandStatementQuery) → FlightInfo with ticket
 //!   DoGet(Ticket)                        → FlightData stream (Arrow IPC over gRPC)
 //!
@@ -216,7 +216,7 @@ impl FlightSqlService for QueryFluxFlightSql {
         Ok(Response::new(Box::pin(flight_data_stream)))
     }
 
-    // ── SqlInfo (minimal — return empty) ──────────────────────────────────────
+    // ── SqlInfo (minimal-trino — return empty) ──────────────────────────────────────
 
     async fn register_sql_info(&self, _id: i32, _result: &SqlInfo) {}
 }

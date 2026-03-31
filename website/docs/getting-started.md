@@ -28,7 +28,7 @@ See the **[examples README](https://github.com/lakeops-org/queryflux/blob/main/e
 
 ```bash
 git clone https://github.com/lakeops-org/queryflux.git
-cd queryflux/examples/minimal
+cd queryflux/examples/minimal-trino
 docker compose up -d --wait
 ```
 
@@ -47,7 +47,7 @@ docker compose up -d --wait
 **Best for:** fastest local tryout; **no Postgres**. Routing/clusters come from [`config.yaml`](https://github.com/lakeops-org/queryflux/blob/main/examples/minimal-inmemory/config.yaml); **restart QueryFlux** after edits. Studio pages that need Postgres may **503** — see **[`examples/minimal-inmemory/README.md`](https://github.com/lakeops-org/queryflux/blob/main/examples/minimal-inmemory/README.md)**.
 
 ```bash
-cd queryflux/examples/minimal-inmemory
+cd queryflux/examples/minimal-trino-inmemory
 docker compose up -d --wait
 ```
 

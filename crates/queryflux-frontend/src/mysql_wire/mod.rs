@@ -285,9 +285,25 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
         return write_empty_show_warnings(writer, start_seq).await;
     }
 
-    // Fast-path: SELECT @@session.auto_increment_increment, @@... (no FROM).
-    if let Some(labels) = try_parse_session_var_select(&sql_lower) {
-        return write_synthetic_multi_column_row(writer, &labels, start_seq).await;
+    // Fast-path: SHOW VARIABLES / SHOW SESSION VARIABLES / SHOW GLOBAL VARIABLES
+    // MySQL clients (JDBC, DBeaver, etc.) probe these at startup. Return empty set
+    // rather than forwarding to the backend where they'd fail with a parse error.
+    if sql_lower.starts_with("show variables")
+        || sql_lower.starts_with("show session variables")
+        || sql_lower.starts_with("show global variables")
+        || sql_lower.starts_with("show status")
+        || sql_lower.starts_with("show session status")
+        || sql_lower.starts_with("show global status")
+    {
+        return write_empty_show_variables(writer, start_seq).await;
+    }
+
+    // Fast-path: SELECT with only MySQL metadata expressions (@@vars, VERSION(),
+    // CURRENT_SCHEMA(), etc.) and no real FROM clause. Covers both the pure
+    // @@-variable init queries and the mixed VERSION()/@@/CURRENT_SCHEMA() probe
+    // that mysql-connector-j sends right after the comment-prefixed init query.
+    if let Some(col_vals) = try_parse_mysql_metadata_select(&sql_lower, session) {
+        return write_synthetic_multi_column_row(writer, &col_vals, start_seq).await;
     }
 
     let protocol = FrontendProtocol::MySqlWire;
@@ -452,20 +468,52 @@ async fn write_empty_show_warnings<W: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
-/// Multi-column single-row of empty strings — for `SELECT @@session.auto_increment_increment, ...`.
-async fn write_synthetic_multi_column_row<W: AsyncWriteExt + Unpin>(
+/// Empty two-column result set for `SHOW VARIABLES` / `SHOW STATUS` and similar
+/// MySQL-specific commands that the backend doesn't understand.
+async fn write_empty_show_variables<W: AsyncWriteExt + Unpin>(
     writer: &mut W,
-    column_labels: &[String],
     start_seq: u8,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut seq = start_seq;
 
     let mut count = Vec::new();
-    write_lenenc_int(&mut count, column_labels.len() as u64);
+    write_lenenc_int(&mut count, 2);
     write_packet(writer, seq, &count).await?;
     seq = seq.wrapping_add(1);
 
-    for label in column_labels {
+    for name in ["Variable_name", "Value"] {
+        write_packet(
+            writer,
+            seq,
+            &build_column_def_named(name, MYSQL_TYPE_VAR_STRING),
+        )
+        .await?;
+        seq = seq.wrapping_add(1);
+    }
+
+    write_packet(writer, seq, &build_eof()).await?;
+    seq = seq.wrapping_add(1);
+
+    // Zero rows.
+    write_packet(writer, seq, &build_eof()).await?;
+    Ok(())
+}
+
+/// Multi-column single-row result for synthetic MySQL metadata selects.
+/// Each entry is `(column_label, value)` where `None` = SQL NULL.
+async fn write_synthetic_multi_column_row<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    col_vals: &[(String, Option<String>)],
+    start_seq: u8,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut seq = start_seq;
+
+    let mut count = Vec::new();
+    write_lenenc_int(&mut count, col_vals.len() as u64);
+    write_packet(writer, seq, &count).await?;
+    seq = seq.wrapping_add(1);
+
+    for (label, _) in col_vals {
         write_packet(
             writer,
             seq,
@@ -479,8 +527,11 @@ async fn write_synthetic_multi_column_row<W: AsyncWriteExt + Unpin>(
     seq = seq.wrapping_add(1);
 
     let mut row = Vec::new();
-    for _ in column_labels {
-        write_lenenc_str(&mut row, b"");
+    for (_, val) in col_vals {
+        match val {
+            None => row.push(0xfb), // SQL NULL
+            Some(s) => write_lenenc_str(&mut row, s.as_bytes()),
+        }
     }
     write_packet(writer, seq, &row).await?;
     seq = seq.wrapping_add(1);
@@ -754,27 +805,47 @@ fn write_lenenc_str(buf: &mut Vec<u8>, s: &[u8]) {
 
 // ── SQL classification helpers ────────────────────────────────────────────────
 
-/// Unwrap the leading `/*!40101 ... */` version-comment wrapper that the mysql CLI
-/// and MySQL connectors use for SET and other init statements.
+/// Strip any number of leading block comments (`/* ... */` and `/*!NN... */`) from
+/// the query and return the first non-comment token onwards.
+///
+/// MySQL connectors prepend metadata comments to every query, e.g.:
+///   `/* mysql-connector-j-9.5.0 (...) */ SELECT @@session.auto_increment_increment ...`
+/// Without stripping these the query starts with `/*` instead of `SELECT`, so all
+/// fast-path checks miss it and it is forwarded to the backend engine unchanged.
+///
+/// For `/*!NNNNNbody*/` conditional-execution comments the body is extracted and
+/// returned (the mysql CLI uses this form for SET init statements).
 fn strip_mysql_conditional_comment(sql: &str) -> &str {
-    let t = sql.trim();
-    if !t.starts_with("/*!") {
-        return t;
-    }
-    if let Some(inner) = t.strip_prefix("/*!") {
-        if let Some((before_close, _)) = inner.split_once("*/") {
-            let skip = before_close
-                .char_indices()
-                .find(|(_, c)| !c.is_ascii_digit())
-                .map(|(i, _)| i)
-                .unwrap_or(before_close.len());
-            let body = before_close[skip..].trim();
-            if !body.is_empty() {
-                return body;
+    let mut t = sql.trim();
+    loop {
+        if !t.starts_with("/*") {
+            return t;
+        }
+        // `/*!NNNNNbody*/` — conditional execution: return the body itself.
+        if let Some(inner) = t.strip_prefix("/*!") {
+            if let Some((before_close, after_close)) = inner.split_once("*/") {
+                let skip = before_close
+                    .char_indices()
+                    .find(|(_, c)| !c.is_ascii_digit())
+                    .map(|(i, _)| i)
+                    .unwrap_or(before_close.len());
+                let body = before_close[skip..].trim();
+                if !body.is_empty() {
+                    return body;
+                }
+                // Empty body (e.g. `/*!*/`) — skip and keep going.
+                t = after_close.trim();
+                continue;
             }
         }
+        // Plain `/* ... */` comment — skip it entirely.
+        if let Some((_, after_close)) = t.split_once("*/") {
+            t = after_close.trim();
+        } else {
+            // Unterminated comment — return as-is.
+            return t;
+        }
     }
-    t
 }
 
 /// Parse `USE db` / `USE \`db\`` sent as COM_QUERY text. Returns the database name.
@@ -807,40 +878,161 @@ fn is_select_database(sql_lower: &str) -> bool {
     compact.starts_with("selectdatabase()") && !compact.contains("from")
 }
 
-/// Detect `SELECT @@session.auto_increment_increment, @@character_set_client, ...`
-/// (no FROM clause) and return the column labels. Common MySQL init query.
-fn try_parse_session_var_select(sql_lower: &str) -> Option<Vec<String>> {
+/// Strip a trailing `FROM dual` / `FROM DUAL` (with any whitespace) from a SELECT
+/// body. MySQL/JDBC often appends `FROM dual` to pure variable selects.
+fn strip_from_dual(select_body: &str) -> &str {
+    // Work on the already-lowercased input. Strip trailing whitespace, then look
+    // at the last two non-empty tokens. If they are `from` and `dual`, strip
+    // them (and any preceding whitespace); otherwise, return the original body.
+    let tail = select_body.trim_end();
+
+    // Fast path: if there's nothing (or only whitespace), or fewer than two
+    // tokens, we can't have a trailing `from dual`.
+    let mut tokens: Vec<(&str, usize)> = Vec::new();
+    for token in tail.split_whitespace() {
+        // Compute the byte offset of this token within `tail`.
+        let start = token.as_ptr() as usize - tail.as_ptr() as usize;
+        tokens.push((token, start));
+    }
+
+    if tokens.len() >= 2 {
+        let (last_tok, _) = tokens[tokens.len() - 1];
+        let (prev_tok, prev_start) = tokens[tokens.len() - 2];
+
+        // `select_body` is already lowercased by the caller, so we can do
+        // direct string comparisons.
+        if last_tok == "dual" && prev_tok == "from" {
+            // Slice everything before the `from` token, then trim any
+            // whitespace left at the end of that prefix.
+            let before_from = &tail[..prev_start];
+            let stripped = before_from.trim_end();
+            return stripped;
+        }
+    }
+    select_body
+}
+
+/// Default value for a MySQL `@@variable`. Strips `@@`, `@@session.`, `@@global.`
+/// prefixes before matching. Returns a static string suitable for mysql-connector-j
+/// to parse — numeric variables get digit strings so the Java JDBC driver doesn't
+/// throw `NumberFormatException: For input string: ""`.
+fn mysql_var_default(expr_lower: &str) -> &'static str {
+    let name = expr_lower
+        .trim_start_matches("@@")
+        .trim_start_matches("session.")
+        .trim_start_matches("global.");
+    match name {
+        "auto_increment_increment" | "auto_increment_offset" => "1",
+        "character_set_client"
+        | "character_set_connection"
+        | "character_set_results"
+        | "character_set_server" => "utf8mb4",
+        "collation_server" | "collation_connection" => "utf8mb4_0900_ai_ci",
+        "init_connect" => "",
+        "interactive_timeout" | "wait_timeout" => "28800",
+        "license" => "GPL",
+        "lower_case_table_names" => "0",
+        "max_allowed_packet" => "67108864",
+        "net_buffer_length" => "16384",
+        "net_write_timeout" => "60",
+        "performance_schema" => "1",
+        "query_cache_size" => "1048576",
+        "query_cache_type" => "0",
+        "sql_mode" => "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+        "system_time_zone" => "UTC",
+        "time_zone" => "SYSTEM",
+        "transaction_isolation" | "tx_isolation" => "REPEATABLE-READ",
+        // Boolean / integer variables that mysql-connector-j 9.x reads per-query
+        // (e.g. before each statement to detect read-only mode). Returning "" causes
+        // Java's parseInt("") → NumberFormatException: For input string: "".
+        "transaction_read_only" | "read_only" | "innodb_read_only" => "0",
+        "foreign_key_checks" | "unique_checks" => "1",
+        "sql_auto_is_null" | "max_execution_time" | "session_track_state_change" => "0",
+        "version" => "8.0.0-queryflux",
+        "version_comment" => "QueryFlux",
+        _ => "",
+    }
+}
+
+/// If `expr_lower` (already lowercased, AS alias already stripped) is a MySQL-only
+/// synthetic expression, return its value. `Some(Some(s))` = string, `Some(None)` = NULL.
+/// Returns `None` if it's a real expression that must be dispatched to the backend.
+fn mysql_synthetic_value(expr_lower: &str, session: &SessionContext) -> Option<Option<String>> {
+    if expr_lower.starts_with("@@") {
+        return Some(Some(mysql_var_default(expr_lower).to_string()));
+    }
+    match expr_lower {
+        "version()" => Some(Some("8.0.0-queryflux".to_string())),
+        "current_schema()" | "schema()" | "database()" => {
+            Some(session.database().map(|s| s.to_string()))
+        }
+        "current_user()" | "user()" | "system_user()" | "session_user()" => {
+            Some(Some(session.user().unwrap_or("").to_string()))
+        }
+        "connection_id()" => Some(Some("1".to_string())),
+        _ => None,
+    }
+}
+
+/// Detect a SELECT whose column list is composed entirely of MySQL-only metadata
+/// expressions (`@@vars`, `VERSION()`, `CURRENT_SCHEMA()`, etc.) with no real FROM
+/// clause. Returns `(column_label, value)` pairs on success, `None` if any column
+/// requires actual dispatch.
+///
+/// Handles:
+///   - Pure `@@var` lists (mysql-connector-j JDBC init query)
+///   - Mixed `VERSION(), @@version_comment, CURRENT_SCHEMA()` probes (DataGrip)
+///   - Optional trailing `FROM dual` or `LIMIT n`
+fn try_parse_mysql_metadata_select(
+    sql_lower: &str,
+    session: &SessionContext,
+) -> Option<Vec<(String, Option<String>)>> {
     let trimmed = sql_lower.trim().trim_end_matches(';');
     let rest = trimmed.strip_prefix("select")?.trim_start();
-    if rest.contains(" from ") {
+    let rest = strip_from_dual(rest);
+
+    // Real FROM clause (not dual) — fall through to dispatch.
+    if rest.split_whitespace().any(|w| w == "from") {
         return None;
     }
+
     let main = if let Some(i) = rest.find(" limit ") {
         &rest[..i]
     } else {
         rest
     };
-    if !main.contains("@@") {
-        return None;
-    }
+
     let parts: Vec<&str> = main.split(',').map(str::trim).collect();
-    if parts.iter().any(|p| !p.contains("@@")) {
+    if parts.is_empty() {
         return None;
     }
-    Some(
-        parts
-            .iter()
-            .map(|p| {
-                let t = p.trim();
-                let lower = t.to_lowercase();
-                if let Some(pos) = lower.rfind(" as ") {
-                    t[pos + 4..].trim().to_string()
-                } else {
-                    t.to_string()
-                }
-            })
-            .collect(),
-    )
+
+    let mut col_vals = Vec::with_capacity(parts.len());
+    for part in &parts {
+        // Derive the column label (the AS alias, or the expression itself).
+        let label = {
+            if let Some(pos) = part.rfind(" as ") {
+                part[pos + 4..].trim().to_string()
+            } else {
+                part.trim().to_string()
+            }
+        };
+        // Base expression without alias.
+        let expr = if let Some(pos) = part.rfind(" as ") {
+            part[..pos].trim().to_lowercase()
+        } else {
+            part.trim().to_lowercase()
+        };
+        match mysql_synthetic_value(&expr, session) {
+            Some(val) => col_vals.push((label, val)),
+            None => return None, // unknown expression — needs real dispatch
+        }
+    }
+
+    if col_vals.is_empty() {
+        return None;
+    }
+    Some(col_vals)
 }
 
 // ── HandshakeResponse / SSLRequest parsing ────────────────────────────────────
@@ -862,6 +1054,8 @@ fn parse_handshake_response(payload: &[u8]) -> (String, Option<String>) {
     if payload.len() < 32 {
         return (String::new(), None);
     }
+    // Read the client's capability flags from the first 4 bytes of the response.
+    let client_caps = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let mut pos = 32usize;
 
     // Null-terminated username.
@@ -873,8 +1067,10 @@ fn parse_handshake_response(payload: &[u8]) -> (String, Option<String>) {
         pos += 1 + auth_len;
     }
 
-    // Optional null-terminated database (CLIENT_CONNECT_WITH_DB).
-    let database = if pos < payload.len() {
+    // Optional null-terminated database — only present if CLIENT_CONNECT_WITH_DB is set
+    // by the client. Without this check, the auth-plugin name ("mysql_native_password")
+    // that immediately follows would be misread as the schema.
+    let database = if (client_caps & CLIENT_CONNECT_WITH_DB) != 0 && pos < payload.len() {
         let db = read_nul_str(payload, &mut pos);
         if db.is_empty() {
             None

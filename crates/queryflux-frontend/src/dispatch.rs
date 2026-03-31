@@ -18,7 +18,7 @@ use queryflux_core::{
     session::SessionContext,
 };
 use queryflux_translation::SchemaContext;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::state::AppState;
 
@@ -413,6 +413,21 @@ pub async fn execute_to_sink(
             let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
             let elapsed_ms = start.elapsed().as_millis() as u64;
             let err_msg = e.to_string();
+            // Log high-level failure details at warn level without including full SQL to avoid
+            // leaking potentially sensitive query text in production logs.
+            warn!(
+                id = %query_id,
+                cluster = %cluster_name,
+                "execute_as_arrow failed: {err_msg}"
+            );
+            // Optionally log the full translated SQL at debug level for troubleshooting in
+            // non-production or verbose logging environments.
+            debug!(
+                id = %query_id,
+                cluster = %cluster_name,
+                sql = %translated,
+                "execute_as_arrow failed with translated SQL"
+            );
             state.record_query(
                 &query_id,
                 None,

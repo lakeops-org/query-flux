@@ -6,7 +6,7 @@ Several stacks for **QueryFlux** + **Trino** (and optional add-ons). Run command
 
 | Example | Postgres | Best for |
 |--------|----------|----------|
-| [`minimal/`](minimal/) | Yes | Full Studio (query history, persisted clusters/groups/routing via API), production-like persistence |
+| [`minimal/`](minimal-trino/) | Yes | Full Studio (query history, persisted clusters/groups/routing via API), production-like persistence |
 | [`minimal-inmemory/`](minimal-inmemory/) | No | Fastest local tryout; config only in `config.yaml`; no shared query history |
 | [`with-prometheus-grafana/`](with-prometheus-grafana/) | Yes | Same workload as minimal + **Prometheus** + **Grafana** (repo [`grafana/`](../grafana/), local scrape config); **no Studio** |
 | [`full-stack/`](full-stack/) | Yes (host **5433**) | Trino + StarRocks + Iceberg/Lakekeeper + MinIO + TPCH loader |
@@ -17,10 +17,10 @@ Several stacks for **QueryFlux** + **Trino** (and optional add-ons). Run command
 
 ## Minimal (`minimal/`)
 
-Postgres + **Trino** + **QueryFlux** + **Studio**. [`config.yaml`](minimal/config.yaml) sends Trino HTTP on `:8080` through QueryFlux to the Trino container. With Postgres, cluster/group rows are **seeded from YAML only when those tables are empty**; after that the **database** is the source of truth. Walkthrough (Trino CLI, `select 1`, Queries UI): [`minimal/README.md`](minimal/README.md).
+Postgres + **Trino** + **QueryFlux** + **Studio**. [`config.yaml`](minimal-trino/config.yaml) sends Trino HTTP on `:8080` through QueryFlux to the Trino container. With Postgres, cluster/group rows are **seeded from YAML only when those tables are empty**; after that the **database** is the source of truth. Walkthrough (Trino CLI, `select 1`, Queries UI): [`minimal/README.md`](minimal-trino/README.md).
 
 ```bash
-cd examples/minimal
+cd examples/minimal-trino
 docker compose up -d --wait
 ```
 
@@ -39,7 +39,7 @@ docker compose up -d --wait
 **Trino** + **QueryFlux** + **Studio**, **`persistence.type: inMemory`** — no Postgres. All routing/clusters/groups come from [`minimal-inmemory/config.yaml`](minimal-inmemory/config.yaml); **restart QueryFlux** after edits. Studio pages that need Postgres (query list, persisted config CRUD) will not work; see [`minimal-inmemory/README.md`](minimal-inmemory/README.md).
 
 ```bash
-cd examples/minimal-inmemory
+cd examples/minimal-trino-inmemory
 docker compose up -d --wait
 ```
 
@@ -88,6 +88,7 @@ The loader uses [`docker/fixtures/init.docker-network.sql`](../docker/fixtures/i
 |---------|-----|
 | Trino via QueryFlux | http://localhost:8080 |
 | MySQL wire (StarRocks via QueryFlux) | `mysql` client → **localhost:3306** |
+| Node.js sample (same MySQL wire) | [`node-starrocks-via-queryflux/`](node-starrocks-via-queryflux/) — `npm install && npm start` |
 | Studio | http://localhost:3000 |
 | Trino (direct) | http://localhost:8081 |
 | MinIO console | http://localhost:19001 |

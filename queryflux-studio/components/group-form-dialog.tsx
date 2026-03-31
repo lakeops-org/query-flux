@@ -40,7 +40,8 @@ export function GroupFormDialog({
   const router = useRouter();
   const [groupName, setGroupName] = useState("");
   const [enabled, setEnabled] = useState(true);
-  const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
+  /** Member cluster names in routing order (persisted as `members` array). */
+  const [memberOrder, setMemberOrder] = useState<string[]>([]);
   const [maxRunning, setMaxRunning] = useState("10");
   const [maxQueued, setMaxQueued] = useState("");
   const [strategyKind, setStrategyKind] = useState<StrategyKind>("default");
@@ -55,7 +56,7 @@ export function GroupFormDialog({
   const reset = useCallback(() => {
     setGroupName("");
     setEnabled(true);
-    setSelectedMembers(new Set());
+    setMemberOrder([]);
     setMaxRunning("10");
     setMaxQueued("");
     setStrategyKind("default");
@@ -74,7 +75,7 @@ export function GroupFormDialog({
     } else if (initial) {
       setGroupName(initial.name);
       setEnabled(initial.enabled);
-      setSelectedMembers(new Set(initial.members));
+      setMemberOrder([...initial.members]);
       setMaxRunning(String(initial.maxRunningQueries));
       setMaxQueued(
         initial.maxQueuedQueries != null ? String(initial.maxQueuedQueries) : "",
@@ -104,11 +105,20 @@ export function GroupFormDialog({
     };
   }, [open]);
 
-  function toggleMember(name: string) {
-    setSelectedMembers((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+  function addMember(name: string) {
+    setMemberOrder((prev) => (prev.includes(name) ? prev : [...prev, name]));
+  }
+
+  function removeMember(name: string) {
+    setMemberOrder((prev) => prev.filter((n) => n !== name));
+  }
+
+  function moveMember(idx: number, delta: -1 | 1) {
+    const j = idx + delta;
+    setMemberOrder((prev) => {
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[j]] = [next[j], next[idx]];
       return next;
     });
   }
@@ -169,8 +179,14 @@ export function GroupFormDialog({
       return;
     }
 
-    const sortedClusters = [...clusterNames].sort((a, b) => a.localeCompare(b));
-    const members = sortedClusters.filter((n) => selectedMembers.has(n));
+    const unknownMembers = memberOrder.filter((n) => !clusterNames.includes(n));
+    if (unknownMembers.length > 0) {
+      setError(
+        `Remove or fix unknown clusters (no config in Postgres): ${unknownMembers.join(", ")}`,
+      );
+      return;
+    }
+    const members = [...memberOrder];
 
     const body: UpsertClusterGroupConfig = {
       enabled,
@@ -218,6 +234,8 @@ export function GroupFormDialog({
   if (!open) return null;
 
   const sortedClusters = [...clusterNames].sort((a, b) => a.localeCompare(b));
+  const memberSet = new Set(memberOrder);
+  const availableToAdd = sortedClusters.filter((n) => !memberSet.has(n));
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -431,34 +449,99 @@ export function GroupFormDialog({
             </div>
           </div>
 
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-              Members (clusters)
-            </label>
-            <p className="text-[10px] text-slate-400 mb-2">
-              Order follows the sorted list below; only existing cluster configs can be added.
-            </p>
-            <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100 bg-slate-50/50">
-              {sortedClusters.length === 0 ? (
-                <p className="text-xs text-slate-400 px-3 py-4 text-center">
-                  No clusters in Postgres — add clusters first.
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                Members (clusters)
+              </label>
+              <p className="text-[10px] text-slate-400 mb-2 leading-relaxed">
+                Order matters for{" "}
+                <strong>round robin</strong>, <strong>least loaded</strong>, and similar strategies.
+                Top = first in rotation / preference. Stored as the group&apos;s{" "}
+                <code className="text-[10px] bg-slate-100 px-1 rounded border border-slate-200">
+                  members
+                </code>{" "}
+                array (no extra table).
+              </p>
+              {memberOrder.length === 0 ? (
+                <p className="text-xs text-slate-400 rounded-lg border border-dashed border-slate-200 bg-slate-50/50 px-3 py-4 text-center">
+                  {sortedClusters.length === 0
+                    ? "No clusters in Postgres — add clusters first."
+                    : "No members yet — add clusters below."}
                 </p>
               ) : (
-                sortedClusters.map((n) => (
-                  <label
-                    key={n}
-                    className="flex items-center gap-3 px-3 py-2 hover:bg-white cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedMembers.has(n)}
-                      onChange={() => toggleMember(n)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-400"
-                    />
-                    <span className="text-sm font-mono text-slate-800">{n}</span>
-                  </label>
-                ))
+                <ul className="space-y-1.5 max-h-44 overflow-y-auto">
+                  {memberOrder.map((n, idx) => (
+                    <li
+                      key={n}
+                      className="flex items-center gap-2 text-sm bg-white border border-slate-200 rounded-lg px-2 py-1.5"
+                    >
+                      <span className="text-[10px] font-mono text-slate-400 w-5 tabular-nums">
+                        {idx + 1}.
+                      </span>
+                      <span className="font-mono text-slate-800 flex-1 min-w-0 truncate">{n}</span>
+                      <button
+                        type="button"
+                        disabled={saving || idx === 0}
+                        onClick={() => moveMember(idx, -1)}
+                        className="p-1 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+                        title="Move up"
+                      >
+                        <ChevronUp size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={saving || idx >= memberOrder.length - 1}
+                        onClick={() => moveMember(idx, 1)}
+                        className="p-1 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+                        title="Move down"
+                      >
+                        <ChevronDown size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => removeMember(n)}
+                        className="p-1 rounded text-red-400 hover:bg-red-50"
+                        title="Remove from group"
+                      >
+                        <X size={16} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                Add cluster
+              </p>
+              <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100 bg-slate-50/50">
+                {sortedClusters.length === 0 ? (
+                  <p className="text-xs text-slate-400 px-3 py-3 text-center">—</p>
+                ) : availableToAdd.length === 0 ? (
+                  <p className="text-xs text-slate-400 px-3 py-3 text-center">
+                    All clusters are already in this group.
+                  </p>
+                ) : (
+                  availableToAdd.map((n) => (
+                    <div
+                      key={n}
+                      className="flex items-center justify-between gap-2 px-3 py-2 hover:bg-white"
+                    >
+                      <span className="text-sm font-mono text-slate-800 truncate">{n}</span>
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => addMember(n)}
+                        className="text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 flex-shrink-0"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
 
@@ -524,12 +607,10 @@ export function GroupFormDialog({
                   value={weightedJson}
                   onChange={(e) => setWeightedJson(e.target.value)}
                   placeholder={
-                    [...selectedMembers].length > 0
+                    memberOrder.length > 0
                       ? JSON.stringify(
                           Object.fromEntries(
-                            [...selectedMembers]
-                              .slice(0, 4)
-                              .map((n, i) => [n, (i % 3) + 1]),
+                            memberOrder.slice(0, 4).map((n, i) => [n, (i % 3) + 1]),
                           ),
                           null,
                           2,
