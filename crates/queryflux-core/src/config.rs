@@ -871,7 +871,7 @@ mod tests {
         let yaml = r#"
 queryflux: {}
 "#;
-        let cfg: ProxyConfig = serde_yaml::from_str(yaml).expect("minimal YAML should parse");
+        let cfg: ProxyConfig = serde_yaml::from_str(yaml).expect("minimal-trino YAML should parse");
         assert!(cfg.clusters.is_empty());
         assert!(cfg.cluster_groups.is_empty());
         assert!(cfg.routers.is_empty());

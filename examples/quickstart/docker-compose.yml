@@ -31,8 +31,8 @@ services:
     image: ghcr.io/lakeops-org/queryflux:latest-main
     ports:
       - "3000:3000"  # Studio UI
-      - "8080:8080"  # Trino HTTP frontend
       - "9000:9000"  # Admin API
+      - "3306:3306"  # MySQL Wire frontend (optional, enabled in config.yaml)
     volumes:
       - ./config.yaml:/etc/queryflux/config.yaml:ro
     environment:
