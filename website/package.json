@@ -5,9 +5,8 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "dev": "DOCUSAURUS_USE_ROOT_BASE=true docusaurus start",
-    "dev:fresh": "docusaurus clear && DOCUSAURUS_USE_ROOT_BASE=true docusaurus start",
-    "dev:pages": "docusaurus start",
+    "dev": "docusaurus start",
+    "dev:fresh": "docusaurus clear && docusaurus start",
     "build": "docusaurus build",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
