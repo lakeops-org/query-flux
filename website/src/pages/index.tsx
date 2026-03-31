@@ -5,6 +5,7 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
+import ThemedImage from '@theme/ThemedImage';
 
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import HomepageUseCases from '@site/src/components/HomepageUseCases';
@@ -14,15 +15,17 @@ import styles from './index.module.css';
 
 function HomepageHeader(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
-  const heroUrl = useBaseUrl('/img/queryflux-hero-cover.png');
 
   return (
     <header className={styles.hero}>
       <div className={styles.heroGlow} aria-hidden />
       <div className={clsx('container', styles.heroInner)}>
-        <img
+        <ThemedImage
           className={styles.heroImage}
-          src={heroUrl}
+          sources={{
+            light: useBaseUrl('/img/queryflux-hero-cover-light.png'),
+            dark: useBaseUrl('/img/queryflux-hero-cover.png'),
+          }}
           alt="QueryFlux — multi-engine SQL routing in Rust, connecting clients to Trino, DuckDB, StarRocks, Snowflake, Databricks, and more"
           width={1024}
           height={682}
