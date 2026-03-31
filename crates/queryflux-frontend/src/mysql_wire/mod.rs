@@ -294,10 +294,6 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
         || sql_lower.starts_with("show status")
         || sql_lower.starts_with("show session status")
         || sql_lower.starts_with("show global status")
-        || sql_lower.starts_with("show character set")
-        || sql_lower.starts_with("show collation")
-        || sql_lower.starts_with("show engines")
-        || sql_lower.starts_with("show plugins")
     {
         return write_empty_show_variables(writer, start_seq).await;
     }
