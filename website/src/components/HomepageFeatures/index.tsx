@@ -53,9 +53,9 @@ function Feature({title, description}: FeatureItem): ReactNode {
 
 export default function HomepageFeatures(): ReactNode {
   return (
-    <section className={styles.features}>
+    <section className={styles.features} aria-labelledby="homepage-features-heading">
       <div className={clsx('container', styles.featuresGrid)}>
-        <h2 className={styles.sectionHeading}>Built for multi-engine SQL estates</h2>
+        <h2 id="homepage-features-heading" className={styles.sectionHeading}>Built for multi-engine SQL estates</h2>
         <p className={styles.sectionSub}>
           Same patterns you expect from a serious proxy — explicit routing, capacity
           limits, and observability — without locking teams to a single database.

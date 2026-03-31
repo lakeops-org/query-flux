@@ -1,5 +1,6 @@
 ---
 sidebar_position: 5
+description: Set up the Rust workspace, Python/sqlglot sidecar, and Docker dependencies for local QueryFlux development.
 ---
 
 # Development guide

@@ -27,9 +27,9 @@ html[data-theme='dark'] .section {
   font-weight: 700;
   letter-spacing: -0.03em;
   margin: 0 0 0.85rem;
-  max-width: 42rem;
+  max-width: var(--qf-section-heading-max);
   width: 100%;
-  line-height: 1.2;
+  line-height: 1.25;
   color: var(--ifm-heading-color);
 }
 
@@ -41,7 +41,7 @@ html[data-theme='dark'] .section {
   line-height: 1.62;
   font-weight: 500;
   color: var(--ifm-heading-color);
-  max-width: 38rem;
+  max-width: 40rem;
   width: 100%;
   margin: 0 0 2.65rem;
 }
@@ -70,7 +70,7 @@ html[data-theme='dark'] .sectionSub {
   padding: 1.65rem 1.5rem 1.75rem 1.35rem;
   border-radius: 14px;
   border: 1px solid var(--ifm-color-emphasis-200);
-  background: #ffffff;
+  background: var(--ifm-background-surface-color);
   box-shadow:
     0 0 0 1px rgba(124, 58, 237, 0.04),
     0 14px 40px -12px rgba(15, 23, 42, 0.12);

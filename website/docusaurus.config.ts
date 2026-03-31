@@ -19,7 +19,7 @@ const useRootBaseUrl =
 const config: Config = {
   title: 'QueryFlux',
   tagline: 'Universal SQL query proxy and router in Rust',
-  favicon: 'img/queryflux-hero-cover.jpg',
+  favicon: 'img/favicon.jpg',
 
   // Must match GitHub Pages path: repo `queryflux` → baseUrl `/queryflux/`.
   url: siteUrl,
@@ -133,6 +133,7 @@ const config: Config = {
   themeConfig: {
     // Default og/twitter image (homepage hero cover); width/height in metadata below.
     image: 'img/queryflux-hero-cover.jpg',
+    // New visitors start in dark; do not follow OS prefers-color-scheme.
     colorMode: {
       defaultMode: 'dark',
       respectPrefersColorScheme: false,

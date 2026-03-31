@@ -1,3 +1,7 @@
+---
+description: QueryFlux observability — Prometheus metrics, Grafana dashboard, Studio admin UI, and the Admin API.
+---
+
 # Observability
 
 QueryFlux exposes three observability surfaces: **Prometheus metrics** (real-time operational), a **Grafana dashboard** (visual ops view), and **QueryFlux Studio** (admin UI with query history, cluster management, and config).

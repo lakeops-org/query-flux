@@ -1,5 +1,6 @@
 ---
 sidebar_position: 6
+description: Contribution guidelines for QueryFlux — branching, PR conventions, code style, and licensing requirements.
 ---
 
 # Contributing to QueryFlux

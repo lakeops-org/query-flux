@@ -1,3 +1,7 @@
+---
+description: How to add new backend engines and frontend client protocols to QueryFlux — adapters, frontends, and integration points.
+---
+
 # Adding engine and protocol support
 
 This guide separates two ideas that are easy to conflate:

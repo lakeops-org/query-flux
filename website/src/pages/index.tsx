@@ -61,7 +61,7 @@ const HOME_DESCRIPTION =
  * Page title before Docusaurus appends ` | QueryFlux` (~12 chars). Keep the *final*
  * string ≤ ~60 chars for Twitter / strict OG validators.
  */
-const HOME_PAGE_TITLE = 'QueryFlux — Multi-engine query routing proxy';
+const HOME_PAGE_TITLE = 'Multi-engine SQL query routing proxy';
 
 export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();

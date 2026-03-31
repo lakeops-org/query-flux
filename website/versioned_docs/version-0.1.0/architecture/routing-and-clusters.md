@@ -1,3 +1,7 @@
+---
+description: Router chain, routingFallback, cluster groups, load-balancing strategies, and queueing.
+---
+
 # Routing, cluster groups, and clusters
 
 QueryFlux separates **where a query should go logically** (cluster **group**) from **which physical backend instance** serves it (**cluster** / adapter). This document explains that split, how routers work, and how the cluster manager balances load and enforces limits.

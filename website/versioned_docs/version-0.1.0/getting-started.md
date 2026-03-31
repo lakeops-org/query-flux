@@ -1,5 +1,6 @@
 ---
 sidebar_position: 1
+description: Run QueryFlux with Docker Compose examples, connect SQL clients, and verify multi-engine routing in minutes.
 ---
 
 # Getting started

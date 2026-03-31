@@ -1,5 +1,5 @@
 .features {
-  padding: 3.5rem 0 4.5rem;
+  padding: 4rem 0 5.25rem;
   width: 100%;
 }
 
@@ -15,10 +15,10 @@
   justify-self: center;
   text-align: center;
   font-size: clamp(1.7rem, 3.2vw, 2.1rem);
-  font-weight: 750;
+  font-weight: 700;
   letter-spacing: -0.03em;
   margin: 0 0 0.85rem;
-  max-width: 42rem;
+  max-width: var(--qf-section-heading-max);
   width: 100%;
   line-height: 1.25;
   color: var(--ifm-heading-color);
@@ -82,7 +82,7 @@
   margin: 0;
   font-size: 1.04rem;
   line-height: 1.68;
-  color: #18181b;
+  color: var(--ifm-color-content);
 }
 
 html[data-theme='dark'] .sectionSub {
@@ -111,7 +111,7 @@ html[data-theme='dark'] .featureCard:hover {
 
 @media screen and (max-width: 996px) {
   .features {
-    padding: 2.5rem 0 3.5rem;
+    padding: 3rem 0 4rem;
   }
 
   .featureCol {

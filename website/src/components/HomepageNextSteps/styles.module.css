@@ -133,6 +133,11 @@ html[data-theme='dark'] .section {
   filter: brightness(1.05);
 }
 
+.primaryButton:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
 .secondaryLink {
   display: inline-flex;
   align-items: center;
@@ -145,6 +150,12 @@ html[data-theme='dark'] .section {
 
 .secondaryLink:hover {
   text-decoration: underline;
+}
+
+.secondaryLink:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .optionRow {
@@ -188,6 +199,11 @@ html[data-theme='dark'] .section {
   transform: translateY(-1px);
 }
 
+.optionCard:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
 .cardAccent {
   position: absolute;
   left: 0;
@@ -215,7 +231,7 @@ html[data-theme='dark'] .section {
   padding-left: 0.65rem;
   font-size: 1.26rem;
   line-height: 1.4;
-  font-weight: 650;
+  font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--ifm-heading-color);
 }

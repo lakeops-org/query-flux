@@ -1,3 +1,7 @@
+---
+description: Why QueryFlux exists — the fragmented engine landscape, proxy-layer goals, and design principles behind multi-engine routing.
+---
+
 # Motivation and goals
 
 ## Why QueryFlux exists

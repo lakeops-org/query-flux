@@ -72,7 +72,7 @@ html[data-theme='dark'] .sectionSub {
   padding: 1.65rem 1.5rem 1.75rem 1.35rem;
   border-radius: 14px;
   border: 1px solid var(--ifm-color-emphasis-200);
-  background: #ffffff;
+  background: var(--ifm-background-surface-color);
   box-shadow:
     0 0 0 1px rgba(124, 58, 237, 0.04),
     0 14px 40px -12px rgba(15, 23, 42, 0.1);
@@ -105,7 +105,7 @@ html[data-theme='dark'] .sectionSub {
 .blockTitle {
   position: relative;
   font-size: 1.26rem;
-  font-weight: 650;
+  font-weight: 700;
   margin: 0 0 0.85rem;
   padding-left: 0.65rem;
   letter-spacing: -0.02em;
@@ -145,128 +145,6 @@ html[data-theme='dark'] .prose {
 
 html[data-theme='dark'] .proseStrong {
   color: #e9d5ff;
-}
-
-.statStrip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 1rem 1.5rem;
-  margin-top: 1.35rem;
-  padding: 1.1rem 1.25rem;
-  border-radius: 12px;
-  border: 1px solid rgba(124, 58, 237, 0.22);
-  background: linear-gradient(135deg, rgba(124, 58, 237, 0.07) 0%, rgba(234, 88, 12, 0.05) 100%);
-}
-
-html[data-theme='dark'] .statStrip {
-  border-color: rgba(196, 181, 253, 0.25);
-  background: linear-gradient(135deg, rgba(124, 58, 237, 0.12) 0%, rgba(255, 118, 25, 0.06) 100%);
-}
-
-.statItem {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 8rem;
-  flex: 1 1 auto;
-}
-
-.statValue {
-  font-size: clamp(1.65rem, 3vw, 2rem);
-  font-weight: 800;
-  letter-spacing: -0.04em;
-  line-height: 1;
-  background: linear-gradient(135deg, #7c3aed 0%, #ea580c 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-}
-
-html[data-theme='dark'] .statValue {
-  background: linear-gradient(135deg, #c4b5fd 0%, #fb923c 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.statLabel {
-  font-size: 1rem;
-  font-weight: 600;
-  line-height: 1.35;
-  color: #0f172a;
-}
-
-html[data-theme='dark'] .statLabel {
-  color: #e4e4e7;
-}
-
-.statDivider {
-  width: 1px;
-  align-self: stretch;
-  min-height: 3rem;
-  background: rgba(124, 58, 237, 0.2);
-}
-
-html[data-theme='dark'] .statDivider {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-@media screen and (max-width: 576px) {
-  .statStrip {
-    flex-direction: column;
-  }
-
-  .statDivider {
-    width: 100%;
-    height: 1px;
-    min-height: 0;
-  }
-}
-
-.ruleList {
-  margin: 0.25rem 0 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.ruleList li {
-  position: relative;
-  margin: 0;
-  padding-left: 1.35rem;
-  font-size: clamp(1.08rem, 1.35vw, 1.14rem);
-  line-height: 1.68;
-  font-weight: 400;
-  color: #18181b;
-}
-
-html[data-theme='dark'] .ruleList li {
-  color: #f4f4f5;
-}
-
-.ruleList li::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.55em;
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 2px;
-  background: linear-gradient(135deg, #7c3aed, #ea580c);
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
-}
-
-.wireTag {
-  font-weight: 700;
-  color: #5b21b6;
-}
-
-html[data-theme='dark'] .wireTag {
-  color: #d8b4fe;
 }
 
 .inlineCode {
