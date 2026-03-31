@@ -18,7 +18,7 @@ use queryflux_core::{
     session::SessionContext,
 };
 use queryflux_translation::SchemaContext;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::state::AppState;
 
