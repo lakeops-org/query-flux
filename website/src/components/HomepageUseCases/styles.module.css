@@ -26,7 +26,7 @@ html[data-theme='dark'] .section {
   font-size: clamp(1.7rem, 3.2vw, 2.1rem);
   font-weight: 700;
   letter-spacing: -0.03em;
-  margin: 0 0 0.85rem;
+  margin: 0 0 1rem;
   max-width: var(--qf-section-heading-max);
   width: 100%;
   line-height: 1.25;
@@ -43,7 +43,7 @@ html[data-theme='dark'] .section {
   color: var(--ifm-heading-color);
   max-width: 40rem;
   width: 100%;
-  margin: 0 0 2.65rem;
+  margin: 0 0 3.25rem;
 }
 
 html[data-theme='dark'] .sectionSub {
@@ -66,8 +66,9 @@ html[data-theme='dark'] .sectionSub {
 
 .card {
   position: relative;
+  min-width: 0;
   height: 100%;
-  padding: 1.65rem 1.5rem 1.75rem 1.35rem;
+  padding: 1.85rem 1.65rem 2rem 1.5rem;
   border-radius: 14px;
   border: 1px solid var(--ifm-color-emphasis-200);
   background: var(--ifm-background-surface-color);
@@ -91,6 +92,7 @@ html[data-theme='dark'] .sectionSub {
 
 .cardAccent {
   position: absolute;
+  z-index: 0;
   left: 0;
   top: 0;
   bottom: 0;
@@ -98,16 +100,20 @@ html[data-theme='dark'] .sectionSub {
   border-radius: 14px 0 0 14px;
   background: linear-gradient(180deg, #7c3aed 0%, #c026d3 55%, #ea580c 100%);
   opacity: 0.95;
+  pointer-events: none;
 }
 
 .cardTitle {
   position: relative;
-  font-size: 1.26rem;
-  font-weight: 700;
-  margin: 0 0 1rem;
-  padding-left: 0.65rem;
-  letter-spacing: -0.03em;
-  line-height: 1.25;
+  z-index: 1;
+  font-size: var(--qf-home-card-title-size);
+  font-weight: var(--qf-home-card-title-fw);
+  margin: 0 0 var(--qf-home-card-title-mb);
+  padding-left: var(--qf-home-card-title-pl);
+  letter-spacing: var(--qf-home-card-title-ls);
+  line-height: var(--qf-home-card-title-lh);
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
   color: #0f172a;
 }
 
@@ -117,8 +123,9 @@ html[data-theme='dark'] .cardTitle {
 
 .cardBody {
   position: relative;
+  z-index: 1;
   margin: 0;
-  padding-left: 0.65rem;
+  padding-left: var(--qf-home-card-title-pl);
   font-size: 1.1rem;
   line-height: 1.68;
   font-weight: 400;
@@ -139,6 +146,9 @@ html[data-theme='dark'] .cardBody {
   background: rgba(124, 58, 237, 0.08);
   color: #5b21b6;
   font-family: var(--ifm-font-family-monospace);
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 html[data-theme='dark'] .inlineCode {
@@ -177,6 +187,6 @@ html[data-theme='dark'] .card:hover {
   }
 
   .sectionSub {
-    margin-bottom: 2.25rem;
+    margin-bottom: 2.75rem;
   }
 }

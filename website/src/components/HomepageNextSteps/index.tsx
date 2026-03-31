@@ -14,30 +14,31 @@ type OptionItem = {
 const options: OptionItem[] = [
   {
     title: 'Architecture',
-    to: '/docs/architecture/overview',
+    to: '/docs/intro#how-does-it-work',
     body:
-      'This section describes how QueryFlux is put together: why it exists, how SQL is translated, and how traffic is routed to cluster groups and individual clusters.',
-    cta: 'Explore architecture',
+      'How queries move through QueryFlux: protocol ingestion, routing rules, cluster groups, dialect translation, and dispatch.',
+    cta: 'See how queries flow',
   },
   {
     title: 'Motivation and goals',
-    to: '/docs/architecture/motivation-and-goals',
+    to: '/docs/intro#what-is-queryflux',
     body:
-      'Modern data stacks are fragmented by design. Different engines exist because different problems demand different trade-offs.',
-    cta: 'Read the motivation',
+      'Why a universal SQL proxy matters: fragmented engines, N×M integrations, and QueryFlux as the compute interoperability layer.',
+    cta: 'Understand the problem space',
   },
   {
     title: 'Configuration reference',
-    to: '/docs/configuration',
-    body: 'Copy config.example.yaml in the repository root and adjust for your environment.',
-    cta: 'Open configuration',
+    to: '/docs/intro#next-steps',
+    body:
+      'Start from the intro’s next steps: Docker Compose, architecture deep-dives, full YAML reference, and roadmap links.',
+    cta: 'Follow the documentation map',
   },
   {
     title: 'Roadmap',
     to: '/docs/roadmap',
     body:
-      'QueryFlux is under active development. This page tracks what is shipped, what is in progress, and where the project is headed.',
-    cta: 'See roadmap',
+      'What is shipped, in progress, and planned — engines, routing features, and integrations.',
+    cta: "See what's shipped and what's next",
   },
 ];
 
@@ -67,22 +68,22 @@ export default function HomepageNextSteps(): ReactNode {
           Start fast, then dive deeper by track.
         </p>
 
-        <section className={styles.primaryCta} aria-label="Get started">
+        <section className={styles.primaryCta} aria-label="Quick start with Docker Compose">
           <div className={styles.cardAccent} aria-hidden />
           <p className={styles.primaryEyebrow}>Quick start</p>
           <Heading as="h3" className={styles.primaryTitle}>
-            Getting started
+            Run with Docker Compose
           </Heading>
           <p className={styles.primaryText}>
-            The fastest way to run QueryFlux is one of the Docker Compose examples under
-            examples/ in the repository.
+            The fastest path is a Docker Compose example under <code>examples/</code> in the
+            repository — then read the intro for how routing and protocols fit together.
           </p>
           <div className={styles.primaryActions}>
             <Link className={clsx('button button--lg', styles.primaryButton)} to="/docs/getting-started">
-              Get started
+              Open getting started guide
             </Link>
-            <Link className={styles.secondaryLink} to="/docs/intro">
-              Read intro
+            <Link className={styles.secondaryLink} to="/docs/intro#what-is-queryflux">
+              Read the project overview
             </Link>
           </div>
         </section>

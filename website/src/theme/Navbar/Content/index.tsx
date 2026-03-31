@@ -100,11 +100,12 @@ export default function NavbarContent(): ReactNode {
       }
       right={
         <>
-          <NavbarItems items={rightItemsWithoutSearch} />
+          {/* Theme toggle before GitHub so narrow viewports clip the repo link first, not the toggle */}
           <NavbarColorModeToggle
             className={styles.colorModeToggle}
             aria-label="Toggle light and dark theme"
           />
+          <NavbarItems items={rightItemsWithoutSearch} />
         </>
       }
     />

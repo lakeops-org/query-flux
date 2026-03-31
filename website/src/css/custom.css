@@ -28,6 +28,14 @@
   --qf-section-sub-max: 40rem;
   --qf-section-heading-max: 36rem;
 
+  /* Homepage in-card titles (Benefits “Enforce latency SLAs…” = reference) */
+  --qf-home-card-title-size: 1.26rem;
+  --qf-home-card-title-lh: 1.35;
+  --qf-home-card-title-ls: -0.02em;
+  --qf-home-card-title-fw: 700;
+  --qf-home-card-title-pl: 0.75rem;
+  --qf-home-card-title-mb: 1rem;
+
   --ifm-container-width: var(--qf-page-max);
   --ifm-container-width-xl: var(--qf-page-max);
   --ifm-spacing-horizontal: var(--qf-page-gutter);
@@ -559,9 +567,10 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
     transform: none !important;
     right: auto !important;
     top: auto !important;
+    /* flex: 0 0 auto — right cluster doesn’t shrink; search on the left absorbs narrowing */
     flex: 0 0 auto !important;
     width: auto !important;
-    min-width: 0 !important;
+    min-width: min-content !important;
     margin-left: 0.32rem !important;
     justify-content: flex-start !important;
     align-items: center !important;

@@ -34,27 +34,27 @@ export default function HomepageBenefits(): ReactNode {
         <div className={styles.blocks}>
           <BenefitBlock title="Cut query costs by routing to the right engine">
             <p className={styles.prose}>
-              Cloud engines charge in fundamentally different ways. Compute-priced backends
-              (Trino, StarRocks) charge for cluster uptime or CPU-seconds. Scan-priced backends
-              (Athena, BigQuery) charge for bytes read. Without a routing layer, every query goes
-              to the same engine regardless of its shape — CPU-heavy joins land on Athena, cold
-              selective filters land on StarRocks, and you pay the wrong model each time.
+              Cloud engines charge in fundamentally different ways. Compute-priced backends (Trino,
+              StarRocks) charge for cluster uptime or CPU-seconds. Scan-priced backends (Athena,
+              BigQuery) charge for bytes read. Without a routing layer, every query goes to the
+              same engine regardless of its shape — CPU-heavy joins land on Athena, cold selective
+              filters land on StarRocks, and you pay the wrong model each time.
             </p>
             <p className={styles.prose}>
               In our own benchmarking, workload-aware routing — steering CPU-heavy work to
-              compute-priced engines and selective cold-data queries to scan-priced ones — reduced
-              total workload cost by up to{' '}
-              <strong className={styles.proseStrong}>56%</strong>, with individual queries sometimes
-              dropping by up to <strong className={styles.proseStrong}>90%</strong> compared with
-              always using a single default.
+              compute-priced engines and selective cold-data queries to scan-priced ones —{' '}
+              <strong className={styles.proseStrong}>reduced total workload cost by up to 56%</strong>
+              , with individual queries sometimes dropping by{' '}
+              <strong className={styles.proseStrong}>up to 90%</strong> compared with always using a
+              single default.
             </p>
           </BenefitBlock>
 
           <BenefitBlock title="Enforce latency SLAs without touching clients">
             <p className={styles.prose}>
               A batch ETL job competing with an interactive dashboard on the same Trino cluster
-              degrades both. QueryFlux lets you encode performance intent in routing rules and
-              apply it to all clients uniformly — no application changes, no conventions that drift:
+              degrades both. QueryFlux lets you encode performance intent in routing rules and apply
+              it to all clients uniformly — no application changes, no conventions that drift:
             </p>
             <div className={styles.routeLines}>
               <p className={styles.routeLine}>
@@ -62,8 +62,8 @@ export default function HomepageBenefits(): ReactNode {
                 low-latency StarRocks pool
               </p>
               <p className={styles.routeLine}>
-                Route queries tagged <code className={styles.inlineCode}>workload:etl</code> to
-                the Trino cluster reserved for batch
+                Route queries tagged <code className={styles.inlineCode}>workload:etl</code> to the
+                Trino cluster reserved for batch
               </p>
               <p className={styles.routeLine}>
                 Route queries matching <code className={styles.inlineCode}>SELECT.*LIMIT \d+</code>{' '}
@@ -84,10 +84,10 @@ export default function HomepageBenefits(): ReactNode {
 
           <BenefitBlock title="Eliminate the N×M integration problem">
             <p className={styles.prose}>
-              One endpoint replaces N×M driver configurations. Clients connect to QueryFlux once;
-              the backend topology—which engines exist, how they are grouped, how load is
-              balanced—is config, not code. Add an engine, change a routing rule, swap a backend:
-              no client changes, no deploys, no coordination.
+              One endpoint replaces N×M driver configurations. Clients connect to QueryFlux once; the
+              backend topology — which engines exist, how they are grouped, how load is balanced — is
+              config, not code. Add an engine, change a routing rule, swap a backend: no client
+              changes, no deploys, no coordination.
             </p>
           </BenefitBlock>
 
