@@ -1,5 +1,6 @@
 ---
 sidebar_position: 7
+description: QueryFlux project roadmap — shipped features, in-progress work, and planned additions for routing, auth, and engine support.
 ---
 
 # Roadmap

@@ -1,7 +1,7 @@
 # QueryFlux architecture documentation
 
 <p align="center">
-  <img src="assets/queryflux-logo.png" alt="QueryFlux logo" width="480" />
+  <img src="assets/queryflux-hero-cover.jpg" alt="QueryFlux — multi-engine SQL query proxy and router in Rust" width="640" />
 </p>
 
 This folder describes how QueryFlux is put together: why it exists, how SQL is translated, and how traffic is routed to **cluster groups** and individual **clusters**.

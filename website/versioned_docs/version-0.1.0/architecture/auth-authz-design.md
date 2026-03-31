@@ -1,3 +1,7 @@
+---
+description: Authentication and authorization design notes.
+---
+
 # QueryFlux Auth/AuthZ Design
 
 ## The Two-Credential Model (Core Principle)

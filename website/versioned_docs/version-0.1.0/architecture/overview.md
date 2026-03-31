@@ -1,5 +1,6 @@
 ---
 sidebar_label: Overview
+description: Index of QueryFlux architecture docs — system design, SQL translation, routing, observability, and adding engine support.
 ---
 
 # QueryFlux architecture documentation

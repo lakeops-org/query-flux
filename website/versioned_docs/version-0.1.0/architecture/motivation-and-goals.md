@@ -1,3 +1,7 @@
+---
+description: Problem statement, goals, and how QueryFlux fits multi-engine estates.
+---
+
 # Motivation and goals
 
 ## Why QueryFlux exists

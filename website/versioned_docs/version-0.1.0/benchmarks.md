@@ -1,5 +1,6 @@
 ---
 sidebar_position: 4
+description: QueryFlux proxy overhead benchmarks — mock-backend latency numbers for Trino HTTP and MySQL wire paths.
 ---
 
 # Benchmark (proxy overhead)

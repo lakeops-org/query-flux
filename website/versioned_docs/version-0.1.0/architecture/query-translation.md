@@ -1,3 +1,7 @@
+---
+description: Dialect detection, sqlglot integration, when translation runs, and schema-aware mode.
+---
+
 # Query translation
 
 This document explains **how** QueryFlux converts SQL between dialects, **when** that happens, and how it fits into the query path.

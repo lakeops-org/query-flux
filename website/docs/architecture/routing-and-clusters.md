@@ -1,3 +1,7 @@
+---
+description: Routing rules, cluster groups, cluster selection strategies, concurrency limits, and load balancing in QueryFlux.
+---
+
 # Routing, cluster groups, and clusters
 
 QueryFlux separates **where a query should go logically** (cluster **group**) from **which physical backend instance** serves it (**cluster** / adapter). This document explains that split, how routers work, and how the cluster manager balances load and enforces limits.

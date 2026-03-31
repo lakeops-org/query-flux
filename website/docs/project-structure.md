@@ -1,5 +1,6 @@
 ---
 sidebar_position: 3
+description: High-level layout of the QueryFlux repository — crate responsibilities, directories, and runnable examples.
 ---
 
 # Project structure

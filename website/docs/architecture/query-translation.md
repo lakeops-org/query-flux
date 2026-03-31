@@ -1,3 +1,7 @@
+---
+description: How QueryFlux converts SQL between dialects using sqlglot — pipeline stage, supported dialects, and translation bypass rules.
+---
+
 # Query translation
 
 This document explains **how** QueryFlux converts SQL between dialects, **when** that happens, and how it fits into the query path.

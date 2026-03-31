@@ -1,3 +1,5 @@
+**/.DS_Store
+/readme-preview.html
 /target
 .env
 *.duckdb

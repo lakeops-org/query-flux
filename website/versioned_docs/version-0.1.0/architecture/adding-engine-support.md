@@ -1,3 +1,7 @@
+---
+description: Checklist for new backend engines (Rust adapters), Studio (lib/studio-engines/ manifest + catalog slots), and frontend wire protocols (e.g. Postgres wire).
+---
+
 # Adding engine and protocol support
 
 This guide separates two ideas that are easy to conflate:
