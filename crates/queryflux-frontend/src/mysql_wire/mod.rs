@@ -886,18 +886,31 @@ fn is_select_database(sql_lower: &str) -> bool {
 /// body. MySQL/JDBC often appends `FROM dual` to pure variable selects.
 fn strip_from_dual(select_body: &str) -> &str {
     // Work on the already-lowercased input. Strip trailing whitespace, then look
-    // for the pattern: <select_list> <whitespace> from <whitespace> dual
+    // at the last two non-empty tokens. If they are `from` and `dual`, strip
+    // them (and any preceding whitespace); otherwise, return the original body.
     let tail = select_body.trim_end();
-    if let Some(before_dual) = tail.strip_suffix("dual") {
-        let mid = before_dual.trim_end();
-        if let Some(before_from) = mid.strip_suffix("from") {
-            let candidate = before_from.trim_end();
-            // Ensure "from" is a keyword boundary, not part of a column name.
-            if candidate.is_empty()
-                || !candidate.ends_with(|c: char| c.is_alphanumeric() || c == '_')
-            {
-                return candidate;
-            }
+
+    // Fast path: if there's nothing (or only whitespace), or fewer than two
+    // tokens, we can't have a trailing `from dual`.
+    let mut tokens: Vec<(&str, usize)> = Vec::new();
+    for token in tail.split_whitespace() {
+        // Compute the byte offset of this token within `tail`.
+        let start = token.as_ptr() as usize - tail.as_ptr() as usize;
+        tokens.push((token, start));
+    }
+
+    if tokens.len() >= 2 {
+        let (last_tok, _) = tokens[tokens.len() - 1];
+        let (prev_tok, prev_start) = tokens[tokens.len() - 2];
+
+        // `select_body` is already lowercased by the caller, so we can do
+        // direct string comparisons.
+        if last_tok == "dual" && prev_tok == "from" {
+            // Slice everything before the `from` token, then trim any
+            // whitespace left at the end of that prefix.
+            let before_from = &tail[..prev_start];
+            let stripped = before_from.trim_end();
+            return stripped;
         }
     }
     select_body
