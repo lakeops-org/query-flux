@@ -2,28 +2,19 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
-// Keep in sync with `url` + `baseUrl` (used in headTags / structured data). Project Pages:
-// https://<org>.github.io/<repo>/
-const siteUrl = 'https://lakeops-org.github.io';
-/** Public docs homepage (project Pages: host + repo path, no trailing slash). */
-const siteCanonicalUrl = `${siteUrl}/queryflux`;
+const siteUrl = 'https://queryflux.dev';
+const siteCanonicalUrl = siteUrl;
 const socialPreviewTitle = 'QueryFlux — Multi-engine query routing proxy';
 const socialPreviewDescription =
   'Universal SQL query proxy and router in Rust. One endpoint for Trino, PostgreSQL, MySQL, and Flight clients with routing, queueing, and observability.';
-
-/** Local dev: `npm run dev` sets this so the site is at http://localhost:3000/ (not /queryflux/). */
-const useRootBaseUrl =
-  process.env.DOCUSAURUS_USE_ROOT_BASE === 'true' ||
-  process.env.DOCUSAURUS_USE_ROOT_BASE === '1';
 
 const config: Config = {
   title: 'QueryFlux',
   tagline: 'Universal SQL query proxy and router in Rust',
   favicon: 'img/queryflux-hero-cover.png',
 
-  // Must match GitHub Pages path: repo `queryflux` → baseUrl `/queryflux/`.
   url: siteUrl,
-  baseUrl: useRootBaseUrl ? '/' : '/queryflux/',
+  baseUrl: '/',
 
   // Used by `npm run deploy` to pick the target repo — must match `git remote` (org/repo).
   organizationName: 'lakeops-org',
