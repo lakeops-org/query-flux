@@ -28,10 +28,10 @@ html[data-theme='dark'] .section {
   grid-column: 1 / -1;
   justify-self: center;
   text-align: center;
-  font-size: clamp(1.45rem, 3vw, 1.85rem);
+  font-size: clamp(1.7rem, 3.2vw, 2.1rem);
   font-weight: 700;
-  letter-spacing: -0.025em;
-  margin: 0 0 0.75rem;
+  letter-spacing: -0.03em;
+  margin: 0 0 0.85rem;
   max-width: var(--qf-section-heading-max);
   width: 100%;
   line-height: 1.25;
@@ -42,13 +42,13 @@ html[data-theme='dark'] .section {
   grid-column: 1 / -1;
   justify-self: center;
   text-align: center;
-  font-size: clamp(1.08rem, 1.9vw, 1.22rem);
-  line-height: 1.55;
+  font-size: clamp(1.08rem, 1.9vw, 1.2rem);
+  line-height: 1.62;
   font-weight: 500;
   color: var(--ifm-heading-color);
   max-width: 40rem;
   width: 100%;
-  margin: 0 0 2.75rem;
+  margin: 0 0 2.65rem;
 }
 
 html[data-theme='dark'] .sectionSub {
@@ -59,7 +59,7 @@ html[data-theme='dark'] .sectionSub {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1.25rem;
+  gap: 1.35rem;
   width: 100%;
 }
 
@@ -69,7 +69,7 @@ html[data-theme='dark'] .sectionSub {
 
 .block {
   position: relative;
-  padding: 1.6rem 1.45rem 1.75rem 1.25rem;
+  padding: 1.65rem 1.5rem 1.75rem 1.35rem;
   border-radius: 14px;
   border: 1px solid var(--ifm-color-emphasis-200);
   background: #ffffff;
@@ -104,7 +104,7 @@ html[data-theme='dark'] .sectionSub {
 
 .blockTitle {
   position: relative;
-  font-size: 1.15rem;
+  font-size: 1.26rem;
   font-weight: 650;
   margin: 0 0 0.85rem;
   padding-left: 0.65rem;
@@ -124,8 +124,8 @@ html[data-theme='dark'] .blockTitle {
 
 .prose {
   margin: 0 0 1.1rem;
-  font-size: 0.98rem;
-  line-height: 1.65;
+  font-size: 1.1rem;
+  line-height: 1.68;
   font-weight: 400;
   color: #18181b;
 }
@@ -192,7 +192,7 @@ html[data-theme='dark'] .statValue {
 }
 
 .statLabel {
-  font-size: 0.9375rem;
+  font-size: 1rem;
   font-weight: 600;
   line-height: 1.35;
   color: #0f172a;
@@ -238,7 +238,7 @@ html[data-theme='dark'] .statDivider {
   position: relative;
   margin: 0;
   padding-left: 1.35rem;
-  font-size: clamp(1.02rem, 1.25vw, 1.08rem);
+  font-size: clamp(1.08rem, 1.35vw, 1.14rem);
   line-height: 1.68;
   font-weight: 400;
   color: #18181b;
@@ -337,7 +337,7 @@ html[data-theme='dark'] .block:hover {
 
 .routeLine {
   margin: 0;
-  font-size: clamp(1.02rem, 1.25vw, 1.08rem);
+  font-size: clamp(1.08rem, 1.35vw, 1.14rem);
   line-height: 1.68;
   font-weight: 400;
   color: #18181b;

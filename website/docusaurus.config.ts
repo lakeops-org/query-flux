@@ -7,9 +7,9 @@ import type * as Preset from '@docusaurus/preset-classic';
 const siteUrl = 'https://lakeops-org.github.io';
 /** Public docs homepage (project Pages: host + repo path, no trailing slash). */
 const siteCanonicalUrl = `${siteUrl}/queryflux`;
-const socialPreviewTitle = 'QueryFlux — Universal SQL proxy & router';
+const socialPreviewTitle = 'QueryFlux — Multi-engine query routing proxy';
 const socialPreviewDescription =
-  'Universal SQL query proxy and multi-engine router in Rust. One endpoint for Trino, PostgreSQL, MySQL, and Flight clients with routing, queueing, and observability.';
+  'Universal SQL query proxy and router in Rust. One endpoint for Trino, PostgreSQL, MySQL, and Flight clients with routing, queueing, and observability.';
 
 /** Local dev: `npm run dev` sets this so the site is at http://localhost:3000/ (not /queryflux/). */
 const useRootBaseUrl =
@@ -18,7 +18,7 @@ const useRootBaseUrl =
 
 const config: Config = {
   title: 'QueryFlux',
-  tagline: 'Universal SQL query proxy and multi-engine router in Rust',
+  tagline: 'Universal SQL query proxy and router in Rust',
   favicon: 'img/queryflux-hero-cover.jpg',
 
   // Must match GitHub Pages path: repo `queryflux` → baseUrl `/queryflux/`.
@@ -53,7 +53,7 @@ const config: Config = {
         '@type': 'SoftwareSourceCode',
         name: 'QueryFlux',
         description:
-          'Universal SQL query proxy and multi-engine router in Rust. Front protocols include Trino HTTP, PostgreSQL wire, MySQL wire, and Arrow Flight; backends include Trino, DuckDB, StarRocks, and more with routing and sqlglot dialect translation.',
+          'Universal SQL query proxy and router in Rust. Front protocols include Trino HTTP, PostgreSQL wire, MySQL wire, and Arrow Flight; backends include Trino, DuckDB, StarRocks, and more with routing and sqlglot dialect translation.',
         url: siteCanonicalUrl,
         codeRepository: 'https://github.com/lakeops-org/queryflux',
         license: 'https://www.apache.org/licenses/LICENSE-2.0',
@@ -204,7 +204,7 @@ const config: Config = {
           items: [],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} LakeOps. QueryFlux documentation — Apache-2.0.`,
+      copyright: `Copyright © ${new Date().getFullYear()} QueryFlux contributors. QueryFlux documentation — Apache-2.0.`,
     },
     prism: {
       theme: prismThemes.github,
@@ -218,11 +218,26 @@ const config: Config = {
         content:
           'LakeOps, QueryFlux, SQL proxy, query router, Trino, PostgreSQL, MySQL, Arrow Flight, DuckDB, StarRocks, Rust, sqlglot, data lake',
       },
+      {
+        name: 'description',
+        content: socialPreviewDescription,
+      },
+      {
+        name: 'robots',
+        content: 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',
+      },
+      {
+        name: 'googlebot',
+        content: 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',
+      },
+      {property: 'og:site_name', content: 'QueryFlux'},
       {property: 'og:title', content: socialPreviewTitle},
       {property: 'og:description', content: socialPreviewDescription},
+      {property: 'og:image:alt', content: 'QueryFlux multi-engine query routing overview'},
       {name: 'twitter:card', content: 'summary_large_image'},
       {name: 'twitter:title', content: socialPreviewTitle},
       {name: 'twitter:description', content: socialPreviewDescription},
+      {name: 'twitter:image:alt', content: 'QueryFlux multi-engine query routing overview'},
       {property: 'og:type', content: 'website'},
       {property: 'og:image:width', content: '1024'},
       {property: 'og:image:height', content: '682'},

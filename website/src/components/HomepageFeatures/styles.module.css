@@ -14,11 +14,11 @@
   grid-column: 1 / -1;
   justify-self: center;
   text-align: center;
-  font-size: clamp(1.45rem, 3vw, 1.85rem);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  margin: 0 0 0.75rem;
-  max-width: var(--qf-section-heading-max);
+  font-size: clamp(1.7rem, 3.2vw, 2.1rem);
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  margin: 0 0 0.85rem;
+  max-width: 42rem;
   width: 100%;
   line-height: 1.25;
   color: var(--ifm-heading-color);
@@ -28,12 +28,13 @@
   grid-column: 1 / -1;
   justify-self: center;
   text-align: center;
-  font-size: 1.05rem;
-  line-height: 1.65;
-  color: var(--ifm-color-emphasis-700);
-  max-width: var(--qf-section-sub-max);
+  font-size: clamp(1.08rem, 1.9vw, 1.2rem);
+  line-height: 1.62;
+  font-weight: 500;
+  color: var(--ifm-heading-color);
+  max-width: 40rem;
   width: 100%;
-  margin: 0 0 2.5rem;
+  margin: 0 0 2.65rem;
 }
 
 .featureRow {
@@ -54,8 +55,8 @@
 
 .featureCard {
   height: 100%;
-  padding: 1.5rem 1.35rem 1.6rem;
-  border-radius: 12px;
+  padding: 1.65rem 1.5rem 1.75rem;
+  border-radius: 14px;
   border: 1px solid var(--ifm-color-emphasis-200);
   background: var(--ifm-background-surface-color);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
@@ -70,18 +71,22 @@
 }
 
 .featureTitle {
-  font-size: 1.12rem;
-  font-weight: 650;
-  margin: 0 0 0.65rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0 0 0.8rem;
   letter-spacing: -0.02em;
   color: var(--ifm-heading-color);
 }
 
 .featureBody {
   margin: 0;
-  font-size: 0.98rem;
-  line-height: 1.6;
-  color: var(--ifm-color-emphasis-700);
+  font-size: 1.04rem;
+  line-height: 1.68;
+  color: #18181b;
+}
+
+html[data-theme='dark'] .sectionSub {
+  color: #f4f4f5;
 }
 
 html[data-theme='dark'] .featureCard {
@@ -90,6 +95,10 @@ html[data-theme='dark'] .featureCard {
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.04),
     0 8px 28px rgba(0, 0, 0, 0.6);
+}
+
+html[data-theme='dark'] .featureBody {
+  color: #f4f4f5;
 }
 
 html[data-theme='dark'] .featureCard:hover {
@@ -110,6 +119,6 @@ html[data-theme='dark'] .featureCard:hover {
   }
 
   .featureCard {
-    text-align: center;
+    text-align: left;
   }
 }

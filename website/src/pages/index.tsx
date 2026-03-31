@@ -55,13 +55,13 @@ function HomepageHeader(): ReactNode {
 
 /** Homepage meta description; keep concise for search-result snippets (~155 chars / ~1000px). */
 const HOME_DESCRIPTION =
-  'Rust SQL proxy and router: Trino, PostgreSQL, MySQL, and Flight in front; route and translate to DuckDB, StarRocks, Trino, and more.';
+  'Multi-engine query routing proxy for SQL clients: route Trino, PostgreSQL, MySQL, and Flight queries to the best backend engine with translation, queueing, and observability.';
 
 /**
  * Page title before Docusaurus appends ` | QueryFlux` (~12 chars). Keep the *final*
  * string ≤ ~60 chars for Twitter / strict OG validators.
  */
-const HOME_PAGE_TITLE = 'QueryFlux — Universal SQL proxy & router';
+const HOME_PAGE_TITLE = 'QueryFlux — Multi-engine query routing proxy';
 
 export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();

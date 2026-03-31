@@ -23,7 +23,7 @@ export default function MobileSidebarToggle(): ReactNode {
 
   return (
     <div
-      className={styles.toggleWrap}
+      className={`${styles.toggleWrap} qf-mobile-toggle-wrap`}
       onMouseEnter={() => {
         clearNavbarMenuCloseTimer();
         if (!shownRef.current) {

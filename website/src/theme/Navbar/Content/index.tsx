@@ -14,12 +14,10 @@ import {
 } from '@docusaurus/theme-common';
 import {
   splitNavbarItems,
-  useNavbarMobileSidebar,
 } from '@docusaurus/theme-common/internal';
 import NavbarItem, {type Props as NavbarItemConfig} from '@theme/NavbarItem';
 import NavbarColorModeToggle from '@theme/Navbar/ColorModeToggle';
 import SearchBar from '@theme/SearchBar';
-import NavbarMobileSidebarToggle from '@theme/Navbar/MobileSidebar/Toggle';
 import NavbarLogo from '@theme/Navbar/Logo';
 import NavbarSearch from '@theme/Navbar/Search';
 
@@ -78,34 +76,35 @@ function NavbarContentLayout({
 }
 
 export default function NavbarContent(): ReactNode {
-  const mobileSidebar = useNavbarMobileSidebar();
-
   const items = useNavbarItems();
   const [leftItems, rightItems] = splitNavbarItems(items);
 
   const searchBarItem = items.find((item) => item.type === 'search');
+  const leftItemsWithoutSearch = leftItems.filter((item) => item.type !== 'search');
+  const rightItemsWithoutSearch = rightItems.filter(
+    (item) => item.type !== 'search',
+  );
 
   return (
     <NavbarContentLayout
       left={
         <>
           <NavbarLogo />
-          <NavbarItems items={leftItems} />
-        </>
-      }
-      right={
-        <>
-          <NavbarItems items={rightItems} />
-          <NavbarColorModeToggle
-            className={styles.colorModeToggle}
-            aria-label="Toggle light and dark theme"
-          />
-          {!searchBarItem && (
+          <NavbarItems items={leftItemsWithoutSearch} />
+          {searchBarItem && (
             <NavbarSearch>
               <SearchBar />
             </NavbarSearch>
           )}
-          {!mobileSidebar.disabled && <NavbarMobileSidebarToggle />}
+        </>
+      }
+      right={
+        <>
+          <NavbarItems items={rightItemsWithoutSearch} />
+          <NavbarColorModeToggle
+            className={styles.colorModeToggle}
+            aria-label="Toggle light and dark theme"
+          />
         </>
       }
     />
