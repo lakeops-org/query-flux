@@ -14,7 +14,7 @@ import styles from './index.module.css';
 
 function HomepageHeader(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
-  const heroUrl = useBaseUrl('/img/queryflux-hero-cover.jpg');
+  const heroUrl = useBaseUrl('/img/queryflux-hero-cover.png');
 
   return (
     <header className={styles.hero}>

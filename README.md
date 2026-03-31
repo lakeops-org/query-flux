@@ -1,7 +1,7 @@
 # QueryFlux
 
 <p align="center">
-  <img src="docs/assets/queryflux-hero-cover.jpg" alt="QueryFlux — multi-engine SQL query proxy and router in Rust" width="720" />
+  <img src="website/static/img/queryflux-hero-cover.png" alt="QueryFlux — multi-engine SQL query proxy and router in Rust" width="720" />
 </p>
 
 <p align="center"><big>Universal SQL query proxy and router in Rust</big></p>
