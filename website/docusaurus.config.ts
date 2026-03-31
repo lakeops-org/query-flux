@@ -65,18 +65,6 @@ const config: Config = {
           'Documentation and resources for QueryFlux, a universal SQL query proxy and router.',
       }),
     },
-    // Confirms you hit `npm run dev` (root baseUrl), not production or `npm start` (/queryflux/).
-    ...(useRootBaseUrl
-      ? [
-          {
-            tagName: 'meta',
-            attributes: {
-              name: 'queryflux-dev',
-              content: 'root-baseUrl',
-            },
-          },
-        ]
-      : []),
   ],
 
   i18n: {
