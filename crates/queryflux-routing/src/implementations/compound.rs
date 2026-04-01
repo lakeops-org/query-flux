@@ -32,7 +32,7 @@ fn protocol_from_config(s: &str) -> Option<FrontendProtocol> {
 fn header_equals(session: &SessionContext, header_name: &str, expected_value: &str) -> bool {
     let key = header_name.to_lowercase();
     let actual = match session {
-        SessionContext::TrinoHttp { headers } => headers.get(&key),
+        SessionContext::TrinoHttp { headers, .. } => headers.get(&key),
         SessionContext::ClickHouseHttp { headers, .. } => headers.get(&key),
         _ => return false,
     };
@@ -40,7 +40,7 @@ fn header_equals(session: &SessionContext, header_name: &str, expected_value: &s
 }
 
 fn client_tags_contain(session: &SessionContext, tag: &str) -> bool {
-    let SessionContext::TrinoHttp { headers } = session else {
+    let SessionContext::TrinoHttp { headers, .. } = session else {
         return false;
     };
     let Some(raw) = headers.get("x-trino-client-tags") else {

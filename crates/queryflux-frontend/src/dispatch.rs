@@ -9,6 +9,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use queryflux_auth::AuthContext;
 use queryflux_cluster_manager::ClusterGroupManager;
+use queryflux_core::tags::{merge_tags, QueryTags};
 use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{
@@ -18,9 +19,10 @@ use queryflux_core::{
     session::SessionContext,
 };
 use queryflux_translation::SchemaContext;
+
 use tracing::{debug, info, warn};
 
-use crate::state::AppState;
+use crate::state::{AppState, QueryContext, QueryOutcome};
 
 // ---------------------------------------------------------------------------
 // ResultSink — universal streaming output interface
@@ -106,8 +108,8 @@ pub async fn dispatch_query(
         )));
     }
 
-    // Clone the manager and group translation fixups from one lock snapshot.
-    let (cluster_manager, group_fixups) = {
+    // Clone the manager, group translation fixups, and default tags from one lock snapshot.
+    let (cluster_manager, group_fixups, group_default_tags) = {
         let live = state.live.read().await;
         (
             live.cluster_manager.clone(),
@@ -115,8 +117,13 @@ pub async fn dispatch_query(
                 .get(&group.0)
                 .cloned()
                 .unwrap_or_default(),
+            live.group_default_tags
+                .get(&group.0)
+                .cloned()
+                .unwrap_or_default(),
         )
     };
+    let effective_tags = merge_tags(&group_default_tags, &session.tags().clone());
 
     let cluster_name = match cluster_manager.acquire_cluster(&group).await? {
         Some(c) => c,
@@ -196,7 +203,10 @@ pub async fn dispatch_query(
         info!(id = %query_id, src = ?src_dialect, tgt = ?tgt_dialect, "SQL translated");
     }
 
-    let execution = match adapter.submit_query(&sql, &session, &credentials).await {
+    let execution = match adapter
+        .submit_query(&sql, &session, &credentials, &effective_tags)
+        .await
+    {
         Ok(e) => e,
         Err(e) => {
             state.metrics.on_query_finished(&group.0, &cluster_name.0);
@@ -233,6 +243,7 @@ pub async fn dispatch_query(
         trino_endpoint: adapter.base_url().to_string(),
         creation_time: now,
         last_accessed: now,
+        query_tags: effective_tags,
     };
     // Single write per query — no updates needed between polls.
     // Any QueryFlux instance can serve subsequent polls using this record.
@@ -318,7 +329,7 @@ pub async fn execute_to_sink(
     // 1. Queue loop: wait for cluster capacity.
     // Clone the manager out of the lock before entering the loop so we don't hold
     // the read lock across any of the I/O-bound await points inside.
-    let (cluster_manager, group_fixups) = {
+    let (cluster_manager, group_fixups, group_default_tags) = {
         let live = state.live.read().await;
         (
             live.cluster_manager.clone(),
@@ -326,8 +337,13 @@ pub async fn execute_to_sink(
                 .get(&group.0)
                 .cloned()
                 .unwrap_or_default(),
+            live.group_default_tags
+                .get(&group.0)
+                .cloned()
+                .unwrap_or_default(),
         )
     };
+    let effective_tags: QueryTags = merge_tags(&group_default_tags, &session.tags().clone());
     let mut seq: u64 = 0;
     let (cluster_name, adapter) = loop {
         match cluster_manager.acquire_cluster(&group).await? {
@@ -368,34 +384,60 @@ pub async fn execute_to_sink(
         Ok(t) => t,
         Err(e) => {
             let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
-            let elapsed_ms = start.elapsed().as_millis() as u64;
             let err_msg = e.to_string();
             state.record_query(
-                &query_id,
-                None,
-                &original_sql,
-                &session,
-                &protocol,
-                &group,
-                &cluster_name,
-                cluster_group_config_id,
-                cluster_config_id,
-                engine_type,
-                src_dialect.clone(),
-                tgt_dialect.clone(),
-                false,
-                None,
-                QueryStatus::Failed,
-                elapsed_ms,
-                None,
-                Some(err_msg.clone()),
-                None,
-                None,
+                &QueryContext {
+                    query_id: &query_id,
+                    sql: &original_sql,
+                    session: &session,
+                    protocol: protocol.clone(),
+                    group: &group,
+                    cluster: &cluster_name,
+                    cluster_group_config_id,
+                    cluster_config_id,
+                    engine_type,
+                    src_dialect,
+                    tgt_dialect,
+                    was_translated: false,
+                    translated_sql: None,
+                    query_tags: effective_tags,
+                },
+                QueryOutcome {
+                    backend_query_id: None,
+                    status: QueryStatus::Failed,
+                    execution_ms: start.elapsed().as_millis() as u64,
+                    error: Some(err_msg.clone()),
+                    rows: None,
+                    routing_trace: None,
+                    engine_stats: None,
+                },
             );
             return sink.on_error(&err_msg).await;
         }
     };
     let was_translated = translated != original_sql;
+
+    // Build the query context once — reused across all remaining record_query calls.
+    let ctx = QueryContext {
+        query_id: &query_id,
+        sql: &original_sql,
+        session: &session,
+        protocol: protocol.clone(),
+        group: &group,
+        cluster: &cluster_name,
+        cluster_group_config_id,
+        cluster_config_id,
+        engine_type,
+        src_dialect,
+        tgt_dialect,
+        was_translated,
+        translated_sql: if was_translated {
+            Some(translated.clone())
+        } else {
+            None
+        },
+        query_tags: effective_tags,
+    };
 
     let cluster_cfg = state.cluster_config_cloned(&cluster_name.0).await;
     let credentials = state
@@ -405,54 +447,26 @@ pub async fn execute_to_sink(
 
     // 3. Execute as Arrow stream.
     let mut stream = match adapter
-        .execute_as_arrow(&translated, &session, &credentials)
+        .execute_as_arrow(&translated, &session, &credentials, &ctx.query_tags)
         .await
     {
         Ok(s) => s,
         Err(e) => {
             let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
-            let elapsed_ms = start.elapsed().as_millis() as u64;
             let err_msg = e.to_string();
-            // Log high-level failure details at warn level without including full SQL to avoid
-            // leaking potentially sensitive query text in production logs.
-            warn!(
-                id = %query_id,
-                cluster = %cluster_name,
-                "execute_as_arrow failed: {err_msg}"
-            );
-            // Optionally log the full translated SQL at debug level for troubleshooting in
-            // non-production or verbose logging environments.
-            debug!(
-                id = %query_id,
-                cluster = %cluster_name,
-                sql = %translated,
-                "execute_as_arrow failed with translated SQL"
-            );
+            warn!(id = %query_id, cluster = %cluster_name, "execute_as_arrow failed: {err_msg}");
+            debug!(id = %query_id, cluster = %cluster_name, sql = %translated, "execute_as_arrow failed with translated SQL");
             state.record_query(
-                &query_id,
-                None,
-                &original_sql,
-                &session,
-                &protocol,
-                &group,
-                &cluster_name,
-                cluster_group_config_id,
-                cluster_config_id,
-                engine_type,
-                src_dialect.clone(),
-                tgt_dialect.clone(),
-                was_translated,
-                if was_translated {
-                    Some(translated.clone())
-                } else {
-                    None
+                &ctx,
+                QueryOutcome {
+                    backend_query_id: None,
+                    status: QueryStatus::Failed,
+                    execution_ms: start.elapsed().as_millis() as u64,
+                    error: Some(err_msg.clone()),
+                    rows: None,
+                    routing_trace: None,
+                    engine_stats: None,
                 },
-                QueryStatus::Failed,
-                elapsed_ms,
-                None,
-                Some(err_msg.clone()),
-                None,
-                None,
             );
             return sink.on_error(&err_msg).await;
         }
@@ -464,36 +478,21 @@ pub async fn execute_to_sink(
     while let Some(result) = stream.next().await {
         match result {
             Err(e) => {
-                let stream_error = Some(e.to_string());
+                let err_msg = e.to_string();
                 let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
-                let elapsed_ms = start.elapsed().as_millis() as u64;
                 state.record_query(
-                    &query_id,
-                    None,
-                    &original_sql,
-                    &session,
-                    &protocol,
-                    &group,
-                    &cluster_name,
-                    cluster_group_config_id,
-                    cluster_config_id,
-                    engine_type,
-                    src_dialect.clone(),
-                    tgt_dialect.clone(),
-                    was_translated,
-                    if was_translated {
-                        Some(translated.clone())
-                    } else {
-                        None
+                    &ctx,
+                    QueryOutcome {
+                        backend_query_id: None,
+                        status: QueryStatus::Failed,
+                        execution_ms: start.elapsed().as_millis() as u64,
+                        error: Some(err_msg.clone()),
+                        rows: None,
+                        routing_trace: None,
+                        engine_stats: None,
                     },
-                    QueryStatus::Failed,
-                    elapsed_ms,
-                    None,
-                    stream_error.clone(),
-                    None,
-                    None,
                 );
-                return sink.on_error(stream_error.as_deref().unwrap()).await;
+                return sink.on_error(&err_msg).await;
             }
             Ok(batch) => {
                 if !schema_sent {
@@ -522,30 +521,16 @@ pub async fn execute_to_sink(
     };
 
     state.record_query(
-        &query_id,
-        None,
-        &original_sql,
-        &session,
-        &protocol,
-        &group,
-        &cluster_name,
-        cluster_group_config_id,
-        cluster_config_id,
-        engine_type,
-        src_dialect,
-        tgt_dialect,
-        was_translated,
-        if was_translated {
-            Some(translated)
-        } else {
-            None
+        &ctx,
+        QueryOutcome {
+            backend_query_id: None,
+            status: QueryStatus::Success,
+            execution_ms: elapsed_ms,
+            rows: Some(rows_returned),
+            error: None,
+            routing_trace: None,
+            engine_stats: None,
         },
-        QueryStatus::Success,
-        elapsed_ms,
-        Some(rows_returned),
-        None,
-        None,
-        None,
     );
 
     // If no batches arrived (empty result), still send an empty schema if we have nothing.

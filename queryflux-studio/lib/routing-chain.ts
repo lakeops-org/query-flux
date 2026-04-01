@@ -12,7 +12,15 @@ export type ChainItem =
   | { id: string; kind: "protocol"; protocol: string; targetGroupId: number | null }
   | { id: string; kind: "header"; headerName: string; headerValue: string; targetGroupId: number | null }
   | { id: string; kind: "user"; username: string; targetGroupId: number | null }
-  | { id: string; kind: "tag"; tag: string; targetGroupId: number | null }
+  | {
+      id: string;
+      kind: "tag";
+      /** Tag key to match. */
+      tagKey: string;
+      /** Tag value to match. Empty string = key-only (any value). */
+      tagValue: string;
+      targetGroupId: number | null;
+    }
   | { id: string; kind: "regex"; regex: string; targetGroupId: number | null }
   | {
       id: string;
@@ -99,7 +107,27 @@ export function routersToChainItems(
         }
         break;
       }
+      case "tags": {
+        // New format: each rule is { tags: Record<string, string|null>, target_group?, targetGroupId? }
+        // We expand each tag key in a rule into a separate UI row (one tag per row).
+        for (const rule of router.tag_rules ?? []) {
+          const gid =
+            (typeof rule.targetGroupId === "number" ? rule.targetGroupId : undefined) ??
+            cellToGroupId(rule.target_group, byName);
+          for (const [key, val] of Object.entries(rule.tags)) {
+            out.push({
+              id: uid(),
+              kind: "tag",
+              tagKey: key,
+              tagValue: val ?? "",
+              targetGroupId: gid,
+            });
+          }
+        }
+        break;
+      }
       case "clientTags": {
+        // Legacy format: key-only tag → group. Read-only — we always save back as "tags".
         const idMap = router.tagToGroupId;
         const vals = router.tag_to_group ?? {};
         for (const [tag, group] of Object.entries(vals)) {
@@ -109,7 +137,8 @@ export function routersToChainItems(
           out.push({
             id: uid(),
             kind: "tag",
-            tag,
+            tagKey: tag,
+            tagValue: "",
             targetGroupId: gid,
           });
         }
@@ -215,9 +244,13 @@ export function chainItemsToRouters(items: ChainItem[]): RouterConfigEntry[] {
       case "tag": {
         if (item.targetGroupId == null) continue;
         result.push({
-          type: "clientTags",
-          tag_to_group: { [item.tag]: item.targetGroupId },
-          tagToGroupId: { [item.tag]: item.targetGroupId },
+          type: "tags",
+          tag_rules: [
+            {
+              tags: { [item.tagKey]: item.tagValue === "" ? null : item.tagValue },
+              targetGroupId: item.targetGroupId,
+            },
+          ],
         });
         break;
       }

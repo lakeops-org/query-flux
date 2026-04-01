@@ -37,11 +37,40 @@ Configured under `routers:` in YAML (`queryflux_core::config::RouterConfig`). Wi
 | `protocolBased` | Maps the active frontend (`trinoHttp`, `postgresWire`, `mysqlWire`, `flightSql`, `clickhouseHttp`) to a group name. |
 | `header` | Matches a header value to a group (useful for Trino HTTP and similar). |
 | `queryRegex` | Ordered rules: first regex match on the SQL text wins. |
-| `clientTags` | Trino-style client tags header mapped to groups. |
+| `tags` | Routes based on query tags attached to the session. Each rule specifies one or more tag key/value conditions (AND logic); first matching rule wins. See [Tags router](#tags-router-tags) below. |
 | `pythonScript` | Embedded or file-backed Python `route(query, ctx)` returning a group name or `None`. See [Python script router](#python-script-router-pythonscript) below. |
 | `compound` | Multiple conditions combined with `all` (AND) or `any` (OR). Supported condition types: `protocol`, `header` (name + value), `user`, `clientTag`, `queryRegex`. |
 
 All six router types are implemented. Unknown `type` values in config are skipped at startup with a warning.
+
+## Tags router (`tags`)
+
+Routes queries based on key/value tags that clients attach to their sessions. Rules are evaluated in order; the **first rule where all specified tags match** wins (AND logic within a rule).
+
+```yaml
+routers:
+  - type: tags
+    tagRules:
+      - tags:
+          team: eng
+          env: prod
+        targetGroup: prod-eng-cluster
+      - tags:
+          team: analytics
+        targetGroup: analytics-cluster
+      - tags:
+          batch: null          # key-only match — any value (or no value) accepted
+        targetGroup: batch-cluster
+```
+
+**Matching semantics per tag entry:**
+
+| Config value | Matches when |
+|---|---|
+| `"some-value"` | Tag key is present **and** its value equals `"some-value"` |
+| `null` | Tag key is present, regardless of its value (key-only match) |
+
+**How clients attach tags** depends on the frontend protocol — see [Query tags](/docs/architecture/query-tags) for full details on how to set tags from each frontend (Trino, MySQL wire, Postgres wire, ClickHouse HTTP).
 
 ## Cached routing config and DB reload (Postgres)
 
@@ -74,6 +103,8 @@ def route(query: str, ctx: dict) -> str | None:
 | `sessionVars` | MySQL wire | `dict[str, str]` (`SET SESSION`). |
 | `queryParams` | ClickHouse HTTP | URL query string parameters (e.g. `?database=…`). |
 | `auth` | When the request was authenticated | `{"user": str, "groups": [str, …], "roles": [str, …]}`. Raw JWT / bearer tokens are **not** passed into Python. |
+
+Query tags are **not** currently injected into the Python context dict. Use the `tags` router type for tag-based routing instead.
 
 **Flight SQL** reports `protocol: "flightSql"` but **`SessionContext` is still Trino-style**: `headers` are built from gRPC metadata (see `queryflux-frontend` Flight SQL service).
 

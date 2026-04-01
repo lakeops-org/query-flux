@@ -8,6 +8,7 @@ use queryflux_core::{
         ClusterGroupName, ClusterName, EngineType, FrontendProtocol, QueryEngineStats, QueryStatus,
         SqlDialect,
     },
+    tags::QueryTags,
 };
 
 /// A record of one completed (or failed/cancelled) query execution.
@@ -45,6 +46,9 @@ pub struct QueryRecord {
     pub created_at: DateTime<Utc>,
     /// Engine-reported execution stats (CPU, bytes scanned, memory, etc.).
     pub engine_stats: Option<QueryEngineStats>,
+    /// Effective query tags: group default_tags merged with session tags.
+    /// Session tags win on key conflicts. Empty map when no tags were set.
+    pub query_tags: QueryTags,
 }
 
 /// A periodic snapshot of one cluster's live utilization.

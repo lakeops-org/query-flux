@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ROUTING_SCRIPT_TEMPLATE } from "@/lib/script-templates";
 import CodeMirror from "@uiw/react-codemirror";
 import { python } from "@codemirror/lang-python";
@@ -27,13 +27,7 @@ export function PythonRoutingScriptDialog({
   initialScript,
   onCommit,
 }: PythonRoutingScriptDialogProps) {
-  const [draft, setDraft] = useState("");
-
-  useEffect(() => {
-    if (!open) return;
-    setDraft(initialScript);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload body when opening for a different row / mode
-  }, [open, initialScript, editChainItemId]);
+  const [draft, setDraft] = useState(initialScript);
 
   if (!open) return null;
 

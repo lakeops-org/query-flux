@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { QueryHistoryRecord } from "@/lib/api-types";
 import { StatusBadge, EngineBadge, formatDuration, formatDateTime } from "@/components/ui-helpers";
 import { QueryDetail } from "./query-detail";
-import { Database } from "lucide-react";
+import { Database, Tag } from "lucide-react";
 
 export function QueryTable({ queries }: { queries: QueryHistoryRecord[] }) {
   const [selected, setSelected] = useState<QueryHistoryRecord | null>(null);
@@ -24,7 +24,7 @@ export function QueryTable({ queries }: { queries: QueryHistoryRecord[] }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
-                {["Time", "SQL", "Engine", "Cluster", "Duration", "Rows", "Status"].map((h) => (
+                {["Time", "SQL", "Engine", "Cluster", "Duration", "Tags", "Status"].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">
                     {h}
                   </th>
@@ -59,8 +59,22 @@ export function QueryTable({ queries }: { queries: QueryHistoryRecord[] }) {
                   <td className="px-4 py-3 text-xs text-slate-600 tabular-nums font-medium">
                     {formatDuration(q.execution_duration_ms)}
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-500 tabular-nums">
-                    {q.rows_returned?.toLocaleString() ?? "—"}
+                  <td className="px-4 py-3 max-w-[220px]">
+                    {q.query_tags && Object.keys(q.query_tags).length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(q.query_tags).map(([key, value]) => (
+                          <span
+                            key={key}
+                            className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700"
+                          >
+                            <Tag size={9} />
+                            {value == null ? key : `${key}:${value}`}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-300">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={q.status} /></td>
                 </tr>

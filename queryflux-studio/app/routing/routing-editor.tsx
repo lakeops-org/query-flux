@@ -73,7 +73,8 @@ interface CompoundCondRow {
   headerName: string;
   headerValue: string;
   username: string;
-  tag: string;
+  tagKey: string;
+  tagValue: string;
   regex: string;
 }
 
@@ -85,8 +86,9 @@ interface FlatRule {
   headerValue: string;
   // user
   username: string;
-  // tag
-  tag: string;
+  // tag — key is required, value is optional (empty = key-only / any value)
+  tagKey: string;
+  tagValue: string;
   // regex
   regex: string;
   // protocol
@@ -115,7 +117,8 @@ function blankCompoundCond(): CompoundCondRow {
     headerName: "",
     headerValue: "",
     username: "",
-    tag: "",
+    tagKey: "",
+    tagValue: "",
     regex: "",
   };
 }
@@ -127,7 +130,8 @@ function blankRule(ruleType: FlatRuleType): FlatRule {
     headerName: "",
     headerValue: "",
     username: "",
-    tag: "",
+    tagKey: "",
+    tagValue: "",
     regex: "",
     protocol: "trinoHttp",
     targetGroupId: null,
@@ -170,7 +174,8 @@ function parseCompoundConditionFromApi(c: CompoundConditionEntry): CompoundCondR
       break;
     case "clientTag":
       row.condType = "tag";
-      row.tag = c.tag ?? "";
+      row.tagKey = c.tag ?? "";
+      row.tagValue = "";
       break;
     case "queryRegex":
       row.condType = "regex";
@@ -191,7 +196,7 @@ function compoundConditionValid(c: CompoundCondRow): boolean {
     case "user":
       return c.username.trim() !== "";
     case "tag":
-      return c.tag.trim() !== "";
+      return c.tagKey.trim() !== "";
     case "regex":
       return c.regex.trim() !== "";
     default:
@@ -208,7 +213,7 @@ function compoundConditionToApi(c: CompoundCondRow): CompoundConditionEntry {
     case "user":
       return { type: "user", username: c.username };
     case "tag":
-      return { type: "clientTag", tag: c.tag };
+      return { type: "clientTag", tag: c.tagKey };
     case "regex":
       return { type: "queryRegex", regex: c.regex };
   }
@@ -228,7 +233,7 @@ function flatRuleToChainItem(rule: FlatRule): ChainItem {
     case "user":
       return { id, kind: "user", username: rule.username, targetGroupId: rule.targetGroupId };
     case "tag":
-      return { id, kind: "tag", tag: rule.tag, targetGroupId: rule.targetGroupId };
+      return { id, kind: "tag", tagKey: rule.tagKey, tagValue: rule.tagValue, targetGroupId: rule.targetGroupId };
     case "regex":
       return { id, kind: "regex", regex: rule.regex, targetGroupId: rule.targetGroupId };
     case "protocol":
@@ -271,7 +276,7 @@ function chainItemConditionSummary(item: ChainItem, protocols: typeof PROTOCOLS)
     case "user":
       return item.username;
     case "tag":
-      return item.tag;
+      return item.tagValue ? `${item.tagKey}:${item.tagValue}` : item.tagKey;
     case "regex":
       return item.regex;
     case "protocol":
@@ -308,7 +313,7 @@ const RULE_TYPE_META: Record<
     border: "border-emerald-200",
   },
   tag: {
-    label: "Client Tag",
+    label: "Tag",
     icon: <Tag size={11} />,
     color: "text-amber-700",
     bg: "bg-amber-50",
@@ -394,7 +399,7 @@ function compoundCondSummary(c: CompoundCondRow): string {
     case "user":
       return `user:${c.username}`;
     case "tag":
-      return `tag:${c.tag}`;
+      return c.tagValue ? `tag:${c.tagKey}:${c.tagValue}` : `tag:${c.tagKey}`;
     case "regex":
       return c.regex.length > 48 ? `${c.regex.slice(0, 48)}…` : c.regex;
   }
@@ -444,7 +449,8 @@ function CompoundConditionsEditor({
                     headerName: "",
                     headerValue: "",
                     username: "",
-                    tag: "",
+                    tagKey: "",
+                    tagValue: "",
                     regex: "",
                   });
                 }}
@@ -452,7 +458,7 @@ function CompoundConditionsEditor({
                 <option value="protocol">Protocol</option>
                 <option value="header">Header</option>
                 <option value="user">User</option>
-                <option value="tag">Client tag</option>
+                <option value="tag">Tag</option>
                 <option value="regex">SQL regex</option>
               </select>
             </div>
@@ -518,17 +524,30 @@ function CompoundConditionsEditor({
             )}
 
             {c.condType === "tag" && (
-              <div>
-                <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
-                  Tag
-                </label>
-                <input
-                  className={inputCls}
-                  placeholder="etl"
-                  value={c.tag}
-                  onChange={(e) => updateCond(c.id, { tag: e.target.value })}
-                />
-              </div>
+              <>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
+                    Tag key
+                  </label>
+                  <input
+                    className={inputCls}
+                    placeholder="team"
+                    value={c.tagKey}
+                    onChange={(e) => updateCond(c.id, { tagKey: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
+                    Value <span className="normal-case font-normal text-slate-300">(optional)</span>
+                  </label>
+                  <input
+                    className={inputCls}
+                    placeholder="eng"
+                    value={c.tagValue}
+                    onChange={(e) => updateCond(c.id, { tagValue: e.target.value })}
+                  />
+                </div>
+              </>
             )}
 
             {c.condType === "regex" && (
@@ -763,7 +782,7 @@ function NewRuleForm({
         case "user":
           return form.username.trim() !== "";
         case "tag":
-          return form.tag.trim() !== "";
+          return form.tagKey.trim() !== "";
         case "regex":
           return form.regex.trim() !== "";
         case "protocol":
@@ -806,7 +825,7 @@ function NewRuleForm({
             <option value="user">User</option>
             <option value="protocol">Protocol</option>
             <option value="regex">SQL Regex</option>
-            <option value="tag">Client Tag</option>
+            <option value="tag">Tag</option>
           </select>
         </div>
 
@@ -843,12 +862,20 @@ function NewRuleForm({
         )}
 
         {form.ruleType === "tag" && (
-          <div>
-            <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
-              Client tag
-            </label>
-            {input("etl", form.tag, (v) => setForm((f) => ({ ...f, tag: v })))}
-          </div>
+          <>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
+                Tag key
+              </label>
+              {input("team", form.tagKey, (v) => setForm((f) => ({ ...f, tagKey: v })))}
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
+                Value <span className="normal-case font-normal text-slate-300">(optional)</span>
+              </label>
+              {input("eng", form.tagValue, (v) => setForm((f) => ({ ...f, tagValue: v })))}
+            </div>
+          </>
         )}
 
         {form.ruleType === "regex" && (
@@ -1358,28 +1385,31 @@ export function RoutingEditor({ initialRouting, groups }: RoutingEditorProps) {
             }}
           />
 
-          <PythonRoutingScriptDialog
-            open={pythonDialogOpen}
-            onOpenChange={(o) => {
-              if (!o) closePythonDialog();
-              else setPythonDialogOpen(true);
-            }}
-            editChainItemId={pythonDialogEditId}
-            initialScript={pythonDialogInitialScript}
-            onCommit={(script, editId) => {
-              setChainItems((items) => {
-                if (editId) {
-                  return items.map((x) =>
-                    x.id === editId && x.kind === "pythonScript" ? { ...x, script } : x,
-                  );
-                }
-                return [
-                  ...items,
-                  { id: uid(), kind: "pythonScript", script, script_file: null },
-                ];
-              });
-            }}
-          />
+          {pythonDialogOpen && (
+            <PythonRoutingScriptDialog
+              key={`${pythonDialogEditId ?? "new"}:${pythonDialogInitialScript}`}
+              open={pythonDialogOpen}
+              onOpenChange={(o) => {
+                if (!o) closePythonDialog();
+                else setPythonDialogOpen(true);
+              }}
+              editChainItemId={pythonDialogEditId}
+              initialScript={pythonDialogInitialScript}
+              onCommit={(script, editId) => {
+                setChainItems((items) => {
+                  if (editId) {
+                    return items.map((x) =>
+                      x.id === editId && x.kind === "pythonScript" ? { ...x, script } : x,
+                    );
+                  }
+                  return [
+                    ...items,
+                    { id: uid(), kind: "pythonScript", script, script_file: null },
+                  ];
+                });
+              }}
+            />
+          )}
 
           {addingRule ? (
             <NewRuleForm

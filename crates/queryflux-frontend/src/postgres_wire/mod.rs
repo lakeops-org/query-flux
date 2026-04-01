@@ -28,6 +28,7 @@ use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{FrontendProtocol, QueryStats},
     session::SessionContext,
+    tags::parse_query_tags,
 };
 
 use crate::dispatch::{execute_to_sink, ResultSink};
@@ -164,10 +165,17 @@ async fn handle_connection(
     // ReadyForQuery ('I' = idle, not in a transaction).
     write_msg(&mut writer, b'Z', b"I").await?;
 
+    let raw_tags = params
+        .get("query_tags")
+        .or_else(|| params.get("query_tag"))
+        .map(String::as_str)
+        .unwrap_or("");
+    let (tags, _) = parse_query_tags(raw_tags);
     let session = SessionContext::PostgresWire {
         user: if user.is_empty() { None } else { Some(user) },
         database,
         session_params: HashMap::new(),
+        tags,
     };
 
     // ── Command loop ─────────────────────────────────────────────────────────

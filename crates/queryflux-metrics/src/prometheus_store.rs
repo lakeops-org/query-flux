@@ -20,10 +20,23 @@ pub struct PrometheusMetrics {
     running_queries: prometheus::GaugeVec,
     /// queryflux_queued_queries{cluster_group}
     queued_queries: prometheus::GaugeVec,
+    /// queryflux_query_tags_total{tag_key, tag_value, cluster_group}
+    ///
+    /// Incremented once per tag per completed query. Allows tag-based aggregation
+    /// and filtering in Prometheus/Grafana. Tags in `tags_deny_list` are not emitted.
+    query_tags_total: CounterVec,
+    /// Tag keys that are excluded from `query_tags_total` to control cardinality.
+    tags_deny_list: Vec<String>,
 }
 
 impl PrometheusMetrics {
     pub fn new() -> std::result::Result<Self, prometheus::Error> {
+        Self::new_with_deny_list(vec![])
+    }
+
+    pub fn new_with_deny_list(
+        tags_deny_list: Vec<String>,
+    ) -> std::result::Result<Self, prometheus::Error> {
         let registry = Registry::new();
 
         let queries_total = CounterVec::new(
@@ -66,11 +79,20 @@ impl PrometheusMetrics {
             &["cluster_group"],
         )?;
 
+        let query_tags_total = CounterVec::new(
+            Opts::new(
+                "queryflux_query_tags_total",
+                "Total queries per tag key/value combination. Useful for cost attribution and workload analysis.",
+            ),
+            &["tag_key", "tag_value", "cluster_group"],
+        )?;
+
         registry.register(Box::new(queries_total.clone()))?;
         registry.register(Box::new(query_duration_seconds.clone()))?;
         registry.register(Box::new(translated_total.clone()))?;
         registry.register(Box::new(running_queries.clone()))?;
         registry.register(Box::new(queued_queries.clone()))?;
+        registry.register(Box::new(query_tags_total.clone()))?;
 
         Ok(Self {
             registry,
@@ -79,6 +101,8 @@ impl PrometheusMetrics {
             translated_total,
             running_queries,
             queued_queries,
+            query_tags_total,
+            tags_deny_list,
         })
     }
 
@@ -135,6 +159,17 @@ impl MetricsStore for PrometheusMetrics {
             let src = format!("{:?}", record.source_dialect);
             let tgt = format!("{:?}", record.target_dialect);
             self.translated_total.with_label_values(&[&src, &tgt]).inc();
+        }
+
+        // Emit one counter increment per tag, filtered through the deny list.
+        for (key, val) in &record.query_tags {
+            if self.tags_deny_list.iter().any(|d| d == key) {
+                continue;
+            }
+            let tag_value = val.as_deref().unwrap_or("");
+            self.query_tags_total
+                .with_label_values(&[key, tag_value, &group])
+                .inc();
         }
 
         Ok(())

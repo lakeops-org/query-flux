@@ -93,6 +93,8 @@ export interface QueryHistoryRecord {
   peak_memory_bytes: number | null;
   spilled_bytes: number | null;
   total_splits: number | null;
+  /** Tags attached at submit time. Key-only tags have null value. Null for older rows. */
+  query_tags: Record<string, string | null> | null;
 }
 
 export interface RoutingTrace {
@@ -310,6 +312,14 @@ export interface CompoundConditionEntry {
   regex?: string;
 }
 
+/** One rule in the new `tags` router: match ALL tags in the map → route to target_group. */
+export interface TagRoutingRule {
+  /** Tag key → value to match. A null value means key-only match (any value). */
+  tags: Record<string, string | null>;
+  target_group?: string;
+  targetGroupId?: number;
+}
+
 export interface RouterConfigEntry {
   type: string;
   // protocolBased — value may be group name (legacy) or numeric id
@@ -332,7 +342,8 @@ export interface RouterConfigEntry {
     targetGroup?: string;
     targetGroupId?: number;
   }>;
-  // clientTags
+  // tags (new) — each rule: match ALL tags in the map → route to group
+  // clientTags (legacy read-only) — single key-only tag → group
   tag_to_group?: Record<string, string | number>;
   tagToGroupId?: Record<string, number>;
   // pythonScript
@@ -344,6 +355,8 @@ export interface RouterConfigEntry {
   targetGroup?: string;
   target_group?: string;
   targetGroupId?: number;
+  // tags router rules list
+  tag_rules?: TagRoutingRule[];
 }
 
 export interface UpsertSecurityConfig {

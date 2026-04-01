@@ -39,7 +39,7 @@ impl RouterTrait for HeaderRouter {
         _frontend_protocol: &FrontendProtocol,
         _auth_ctx: Option<&queryflux_auth::AuthContext>,
     ) -> Result<Option<ClusterGroupName>> {
-        if let SessionContext::TrinoHttp { headers } = session {
+        if let SessionContext::TrinoHttp { headers, .. } = session {
             if let Some(value) = headers.get(&self.header_name) {
                 return Ok(self.mapping.get(value).cloned());
             }

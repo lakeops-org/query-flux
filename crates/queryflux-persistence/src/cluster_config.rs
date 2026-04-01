@@ -306,6 +306,7 @@ impl ClusterGroupConfigRecord {
                 allow_groups: self.allow_groups.clone(),
                 allow_users: self.allow_users.clone(),
             },
+            default_tags: Default::default(),
         }
     }
 }

@@ -11,6 +11,7 @@ use queryflux_core::{
         QueryEngineStats, QueryStatus, SqlDialect,
     },
     session::SessionContext,
+    tags::QueryTags,
 };
 use queryflux_engine_adapters::EngineAdapterTrait;
 use queryflux_metrics::{MetricsStore, QueryRecord};
@@ -41,6 +42,9 @@ pub struct LiveConfig {
     pub group_order: Vec<String>,
     /// group_name → ordered post-sqlglot Python fixup bodies (from `user_scripts` + group link).
     pub group_translation_scripts: HashMap<String, Vec<String>>,
+    /// group_name → default tags configured on the group.
+    /// Merged with session tags at dispatch time; session tags win on key conflicts.
+    pub group_default_tags: HashMap<String, QueryTags>,
 }
 
 /// Shared application state — passed to every handler via `axum::extract::State`.
@@ -61,6 +65,40 @@ pub struct AppState {
     pub authorization: Arc<dyn AuthorizationChecker>,
     /// Resolves per-user `QueryCredentials` from `AuthContext` + cluster `queryAuth` config.
     pub identity_resolver: Arc<BackendIdentityResolver>,
+}
+
+/// Stable per-query metadata that does not change across the query's lifecycle.
+/// Built once (after cluster selection and SQL translation) and passed to every
+/// `record_query` call within the same dispatch function.
+pub struct QueryContext<'a> {
+    pub query_id: &'a ProxyQueryId,
+    /// Original SQL as submitted by the client (pre-translation).
+    pub sql: &'a str,
+    pub session: &'a SessionContext,
+    pub protocol: FrontendProtocol,
+    pub group: &'a ClusterGroupName,
+    pub cluster: &'a ClusterName,
+    pub cluster_group_config_id: Option<i64>,
+    pub cluster_config_id: Option<i64>,
+    pub engine_type: EngineType,
+    pub src_dialect: SqlDialect,
+    pub tgt_dialect: SqlDialect,
+    pub was_translated: bool,
+    /// The translated SQL sent to the backend, when translation occurred.
+    pub translated_sql: Option<String>,
+    pub query_tags: QueryTags,
+}
+
+/// How the query ended — the fields that vary between success, failure, and cancellation.
+pub struct QueryOutcome {
+    /// Backend engine query ID (Trino query ID, Athena execution ID, etc.).
+    pub backend_query_id: Option<String>,
+    pub status: QueryStatus,
+    pub execution_ms: u64,
+    pub rows: Option<u64>,
+    pub error: Option<String>,
+    pub routing_trace: Option<RoutingTrace>,
+    pub engine_stats: Option<QueryEngineStats>,
 }
 
 impl AppState {
@@ -90,55 +128,36 @@ impl AppState {
 
     /// Fire-and-forget: build a `QueryRecord` and write it to the metrics store asynchronously.
     /// Called once per query at completion (success, failure, or cancellation).
-    #[allow(clippy::too_many_arguments)]
-    pub fn record_query(
-        &self,
-        query_id: &ProxyQueryId,
-        backend_query_id: Option<String>,
-        sql: &str,
-        session: &SessionContext,
-        protocol: &FrontendProtocol,
-        group: &ClusterGroupName,
-        cluster: &ClusterName,
-        cluster_group_config_id: Option<i64>,
-        cluster_config_id: Option<i64>,
-        engine_type: EngineType,
-        src_dialect: SqlDialect,
-        tgt_dialect: SqlDialect,
-        was_translated: bool,
-        translated_sql: Option<String>,
-        status: QueryStatus,
-        execution_ms: u64,
-        rows: Option<u64>,
-        error: Option<String>,
-        routing_trace: Option<&RoutingTrace>,
-        engine_stats: Option<QueryEngineStats>,
-    ) {
+    pub fn record_query(&self, ctx: &QueryContext<'_>, outcome: QueryOutcome) {
         let record = QueryRecord {
-            proxy_query_id: query_id.0.clone(),
-            backend_query_id,
-            cluster_group: group.clone(),
-            cluster_name: cluster.clone(),
-            cluster_group_config_id,
-            cluster_config_id,
-            engine_type,
-            frontend_protocol: protocol.clone(),
-            source_dialect: src_dialect,
-            target_dialect: tgt_dialect,
-            was_translated,
-            translated_sql,
-            user: session.user().map(|s| s.to_string()),
-            catalog: session.database().map(|s| s.to_string()),
+            proxy_query_id: ctx.query_id.0.clone(),
+            backend_query_id: outcome.backend_query_id,
+            cluster_group: ctx.group.clone(),
+            cluster_name: ctx.cluster.clone(),
+            cluster_group_config_id: ctx.cluster_group_config_id,
+            cluster_config_id: ctx.cluster_config_id,
+            engine_type: ctx.engine_type.clone(),
+            frontend_protocol: ctx.protocol.clone(),
+            source_dialect: ctx.src_dialect.clone(),
+            target_dialect: ctx.tgt_dialect.clone(),
+            was_translated: ctx.was_translated,
+            translated_sql: ctx.translated_sql.clone(),
+            user: ctx.session.user().map(|s| s.to_string()),
+            catalog: ctx.session.database().map(|s| s.to_string()),
             database: None,
-            sql_preview: sql.chars().take(500).collect(),
-            status,
-            routing_trace: routing_trace.and_then(|t| serde_json::to_value(t).ok()),
+            sql_preview: ctx.sql.chars().take(500).collect(),
+            status: outcome.status,
+            routing_trace: outcome
+                .routing_trace
+                .as_ref()
+                .and_then(|t| serde_json::to_value(t).ok()),
             queue_duration_ms: 0,
-            execution_duration_ms: execution_ms,
-            rows_returned: rows,
-            error_message: error,
+            execution_duration_ms: outcome.execution_ms,
+            rows_returned: outcome.rows,
+            error_message: outcome.error,
             created_at: Utc::now(),
-            engine_stats,
+            engine_stats: outcome.engine_stats,
+            query_tags: ctx.query_tags.clone(),
         };
         let metrics = self.metrics.clone();
         tokio::spawn(async move {

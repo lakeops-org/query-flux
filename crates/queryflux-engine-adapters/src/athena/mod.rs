@@ -19,6 +19,7 @@ use queryflux_core::{
         BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
     },
     session::SessionContext,
+    tags::QueryTags,
 };
 use tracing::warn;
 
@@ -316,6 +317,7 @@ impl EngineAdapterTrait for AthenaAdapter {
         _sql: &str,
         _session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
+        _tags: &QueryTags,
     ) -> Result<QueryExecution> {
         Err(QueryFluxError::Engine(
             "Athena requires execute_as_arrow; use a non-Trino-HTTP frontend".to_string(),
@@ -375,6 +377,7 @@ impl EngineAdapterTrait for AthenaAdapter {
         sql: &str,
         session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
+        _tags: &QueryTags,
     ) -> Result<crate::ArrowStream> {
         // 1. Start execution.
         let start = self

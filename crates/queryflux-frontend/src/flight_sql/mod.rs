@@ -103,7 +103,11 @@ impl QueryFluxFlightSql {
             })
             .collect();
         // Re-use TrinoHttp session for now — headers carry user/auth info.
-        SessionContext::TrinoHttp { headers }
+        // Tags from gRPC metadata are not yet extracted; Flight SQL clients don't send them.
+        SessionContext::TrinoHttp {
+            headers,
+            tags: queryflux_core::tags::QueryTags::new(),
+        }
     }
 }
 

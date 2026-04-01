@@ -14,6 +14,7 @@ use queryflux_core::{
     error::QueryFluxError,
     query::{BackendQueryId, FrontendProtocol, ProxyQueryId, QueryPollResult, QueryStatus},
     session::SessionContext,
+    tags::{parse_query_tags, QueryTags},
 };
 use queryflux_engine_adapters::trino::api::{
     queued_response, TrinoError, TrinoResponse, TrinoStats,
@@ -23,7 +24,35 @@ use tracing::{info, warn};
 
 use super::result_sink::TrinoHttpResultSink;
 use crate::dispatch::{dispatch_query, execute_to_sink, rewrite_trino_uri, DispatchOutcome};
-use crate::state::AppState;
+use crate::state::{AppState, QueryContext, QueryOutcome};
+
+fn trino_error_response(query_id: &str, message: &str) -> Response<Body> {
+    let resp = queryflux_engine_adapters::trino::api::TrinoResponse {
+        id: query_id.to_string(),
+        next_uri: None,
+        info_uri: "http://queryflux/ui/query.html".to_string(),
+        partial_cancel_uri: None,
+        stats: queryflux_engine_adapters::trino::api::TrinoStats {
+            state: "FAILED".to_string(),
+            queued: false,
+            scheduled: false,
+            ..Default::default()
+        },
+        error: Some(queryflux_engine_adapters::trino::api::TrinoError {
+            message: message.to_string(),
+            error_code: Some(0),
+            error_name: Some("QUERY_FAILED".to_string()),
+            error_type: Some("USER_ERROR".to_string()),
+            failure_info: Default::default(),
+        }),
+        columns: None,
+        data: None,
+        update_type: None,
+        update_count: None,
+        warnings: vec![],
+    };
+    json_response(&resp)
+}
 
 fn json_response(body: impl serde::Serialize) -> Response<Body> {
     let json = serde_json::to_vec(&body).unwrap_or_default();
@@ -171,7 +200,32 @@ fn extract_session(headers: &HeaderMap) -> SessionContext {
             h.insert(k.as_str().to_lowercase(), s.to_string());
         }
     }
-    SessionContext::TrinoHttp { headers: h }
+    let tags = extract_trino_tags(&h);
+    SessionContext::TrinoHttp { headers: h, tags }
+}
+
+fn extract_trino_tags(headers: &std::collections::HashMap<String, String>) -> QueryTags {
+    let mut tags = QueryTags::new();
+    // X-Trino-Client-Tags: comma-separated key-only strings.
+    if let Some(raw) = headers.get("x-trino-client-tags") {
+        for tag in raw.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            tags.insert(tag.to_string(), None);
+        }
+    }
+    // X-Trino-Session may contain `query_tags=<value>` or `query_tag=<value>`.
+    if let Some(session_props) = headers.get("x-trino-session") {
+        for prop in session_props.split(',').map(str::trim) {
+            let val = prop
+                .strip_prefix("query_tags=")
+                .or_else(|| prop.strip_prefix("query_tag="));
+            if let Some(val) = val {
+                let (parsed, _) = parse_query_tags(val);
+                tags.extend(parsed);
+                break;
+            }
+        }
+    }
+    tags
 }
 
 fn outcome_to_response(
@@ -199,6 +253,77 @@ fn outcome_to_response(
     }
 }
 
+/// Detect `SET SESSION query_tags = '...'` (and the singular `query_tag` variant).
+/// Returns `Some((header_key, raw_value))` on match, e.g. `("query_tags", "team:eng,batch")`.
+/// Case-insensitive, tolerant of extra whitespace and a trailing semicolon.
+fn try_parse_set_session_tags(sql: &str) -> Option<(String, String)> {
+    let s = sql.trim().trim_end_matches(';').trim();
+    let mut words = s.splitn(4, |c: char| c.is_ascii_whitespace());
+    let w1 = words.next()?;
+    if !w1.eq_ignore_ascii_case("set") {
+        return None;
+    }
+    // skip empty tokens from multiple spaces
+    let w2 = words.by_ref().find(|w| !w.is_empty())?;
+    if !w2.eq_ignore_ascii_case("session") {
+        return None;
+    }
+    let rest = s
+        .get(w1.len()..)?
+        .trim_start()
+        .get(w2.len()..)?
+        .trim_start();
+    // rest is now something like: query_tags = 'team:eng,batch'
+    let rest: &str = if rest.to_lowercase().starts_with("query_tags") {
+        &rest["query_tags".len()..]
+    } else if rest.to_lowercase().starts_with("query_tag") {
+        &rest["query_tag".len()..]
+    } else {
+        return None;
+    };
+    let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+    // Strip surrounding single quotes.
+    let value = rest
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .unwrap_or(rest);
+    Some(("query_tags".to_string(), value.to_string()))
+}
+
+/// Synthetic response for an intercepted `SET SESSION query_tags = '...'`.
+///
+/// Returns HTTP 200 with `X-Trino-Set-Session` header so the Trino CLI includes
+/// the property in `X-Trino-Session` on subsequent requests.
+fn set_session_response(query_id: &str, prop_key: &str, prop_val: &str) -> Response<Body> {
+    use queryflux_engine_adapters::trino::api::{TrinoResponse, TrinoStats};
+    let resp = TrinoResponse {
+        id: query_id.to_string(),
+        next_uri: None,
+        info_uri: "http://queryflux/ui/query.html".to_string(),
+        partial_cancel_uri: None,
+        stats: TrinoStats {
+            state: "FINISHED".to_string(),
+            scheduled: true,
+            completed_splits: 1,
+            total_splits: 1,
+            ..Default::default()
+        },
+        error: None,
+        columns: None,
+        data: None,
+        update_type: Some("SET SESSION".to_string()),
+        update_count: Some(0),
+        warnings: vec![],
+    };
+    let json = serde_json::to_vec(&resp).unwrap_or_default();
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header("content-type", "application/json")
+        .header("X-Trino-Set-Session", format!("{prop_key}={prop_val}"))
+        .body(Body::from(json))
+        .unwrap()
+}
+
 /// POST /v1/statement — client submits a new query.
 pub async fn post_statement(
     State(state): State<Arc<AppState>>,
@@ -209,6 +334,14 @@ pub async fn post_statement(
         Ok(s) => s.to_string(),
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
+
+    // Intercept SET SESSION query_tags/query_tag before routing to backend.
+    // Trino doesn't know these properties; QueryFlux handles them locally and
+    // returns X-Trino-Set-Session so the CLI carries the value in subsequent requests.
+    if let Some((prop_key, prop_val)) = try_parse_set_session_tags(&sql) {
+        let query_id = ProxyQueryId::new();
+        return set_session_response(&query_id.0, &prop_key, &prop_val).into_response();
+    }
 
     let session = extract_session(&headers);
     let protocol = FrontendProtocol::TrinoHttp;
@@ -237,7 +370,8 @@ pub async fn post_statement(
         Ok(r) => r,
         Err(e) => {
             warn!("Routing error: {e}");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            let tmp_id = ProxyQueryId::new();
+            return trino_error_response(&tmp_id.0, &format!("Routing error: {e}")).into_response();
         }
     };
 
@@ -288,8 +422,8 @@ pub async fn post_statement(
                 StatusCode::FORBIDDEN.into_response()
             }
             Err(e) => {
-                warn!("Dispatch error: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                warn!(id = %query_id, "Dispatch error: {e}");
+                trino_error_response(&query_id.0, &e.to_string()).into_response()
             }
         }
     } else {
@@ -477,8 +611,8 @@ pub async fn get_queued_statement(
                 sink.into_response()
             }
             Err(e) => {
-                warn!("Dispatch error: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                warn!(id = %query_id, "Dispatch error: {e}");
+                trino_error_response(&query_id.0, &e.to_string()).into_response()
             }
         }
     } else {
@@ -545,6 +679,10 @@ pub async fn get_executing_statement(
     // Forward session headers to Trino.
     let session = extract_session(&headers);
 
+    // Tags were captured at submit time (includes client tags from the original POST).
+    // Poll requests don't repeat client headers, so we use the stored value.
+    let effective_tags = executing.query_tags.clone();
+
     // Throttled last_accessed refresh: write to persistence at most every 120s per query.
     // This keeps the record "alive" for the zombie-cleanup task across all proxy instances,
     // without adding a persistence write on every poll.
@@ -579,6 +717,33 @@ pub async fn get_executing_statement(
         .num_milliseconds()
         .max(0) as u64;
 
+    // Build query context once — reused for both the success and failure record_query calls.
+    let was_translated = executing.translated_sql.is_some();
+    let ctx = QueryContext {
+        query_id: &executing.id,
+        // original SQL: when translated, translated_sql holds it; otherwise sql is original
+        sql: executing
+            .translated_sql
+            .as_deref()
+            .unwrap_or(&executing.sql),
+        session: &session,
+        protocol: FrontendProtocol::TrinoHttp,
+        group: &executing.cluster_group,
+        cluster: &executing.cluster_name,
+        cluster_group_config_id: executing.cluster_group_config_id,
+        cluster_config_id: executing.cluster_config_id,
+        engine_type: adapter.engine_type(),
+        src_dialect: FrontendProtocol::TrinoHttp.default_dialect(),
+        tgt_dialect: adapter.engine_type().dialect(),
+        was_translated,
+        translated_sql: if was_translated {
+            Some(executing.sql.clone())
+        } else {
+            None
+        },
+        query_tags: effective_tags,
+    };
+
     match poll_result {
         QueryPollResult::Raw {
             body,
@@ -588,34 +753,16 @@ pub async fn get_executing_statement(
             if next_uri.is_none() {
                 // Final page — query complete.
                 state.record_query(
-                    &executing.id,
-                    Some(backend_id.0.clone()),
-                    // sql_preview: original SQL (translated_sql field holds the pre-translation original)
-                    executing
-                        .translated_sql
-                        .as_deref()
-                        .unwrap_or(&executing.sql),
-                    &session,
-                    &FrontendProtocol::TrinoHttp,
-                    &executing.cluster_group,
-                    &executing.cluster_name,
-                    executing.cluster_group_config_id,
-                    executing.cluster_config_id,
-                    adapter.engine_type(),
-                    FrontendProtocol::TrinoHttp.default_dialect(),
-                    adapter.engine_type().dialect(),
-                    executing.translated_sql.is_some(),
-                    if executing.translated_sql.is_some() {
-                        Some(executing.sql.clone())
-                    } else {
-                        None
+                    &ctx,
+                    QueryOutcome {
+                        backend_query_id: Some(backend_id.0.clone()),
+                        status: QueryStatus::Success,
+                        execution_ms: elapsed_ms,
+                        rows: None,
+                        error: None,
+                        routing_trace: None,
+                        engine_stats,
                     },
-                    QueryStatus::Success,
-                    elapsed_ms,
-                    None,
-                    None,
-                    None,
-                    engine_stats,
                 );
                 state
                     .metrics
@@ -639,33 +786,16 @@ pub async fn get_executing_statement(
                 .metrics
                 .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
             state.record_query(
-                &executing.id,
-                Some(backend_id.0.clone()),
-                executing
-                    .translated_sql
-                    .as_deref()
-                    .unwrap_or(&executing.sql),
-                &session,
-                &FrontendProtocol::TrinoHttp,
-                &executing.cluster_group,
-                &executing.cluster_name,
-                executing.cluster_group_config_id,
-                executing.cluster_config_id,
-                adapter.engine_type(),
-                FrontendProtocol::TrinoHttp.default_dialect(),
-                adapter.engine_type().dialect(),
-                executing.translated_sql.is_some(),
-                if executing.translated_sql.is_some() {
-                    Some(executing.sql.clone())
-                } else {
-                    None
+                &ctx,
+                QueryOutcome {
+                    backend_query_id: Some(backend_id.0.clone()),
+                    status: QueryStatus::Failed,
+                    execution_ms: elapsed_ms,
+                    rows: None,
+                    error: Some(message.clone()),
+                    routing_trace: None,
+                    engine_stats: None,
                 },
-                QueryStatus::Failed,
-                elapsed_ms,
-                None,
-                Some(message.clone()),
-                None,
-                None,
             );
             let _ = cluster_manager
                 .release_cluster(&executing.cluster_group, &executing.cluster_name)

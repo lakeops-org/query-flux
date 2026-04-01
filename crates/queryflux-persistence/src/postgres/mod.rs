@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{BackendQueryId, ExecutingQuery, ProxyQueryId, QueuedQuery},
+    tags::tags_to_json,
 };
 use sqlx::PgPool;
 
@@ -93,7 +94,8 @@ impl QueryHistoryStore for PostgresStore {
                       qr.source_dialect, qr.target_dialect, qr.queue_duration_ms, qr.execution_duration_ms,
                       qr.rows_returned, qr.error_message, qr.routing_trace, qr.created_at,
                       qr.engine_elapsed_time_ms, qr.cpu_time_ms, qr.processed_rows, qr.processed_bytes,
-                      qr.physical_input_bytes, qr.peak_memory_bytes, qr.spilled_bytes, qr.total_splits
+                      qr.physical_input_bytes, qr.peak_memory_bytes, qr.spilled_bytes, qr.total_splits,
+                      qr.query_tags
                FROM query_records qr
                LEFT JOIN cluster_group_configs cg ON cg.id = qr.cluster_group_id
                LEFT JOIN cluster_configs cc ON cc.id = qr.cluster_id
@@ -1107,6 +1109,7 @@ impl MetricsStore for PostgresStore {
             None => (None, None, None, None, None, None, None, None),
         };
 
+        let query_tags_json = tags_to_json(&r.query_tags);
         sqlx::query(
             r#"INSERT INTO query_records
                 (proxy_query_id, backend_query_id, cluster_group, cluster_name, engine_type,
@@ -1115,9 +1118,9 @@ impl MetricsStore for PostgresStore {
                  queue_duration_ms, execution_duration_ms, rows_returned, error_message,
                  created_at, engine_elapsed_time_ms, cpu_time_ms, processed_rows, processed_bytes,
                  physical_input_bytes, peak_memory_bytes, spilled_bytes, total_splits,
-                 cluster_group_id, cluster_id)
+                 cluster_group_id, cluster_id, query_tags)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)"#,
+                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)"#,
         )
         .bind(&r.proxy_query_id)
         .bind(&r.backend_query_id)
@@ -1150,6 +1153,7 @@ impl MetricsStore for PostgresStore {
         .bind(splits)
         .bind(r.cluster_group_config_id)
         .bind(r.cluster_config_id)
+        .bind(query_tags_json)
         .execute(&self.pool)
         .await
         .map_err(|e| QueryFluxError::Persistence(format!("Insert query_records: {e}")))?;

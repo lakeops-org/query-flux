@@ -10,6 +10,7 @@
 /// At least one of Trino or StarRocks must be reachable or [`TestHarness::new`] fails.
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -39,13 +40,17 @@ use queryflux_routing::{chain::RouterChain, implementations::header::HeaderRoute
 use queryflux_translation::TranslationService;
 use tokio::net::TcpListener;
 
-struct NoOpMetrics;
+struct CapturingMetrics {
+    records: Arc<Mutex<Vec<QueryRecord>>>,
+}
 
 #[async_trait]
-impl MetricsStore for NoOpMetrics {
-    async fn record_query(&self, _r: QueryRecord) -> QfResult<()> {
+impl MetricsStore for CapturingMetrics {
+    async fn record_query(&self, r: QueryRecord) -> QfResult<()> {
+        self.records.lock().expect("lock records").push(r);
         Ok(())
     }
+
     async fn record_cluster_snapshot(&self, _s: ClusterSnapshot) -> QfResult<()> {
         Ok(())
     }
@@ -59,6 +64,7 @@ pub const GROUP_LAKEKEEPER: &str = "lakekeeper";
 pub struct TestHarness {
     pub port: u16,
     pub groups: Vec<String>,
+    records: Arc<Mutex<Vec<QueryRecord>>>,
     _shutdown_tx: tokio::sync::oneshot::Sender<()>,
 }
 
@@ -210,13 +216,17 @@ impl TestHarness {
             group_members,
             group_order,
             group_translation_scripts: HashMap::new(),
+            group_default_tags: HashMap::new(),
         };
+        let records = Arc::new(Mutex::new(Vec::<QueryRecord>::new()));
         let state = Arc::new(AppState {
             external_address: format!("http://127.0.0.1:{port}"),
             live: Arc::new(tokio::sync::RwLock::new(live_config)),
             persistence: Arc::new(InMemoryPersistence::new()),
             translation,
-            metrics: Arc::new(NoOpMetrics),
+            metrics: Arc::new(CapturingMetrics {
+                records: records.clone(),
+            }),
             auth_provider: Arc::new(NoneAuthProvider::new(false)) as Arc<dyn AuthProvider>,
             authorization: Arc::new(AllowAllAuthorization) as Arc<dyn AuthorizationChecker>,
             identity_resolver: Arc::new(BackendIdentityResolver::new()),
@@ -239,6 +249,7 @@ impl TestHarness {
         Ok(Self {
             port,
             groups: available_groups,
+            records,
             _shutdown_tx: shutdown_tx,
         })
     }
@@ -249,6 +260,30 @@ impl TestHarness {
 
     pub fn has_group(&self, group: &str) -> bool {
         self.groups.iter().any(|g| g == group)
+    }
+
+    pub fn clear_records(&self) {
+        self.records.lock().expect("lock records").clear();
+    }
+
+    pub async fn wait_for_record<F>(&self, predicate: F) -> Option<QueryRecord>
+    where
+        F: Fn(&QueryRecord) -> bool,
+    {
+        for _ in 0..50 {
+            if let Some(record) = self
+                .records
+                .lock()
+                .expect("lock records")
+                .iter()
+                .find(|r| predicate(r))
+                .cloned()
+            {
+                return Some(record);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        None
     }
 }
 

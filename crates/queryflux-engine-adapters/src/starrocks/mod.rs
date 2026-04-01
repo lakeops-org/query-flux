@@ -18,6 +18,7 @@ use queryflux_core::{
         BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
     },
     session::SessionContext,
+    tags::{tags_to_json, QueryTags},
 };
 
 use crate::EngineAdapterTrait;
@@ -131,6 +132,7 @@ impl EngineAdapterTrait for StarRocksAdapter {
         _sql: &str,
         _session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
+        _tags: &QueryTags,
     ) -> Result<QueryExecution> {
         Err(QueryFluxError::Engine(
             "StarRocks requires execute_as_arrow; use the Arrow execution path".to_string(),
@@ -182,6 +184,7 @@ impl EngineAdapterTrait for StarRocksAdapter {
         sql: &str,
         session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
+        tags: &QueryTags,
     ) -> Result<crate::ArrowStream> {
         let mut conn = self.connect().await?;
 
@@ -190,6 +193,15 @@ impl EngineAdapterTrait for StarRocksAdapter {
             conn.query_drop(&use_sql)
                 .await
                 .map_err(|e| QueryFluxError::Engine(format!("StarRocks USE failed: {e}")))?;
+        }
+
+        // Set query tag as a session variable so StarRocks surfaces it in audit logs.
+        if !tags.is_empty() {
+            let tag_json = tags_to_json(tags).to_string();
+            let set_sql = format!("SET @query_tag = '{}'", tag_json.replace('\'', "\\'"));
+            conn.query_drop(&set_sql).await.map_err(|e| {
+                QueryFluxError::Engine(format!("StarRocks SET @query_tag failed: {e}"))
+            })?;
         }
 
         let mut rows: Vec<Row> = conn

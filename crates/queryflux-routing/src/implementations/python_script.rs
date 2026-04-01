@@ -116,13 +116,14 @@ fn build_routing_ctx<'py>(
     ctx.set_item("protocol", protocol_camel(protocol))?;
 
     match session {
-        SessionContext::TrinoHttp { headers } => {
+        SessionContext::TrinoHttp { headers, .. } => {
             ctx.set_item("headers", str_str_dict(py, headers)?)?;
         }
         SessionContext::PostgresWire {
             database,
             user,
             session_params,
+            ..
         } => {
             ctx.set_item(
                 "headers",
@@ -149,6 +150,7 @@ fn build_routing_ctx<'py>(
         SessionContext::ClickHouseHttp {
             headers,
             query_params,
+            ..
         } => {
             ctx.set_item("headers", str_str_dict(py, headers)?)?;
             ctx.set_item("queryParams", str_str_dict(py, query_params)?)?;
