@@ -130,7 +130,7 @@ Quick example:
 ```yaml
 routers:
   - type: tags
-    tagRules:
+    rules:
       - tags:
           team: eng
           env: prod

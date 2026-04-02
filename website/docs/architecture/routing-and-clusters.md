@@ -50,7 +50,7 @@ Routes queries based on key/value tags that clients attach to their sessions. Ru
 ```yaml
 routers:
   - type: tags
-    tagRules:
+    rules:
       - tags:
           team: eng
           env: prod

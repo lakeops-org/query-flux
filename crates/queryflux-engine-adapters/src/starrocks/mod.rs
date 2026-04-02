@@ -198,7 +198,10 @@ impl EngineAdapterTrait for StarRocksAdapter {
         // Set query tag as a session variable so StarRocks surfaces it in audit logs.
         if !tags.is_empty() {
             let tag_json = tags_to_json(tags).to_string();
-            let set_sql = format!("SET @query_tag = '{}'", tag_json.replace('\'', "\\'"));
+            // Use the driver's Value escaping so all MySQL string-literal special
+            // characters (\0, \n, \r, \\, ', ") are handled correctly.
+            let escaped = Value::from(tag_json).as_sql(false);
+            let set_sql = format!("SET @query_tag = {escaped}");
             conn.query_drop(&set_sql).await.map_err(|e| {
                 QueryFluxError::Engine(format!("StarRocks SET @query_tag failed: {e}"))
             })?;

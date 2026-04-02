@@ -317,6 +317,7 @@ export interface TagRoutingRule {
   /** Tag key → value to match. A null value means key-only match (any value). */
   tags: Record<string, string | null>;
   target_group?: string;
+  targetGroup?: string;
   targetGroupId?: number;
 }
 
@@ -335,15 +336,16 @@ export interface RouterConfigEntry {
   // userGroup
   user_to_group?: Record<string, string | number>;
   userToGroupId?: Record<string, number>;
-  // queryRegex
-  rules?: Array<{
-    regex: string;
-    target_group?: string;
-    targetGroup?: string;
-    targetGroupId?: number;
-  }>;
-  // tags (new) — each rule: match ALL tags in the map → route to group
-  // clientTags (legacy read-only) — single key-only tag → group
+  // queryRegex: elements have `regex`. Tags router: elements have `tags` (RouterConfig::Tags).
+  rules?: Array<
+    | {
+        regex: string;
+        target_group?: string;
+        targetGroup?: string;
+        targetGroupId?: number;
+      }
+    | TagRoutingRule
+  >;
   tag_to_group?: Record<string, string | number>;
   tagToGroupId?: Record<string, number>;
   // pythonScript
@@ -355,7 +357,7 @@ export interface RouterConfigEntry {
   targetGroup?: string;
   target_group?: string;
   targetGroupId?: number;
-  // tags router rules list
+  /** @deprecated Prefer `rules`; still sent by some clients and accepted by the API. */
   tag_rules?: TagRoutingRule[];
 }
 
