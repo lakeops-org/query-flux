@@ -116,8 +116,8 @@ impl TrinoAdapter {
     /// then overlay effective query tags.
     ///
     /// Tag forwarding:
-    /// - Key-only tags (value = None) → appended to `X-Trino-Client-Tags`
-    /// - Key-value tags (value = Some) → sent as `X-Trino-Session: query_tag=<json>`
+    /// - All effective tags are encoded into the `X-Trino-Client-Tags` header
+    ///   (key-only tags as bare keys, key/value tags as `key=value` pairs).
     ///
     /// Effective tags always win: they overwrite any client-supplied tag headers so
     /// that group default_tags are always reflected in the backend's query metadata.
