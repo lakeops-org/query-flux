@@ -23,7 +23,7 @@ QueryFlux exposes a `/metrics` endpoint (default port 9000) in standard Promethe
 | `queryflux_translated_queries_total` | Counter | `src_dialect`, `tgt_dialect` | Queries where SQL dialect translation ran |
 | `queryflux_running_queries` | Gauge | `cluster_group`, `cluster_name` | Currently executing queries per cluster |
 | `queryflux_queued_queries` | Gauge | `cluster_group` | Queries waiting for a free cluster slot |
-| `queryflux_query_tags_total` | Counter | `tag_key`, `tag_value`, `cluster_group` | Per-tag counter — tracks which workloads (teams, cost centers, etc.) drive load per group. See [Query tags](/docs/architecture/query-tags#prometheus). |
+| `queryflux_query_tags_total` | Counter | `tag_key`, `tag_value`, `cluster_group` | Per-tag counter — tracks which workloads (teams, cost centers, etc.) drive load per group. See [Query tags](./query-tags#prometheus). |
 
 The metrics pipeline uses `MultiMetricsStore` to fan out to Prometheus (real-time) and optionally Postgres (historical). `BufferedMetricsStore` wraps the Postgres store to avoid blocking query execution on I/O.
 

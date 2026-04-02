@@ -70,7 +70,7 @@ routers:
 | `"some-value"` | Tag key is present **and** its value equals `"some-value"` |
 | `null` | Tag key is present, regardless of its value (key-only match) |
 
-**How clients attach tags** depends on the frontend protocol — see [Query tags](/docs/architecture/query-tags) for full details on how to set tags from each frontend (Trino, MySQL wire, Postgres wire, ClickHouse HTTP).
+**How clients attach tags** depends on the frontend protocol — see [Query tags](./query-tags) for full details on how to set tags from each frontend (Trino, MySQL wire, Postgres wire, ClickHouse HTTP).
 
 ## Cached routing config and DB reload (Postgres)
 
