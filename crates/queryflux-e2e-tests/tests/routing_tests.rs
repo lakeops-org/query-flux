@@ -1,7 +1,7 @@
 /// Header routing and Trino↔StarRocks targeting via `X-Qf-Group`.
 ///
 /// Requires at least one backend (same as [`TestHarness::new`]). Run with
-/// `make test-e2e` or after `docker compose -f docker/docker-compose.test.yml up`.
+/// `make test-e2e` or after `docker compose -f docker/test/docker-compose.test.yml up`.
 ///
 /// Run: cargo test -p queryflux-e2e-tests --test routing_tests
 use std::sync::OnceLock;
