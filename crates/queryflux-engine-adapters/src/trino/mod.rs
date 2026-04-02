@@ -130,7 +130,8 @@ impl TrinoAdapter {
         if let SessionContext::TrinoHttp { headers, .. } = session {
             for (k, v) in headers {
                 let k_lower = k.to_lowercase();
-                // Skip tag-related headers — we'll set them from effective_tags below.
+                // X-Trino-Client-Tags and X-Trino-Session are rebuilt below so that
+                // effective_tags always win. All other X-Trino-* headers pass through.
                 if k_lower == "x-trino-client-tags" || k_lower == "x-trino-session" {
                     continue;
                 }
@@ -140,32 +141,48 @@ impl TrinoAdapter {
             }
         }
 
-        if tags.is_empty() {
-            // No tags — forward original tag headers unchanged.
-            if let SessionContext::TrinoHttp { headers, .. } = session {
-                for (k, v) in headers {
-                    let k_lower = k.to_lowercase();
-                    if k_lower == "x-trino-client-tags" || k_lower == "x-trino-session" {
-                        builder = builder.header(k, v);
-                    }
+        // Rebuild X-Trino-Session: keep all non-tag properties from the client, then
+        // the effective tags own X-Trino-Client-Tags (overwriting whatever the client sent).
+        //
+        // X-Trino-Session is a comma-separated list of `name=value` pairs where values
+        // may be percent-encoded. We filter out `query_tag` and `query_tags` keys so
+        // unrelated session properties (join_distribution_type, query_max_run_time, …)
+        // are always preserved.
+        if let SessionContext::TrinoHttp { headers, .. } = session {
+            if let Some(session_props) = headers.get("x-trino-session") {
+                let retained: Vec<&str> = session_props
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|prop| {
+                        let key = prop.split('=').next().unwrap_or("").trim();
+                        key != "query_tag" && key != "query_tags"
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !retained.is_empty() {
+                    builder = builder.header("X-Trino-Session", retained.join(","));
                 }
             }
-            return builder;
         }
 
-        // All tags → X-Trino-Client-Tags as comma-separated strings.
-        // Key-only tags: "batch"  → "batch"
+        // All effective tags → X-Trino-Client-Tags.
+        // Key-only tags: "batch" → "batch"
         // Key-value tags: "team" => Some("eng") → "team:eng"
-        // Trino treats client tags as opaque strings; using key:value serialization keeps
-        // them readable in Trino UI / query history without requiring a registered session property.
-        let client_tags: Vec<String> = tags
-            .iter()
-            .map(|(k, v)| match v {
-                None => k.clone(),
-                Some(val) => format!("{k}:{val}"),
-            })
-            .collect();
-        if !client_tags.is_empty() {
+        if tags.is_empty() {
+            // No effective tags — forward the original client-tags header unchanged.
+            if let SessionContext::TrinoHttp { headers, .. } = session {
+                if let Some(v) = headers.get("x-trino-client-tags") {
+                    builder = builder.header("X-Trino-Client-Tags", v);
+                }
+            }
+        } else {
+            let client_tags: Vec<String> = tags
+                .iter()
+                .map(|(k, v)| match v {
+                    None => k.clone(),
+                    Some(val) => format!("{k}:{val}"),
+                })
+                .collect();
             builder = builder.header("X-Trino-Client-Tags", client_tags.join(","));
         }
         builder
