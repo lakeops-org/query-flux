@@ -72,6 +72,8 @@ fn protocol_camel(p: FrontendProtocol) -> &'static str {
         FrontendProtocol::MySqlWire => "mysqlWire",
         FrontendProtocol::ClickHouseHttp => "clickHouseHttp",
         FrontendProtocol::FlightSql => "flightSql",
+        FrontendProtocol::SnowflakeHttp => "snowflakeHttp",
+        FrontendProtocol::SnowflakeSqlApi => "snowflakeSqlApi",
     }
 }
 

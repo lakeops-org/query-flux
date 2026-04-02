@@ -67,6 +67,10 @@ pub enum FrontendProtocol {
     MySqlWire,
     ClickHouseHttp,
     FlightSql,
+    /// Snowflake internal wire protocol used by JDBC/ODBC/Python/Go/Node.js connectors.
+    SnowflakeHttp,
+    /// Snowflake public SQL REST API v2 (/api/v2/statements).
+    SnowflakeSqlApi,
 }
 
 impl FrontendProtocol {
@@ -78,6 +82,8 @@ impl FrontendProtocol {
             FrontendProtocol::MySqlWire => SqlDialect::MySql,
             FrontendProtocol::ClickHouseHttp => SqlDialect::ClickHouse,
             FrontendProtocol::FlightSql => SqlDialect::Generic,
+            FrontendProtocol::SnowflakeHttp => SqlDialect::Generic,
+            FrontendProtocol::SnowflakeSqlApi => SqlDialect::Generic,
         }
     }
 }

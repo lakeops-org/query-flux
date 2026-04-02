@@ -19,6 +19,8 @@ use queryflux_persistence::Persistence;
 use queryflux_routing::chain::{RouterChain, RoutingTrace};
 use queryflux_translation::TranslationService;
 
+use crate::snowflake::http::session_store::SnowflakeSessionStore;
+
 /// Everything that can be hot-reloaded from the DB without restarting the proxy.
 ///
 /// Wrapped in `Arc<tokio::sync::RwLock<LiveConfig>>` inside `AppState` so
@@ -65,6 +67,8 @@ pub struct AppState {
     pub authorization: Arc<dyn AuthorizationChecker>,
     /// Resolves per-user `QueryCredentials` from `AuthContext` + cluster `queryAuth` config.
     pub identity_resolver: Arc<BackendIdentityResolver>,
+    /// Active Snowflake wire-protocol sessions (Form 1). Shared across all handlers.
+    pub snowflake_sessions: Arc<SnowflakeSessionStore>,
 }
 
 /// Stable per-query metadata that does not change across the query's lifecycle.

@@ -1,28 +1,19 @@
-# Adding engine and protocol support
-
-This guide separates two ideas that are easy to conflate:
-
-| Concept | Meaning | Example |
-|--------|---------|---------|
-| **Backend engine** | A **cluster** type QueryFlux routes queries **to**. It has an adapter that talks to the real database (HTTP, MySQL wire, embedded library, AWS SDK, …). | Trino, DuckDB, StarRocks, Athena |
-| **Frontend protocol** | How **clients connect to QueryFlux** (ingress). SQL enters with a `FrontendProtocol` and a default source dialect for translation. | Trino HTTP, **PostgreSQL wire**, MySQL wire, Flight SQL |
-
-Adding **PostgreSQL wire** as a client entrypoint is **not** the same as adding “PostgreSQL” as a backend: today, `PostgresWire` is already a frontend in `queryflux-frontend`; traffic still lands on the shared dispatch path and is sent to whatever **backend adapter** routing chose (often Trino).
-
-Use the sections below depending on whether you are extending **Studio**, a **backend adapter**, or a **frontend listener**.
-
+---
+description: Adding a backend engine to QueryFlux — Rust adapter, registration, persistence, and QueryFlux Studio UI.
 ---
 
-## Part A — Backend engine (Rust)
+# Backend
 
-Goal: a new `engine` value in cluster config, a live adapter, validation, translation target dialect, and wiring in the binary.
+Goal: a new `engine` value in cluster config, a live adapter, validation, translation target dialect, wiring in the binary, and (optionally) Studio UI so operators can manage clusters for that engine.
+
+See **[Extending QueryFlux](overview.md)** for how this differs from a **frontend** protocol. For existing client protocols, see **[Frontends](../frontends/overview.md)**.
 
 ### Registration overview
 
 Backends are **not** loaded dynamically. Each engine is compiled in and registered explicitly. Data flow:
 
 1. **Postgres / YAML** → `engine_key` column + `config` JSONB → `ClusterConfigRecord::to_core()` uses **`parse_engine_key`** and JSON helpers → typed **`ClusterConfig`**.
-2. **Binary** → `registered_engines::build_adapter(...)` matches **`EngineConfig`** and calls the adapter’s **`try_from_cluster_config`** (see [`crates/queryflux/src/registered_engines.rs`](../crates/queryflux/src/registered_engines.rs)).
+2. **Binary** → `registered_engines::build_adapter(...)` matches **`EngineConfig`** and calls the adapter’s **`try_from_cluster_config`** (see [`crates/queryflux/src/registered_engines.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux/src/registered_engines.rs)).
 3. **Adapter** → reads only the **`ClusterConfig`** fields it needs (endpoint, auth, region, …) and constructs itself; **startup** and **hot reload** both use the same factory.
 
 **JSONB** stores per-cluster, per-engine payload without schema migrations; **`ClusterConfig`** in core is the typed view after `to_core()`. Engine-specific wiring belongs in **`try_from_cluster_config`**, not in `main.rs`.
@@ -35,7 +26,7 @@ Backends are **not** loaded dynamically. Each engine is compiled in and register
   - **`engine_key(&EngineConfig)`** — `EngineConfig` → stable string key (must match the adapter descriptor and Studio).
   - **`parse_engine_key(&str)`** — inverse mapping for the `engine_key` column in Postgres / API.
   - **`impl From<&EngineConfig> for EngineType`** — single place for config → runtime `EngineType` (cluster manager and `main.rs` use this instead of ad-hoc matches).
-- **`EngineType::dialect()`** — Return the `SqlDialect` used as the **translation target** (and extend `SqlDialect` / `is_compatible_with` in translation if needed). See [query-translation.md](query-translation.md).
+- **`EngineType::dialect()`** — Return the `SqlDialect` used as the **translation target** (and extend `SqlDialect` / `is_compatible_with` in translation if needed). See [query-translation.md](../query-translation.md).
 - **`ClusterConfig` fields** — Add any new top-level fields (region, paths, engine-specific blobs). Prefer keeping engine-specific secrets and options in `config` JSON for Postgres-backed clusters; extend the typed struct when YAML and validation need them everywhere.
 
 ### 2. Adapter crate (`queryflux-engine-adapters`)
@@ -65,7 +56,7 @@ Implement on your adapter struct so all **field extraction and validation** for 
 
 - **Async** (e.g. Athena — AWS client setup): same parameters, `async fn`, returns `Result<Self>`.
 
-Use **`QueryFluxError::Engine(format!(…))`** for failures; include **`cluster_name_str`** in messages so startup and reload logs identify the cluster. Reference implementations: **`TrinoAdapter`** and **`StarRocksAdapter`** ([`trino/mod.rs`](../crates/queryflux-engine-adapters/src/trino/mod.rs), [`starrocks/mod.rs`](../crates/queryflux-engine-adapters/src/starrocks/mod.rs)), **`DuckDbAdapter`** / **`DuckDbHttpAdapter`** ([`duckdb/mod.rs`](../crates/queryflux-engine-adapters/src/duckdb/mod.rs), [`duckdb/http.rs`](../crates/queryflux-engine-adapters/src/duckdb/http.rs)), **`AthenaAdapter`** ([`athena/mod.rs`](../crates/queryflux-engine-adapters/src/athena/mod.rs)).
+Use **`QueryFluxError::Engine(format!(…))`** for failures; include **`cluster_name_str`** in messages so startup and reload logs identify the cluster. Reference implementations: **`TrinoAdapter`** and **`StarRocksAdapter`** ([`trino/mod.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/trino/mod.rs), [`starrocks/mod.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/starrocks/mod.rs)), **`DuckDbAdapter`** / **`DuckDbHttpAdapter`** ([`duckdb/mod.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/duckdb/mod.rs), [`duckdb/http.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/duckdb/http.rs)), **`AthenaAdapter`** ([`athena/mod.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/athena/mod.rs)).
 
 Keep **`pub fn new(...)`** (or **`async fn new`**) as the low-level constructor if you want tests to build adapters without a full **`ClusterConfig`**; **`try_from_cluster_config`** can delegate to **`new`** after parsing **`cfg`**.
 
@@ -73,7 +64,7 @@ Keep **`pub fn new(...)`** (or **`async fn new`**) as the low-level constructor 
 
 Registration is centralized in **`crates/queryflux/src/registered_engines.rs`**:
 
-- **`all_descriptors()`** — Append **`MyEngineAdapter::descriptor()`** to the returned `vec!`. [`main.rs`](../crates/queryflux/src/main.rs) builds **`EngineRegistry::new(registered_engines::all_descriptors())`** for validation and **`GET /admin/engine-registry`**.
+- **`all_descriptors()`** — Append **`MyEngineAdapter::descriptor()`** to the returned `vec!`. [`main.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux/src/main.rs) builds **`EngineRegistry::new(registered_engines::all_descriptors())`** for validation and **`GET /admin/engine-registry`**.
 - **`build_adapter(cluster_name, placeholder_group, cluster_cfg, cluster_name_str).await`** — Returns **`anyhow::Result<Arc<dyn EngineAdapterTrait>>`**. Add a **`match`** arm on **`EngineConfig::MyEngine`** that calls **`MyEngineAdapter::try_from_cluster_config(...)`**, maps **`QueryFluxError`** to **`anyhow::Error`** (same helper as other arms), and wraps **`Arc::new(...)`**. **Startup** uses **`.context(...)?`** on the result; **hot reload** in **`build_live_config`** logs a warning and **`continue`** on error — behavior stays in **`main.rs`**, not in the factory.
 
 Do **not** add a second adapter-construction **`match`** in **`main.rs`**.
@@ -110,9 +101,9 @@ So persistence changes are **not** “because Postgres needs a JSON schema.” T
 ### 7. Tests and docs
 
 - Add or extend **e2e** tests under `crates/queryflux-e2e-tests` if you have a dockerized target.
-- Update [architecture.md](architecture.md) component status if you document supported engines there.
+- Update [system-map.md](../system-map.md) component status if you document supported engines there.
 
-### 8. Suggested order of work (backend only)
+### 8. Suggested order of work (Rust)
 
 1. **`EngineConfig` / `EngineType`** + **`engine_key` / `parse_engine_key` / `From<&EngineConfig> for EngineType`** + **`dialect()`** if needed.  
 2. **`ClusterConfig`** fields if the engine needs new top-level keys (and persistence **`to_core`** JSON extraction if those keys live in JSONB).  
@@ -122,7 +113,7 @@ So persistence changes are **not** “because Postgres needs a JSON schema.” T
 
 ---
 
-## Part B — QueryFlux Studio (UI, TypeScript / React)
+## QueryFlux Studio (UI, TypeScript / React)
 
 Studio is the Next.js app under `ui/queryflux-studio/`. It does **not** run wire protocols; it calls the **Admin API** (`ADMIN_API_URL`, default `http://localhost:9000`) for clusters, groups, routing, and scripts.
 
@@ -246,32 +237,9 @@ A follow-up could load **`GET /admin/engine-registry`** at runtime and hydrate f
 
 ---
 
-## Part C — Frontend protocol (e.g. “more Postgres wire”)
+## Checklist (backend)
 
-Goal: clients speak a **wire protocol to QueryFlux**, not a new backend.
-
-### Where the code lives
-
-- **PostgreSQL wire:** `crates/queryflux-frontend/src/postgres_wire/`
-- **MySQL wire:** `crates/queryflux-frontend/src/mysql_wire/`
-- **Trino HTTP:** `crates/queryflux-frontend/src/trino_http/`
-- **Flight SQL:** `crates/queryflux-frontend/src/flight_sql/`
-
-### Typical steps
-
-1. **`FrontendProtocol`** — Already defined in `queryflux_core::query::FrontendProtocol`; add a variant only for a **new** ingress protocol.
-2. **`default_dialect()`** — Set the sqlglot **source** dialect for translation (see [query-translation.md](query-translation.md)).
-3. **Listener** — Bind a port, parse the protocol, build **`SessionContext`** and **`InboundQuery`**, then call shared **`dispatch_query`** (or the same helpers Trino HTTP uses).
-4. **Routing** — Optionally extend **protocol-based routing** in config / persisted routing so this frontend maps to the right default group.
-5. **Tests** — Protocol-level tests or e2e clients as appropriate.
-
-Studio does **not** implement wire protocols; it only talks to the **Admin API** for config and metrics.
-
----
-
-## Checklist summary
-
-**Backend engine**
+### Rust adapter
 
 - [ ] `EngineConfig` + `EngineType` + `engine_key()` + **`parse_engine_key()`** + **`From<&EngineConfig> for EngineType`** + dialect mapping (`engine_registry.rs` + `query.rs`)  
 - [ ] `EngineAdapterTrait` + `descriptor()`  
@@ -280,7 +248,7 @@ Studio does **not** implement wire protocols; it only talks to the **Admin API**
 - [ ] `UpsertClusterConfig::from_core` / `to_core` stay aligned via **`engine_key` / `parse_engine_key`** (no extra string match in persistence)  
 - [ ] Translation / compatibility if dialect is new  
 
-**Studio (UI)**
+### Studio (UI)
 
 - [ ] `lib/studio-engines/engines/<engine>.ts` — `StudioEngineModule` (descriptor + catalog + options)  
 - [ ] `lib/studio-engines/manifest.ts` — register module in `STUDIO_ENGINE_MODULES`  
@@ -290,21 +258,18 @@ Studio does **not** implement wire protocols; it only talks to the **Admin API**
 - [ ] `lib/cluster-persist-form.ts` — only if new `config` JSON keys need round-tripping  
 - [ ] Verify add-cluster + edit-cluster, Engines page icons / `findEngineByType`, and engine affinity if used  
 
-**New client protocol**
-
-- [ ] `FrontendProtocol` + dialect + listener module + dispatch integration + routing docs  
-
 ---
 
 ## Related reading
 
-- [architecture.md](architecture.md) — End-to-end flow  
-- [query-translation.md](query-translation.md) — Dialects and sqlglot  
-- [routing-and-clusters.md](routing-and-clusters.md) — Routers and groups  
-- [observability.md](observability.md) — Admin API (including engine registry JSON)  
+- [Extending QueryFlux — overview](overview.md)  
+- [Frontend](frontend.md) — new ingress protocols  
+- [query-translation.md](../query-translation.md) — Dialects and sqlglot  
+- [routing-and-clusters.md](../routing-and-clusters.md) — Routers and groups  
+- [observability.md](../observability.md) — Admin API  
 
-**Rust files referenced above**
+**Rust files**
 
-- [`crates/queryflux/src/registered_engines.rs`](../crates/queryflux/src/registered_engines.rs) — `all_descriptors`, `build_adapter`  
-- [`crates/queryflux-core/src/engine_registry.rs`](../crates/queryflux-core/src/engine_registry.rs) — `engine_key`, `parse_engine_key`, `EngineRegistry`, `From<&EngineConfig> for EngineType`  
-- [`crates/queryflux-persistence/src/cluster_config.rs`](../crates/queryflux-persistence/src/cluster_config.rs) — `to_core` / `from_core` vs `engine_key` + JSONB  
+- [`crates/queryflux/src/registered_engines.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux/src/registered_engines.rs) — `all_descriptors`, `build_adapter`  
+- [`crates/queryflux-core/src/engine_registry.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-core/src/engine_registry.rs) — `engine_key`, `parse_engine_key`, `EngineRegistry`, `From<&EngineConfig> for EngineType`  
+- [`crates/queryflux-persistence/src/cluster_config.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-persistence/src/cluster_config.rs) — `to_core` / `from_core` vs `engine_key` + JSONB  

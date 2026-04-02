@@ -20,6 +20,7 @@ use queryflux_frontend::{
     flight_sql::FlightSqlFrontend,
     mysql_wire::MysqlWireFrontend,
     postgres_wire::PostgresWireFrontend,
+    snowflake::{http::session_store::SnowflakeSessionStore, SnowflakeFrontend},
     state::LiveConfig,
     trino_http::{state::AppState, TrinoHttpFrontend},
     FrontendListenerTrait,
@@ -392,12 +393,20 @@ async fn main() -> Result<()> {
                 postgres_wire,
                 mysql_wire,
                 clickhouse_http,
+                flight_sql,
+                snowflake_http,
+                snowflake_sql_api,
             } => {
                 routers.push(Box::new(ProtocolBasedRouter {
                     trino_http: trino_http.as_ref().map(|s| ClusterGroupName(s.clone())),
                     postgres_wire: postgres_wire.as_ref().map(|s| ClusterGroupName(s.clone())),
                     mysql_wire: mysql_wire.as_ref().map(|s| ClusterGroupName(s.clone())),
                     clickhouse_http: clickhouse_http
+                        .as_ref()
+                        .map(|s| ClusterGroupName(s.clone())),
+                    flight_sql: flight_sql.as_ref().map(|s| ClusterGroupName(s.clone())),
+                    snowflake_http: snowflake_http.as_ref().map(|s| ClusterGroupName(s.clone())),
+                    snowflake_sql_api: snowflake_sql_api
                         .as_ref()
                         .map(|s| ClusterGroupName(s.clone())),
                 }));
@@ -605,6 +614,7 @@ async fn main() -> Result<()> {
         auth_provider,
         authorization,
         identity_resolver,
+        snowflake_sessions: SnowflakeSessionStore::new(),
     });
 
     // --- Start admin server (Prometheus /metrics + future /admin/* endpoints) ---
@@ -939,12 +949,24 @@ async fn main() -> Result<()> {
         }
     };
 
+    let snowflake_future = async {
+        match &config.queryflux.frontends.snowflake_http {
+            Some(cfg) if cfg.enabled => {
+                SnowflakeFrontend::new(app_state.clone(), cfg.port)
+                    .listen()
+                    .await
+            }
+            _ => std::future::pending::<queryflux_core::error::Result<()>>().await,
+        }
+    };
+
     tokio::select! {
-        r = frontend.listen()    => r.map_err(|e| anyhow::anyhow!("{e}"))?,
-        r = admin.listen()       => r.map_err(|e| anyhow::anyhow!("{e}"))?,
-        r = mysql_future         => r.map_err(|e| anyhow::anyhow!("{e}"))?,
-        r = postgres_future      => r.map_err(|e| anyhow::anyhow!("{e}"))?,
-        r = flight_sql_future    => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = frontend.listen()   => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = admin.listen()      => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = mysql_future        => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = postgres_future     => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = flight_sql_future   => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = snowflake_future    => r.map_err(|e| anyhow::anyhow!("{e}"))?,
     }
 
     Ok(())
@@ -1173,6 +1195,9 @@ async fn build_live_config(
                 postgres_wire,
                 mysql_wire,
                 clickhouse_http,
+                flight_sql,
+                snowflake_http,
+                snowflake_sql_api,
             } => {
                 routers.push(Box::new(
                     queryflux_routing::implementations::protocol_based::ProtocolBasedRouter {
@@ -1180,6 +1205,13 @@ async fn build_live_config(
                         postgres_wire: postgres_wire.as_ref().map(|s| ClusterGroupName(s.clone())),
                         mysql_wire: mysql_wire.as_ref().map(|s| ClusterGroupName(s.clone())),
                         clickhouse_http: clickhouse_http
+                            .as_ref()
+                            .map(|s| ClusterGroupName(s.clone())),
+                        flight_sql: flight_sql.as_ref().map(|s| ClusterGroupName(s.clone())),
+                        snowflake_http: snowflake_http
+                            .as_ref()
+                            .map(|s| ClusterGroupName(s.clone())),
+                        snowflake_sql_api: snowflake_sql_api
                             .as_ref()
                             .map(|s| ClusterGroupName(s.clone())),
                     },

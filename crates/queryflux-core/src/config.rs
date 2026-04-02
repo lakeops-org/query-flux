@@ -322,6 +322,10 @@ pub struct FrontendsConfig {
     pub clickhouse_http: Option<FrontendConfig>,
     #[serde(default)]
     pub flight_sql: Option<FrontendConfig>,
+    #[serde(default)]
+    pub snowflake_http: Option<FrontendConfig>,
+    #[serde(default)]
+    pub snowflake_sql_api: Option<FrontendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -648,6 +652,12 @@ pub enum RouterConfig {
         mysql_wire: Option<String>,
         #[serde(default)]
         clickhouse_http: Option<String>,
+        #[serde(default)]
+        flight_sql: Option<String>,
+        #[serde(default)]
+        snowflake_http: Option<String>,
+        #[serde(default)]
+        snowflake_sql_api: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Header {

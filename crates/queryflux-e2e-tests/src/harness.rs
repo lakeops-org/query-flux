@@ -31,6 +31,7 @@ use queryflux_engine_adapters::{
     starrocks::StarRocksAdapter, trino::TrinoAdapter, EngineAdapterTrait,
 };
 use queryflux_frontend::{
+    snowflake::http::session_store::SnowflakeSessionStore,
     state::LiveConfig,
     trino_http::{state::AppState, TrinoHttpFrontend},
 };
@@ -230,6 +231,7 @@ impl TestHarness {
             auth_provider: Arc::new(NoneAuthProvider::new(false)) as Arc<dyn AuthProvider>,
             authorization: Arc::new(AllowAllAuthorization) as Arc<dyn AuthorizationChecker>,
             identity_resolver: Arc::new(BackendIdentityResolver::new()),
+            snowflake_sessions: SnowflakeSessionStore::new(),
         });
 
         let router: Router = TrinoHttpFrontend::new(state, port).router();
