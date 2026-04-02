@@ -1,6 +1,6 @@
 CARGO        := $(HOME)/.cargo/bin/cargo
 COMPOSE      := docker compose -f docker/docker-compose.yml --project-directory .
-COMPOSE_TEST := docker compose -f docker/docker-compose.test.yml --project-directory .
+COMPOSE_TEST := docker compose -f docker/test/docker-compose.test.yml --project-directory .
 
 # Trino `tpch` schema used when loading Iceberg tables (see docker/fixtures/init.sql + data-loader).
 # tiny = default fast tests; sf1 ≈ 1.5M orders (long load, heavy E2E).
@@ -70,7 +70,7 @@ benchmark:
 	$(CARGO) run --release -p queryflux-bench
 
 ## Run E2E tests. Spins up Trino + StarRocks + Lakekeeper via Docker.
-## Requires reachable engines; see docker/docker-compose.test.yml.
+## Requires reachable engines; see docker/test/docker-compose.test.yml.
 ## `--test-threads=1`: StarRocks Iceberg is slow; default parallel libtest + `#[serial]` makes
 ## every test report libtest's 60s "slow test" spam while threads wait on the serial lock.
 ## Iceberg/Lakekeeper tables are created by the e2e crate (no TPC-H loader).
@@ -78,11 +78,12 @@ test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
-	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
+	$(COMPOSE_TEST) up -d --wait trino starrocks fakesnow sentinel
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
 	TRINO_URL=http://localhost:18081 \
 	STARROCKS_URL=mysql://root@localhost:9030 \
+	FAKESNOW_URL=http://localhost:18085 \
 	LAKEKEEPER_URL=http://localhost:18181 \
 	MINIO_ENDPOINT=localhost:19000 \
 	DUCKDB_DOWNLOAD_LIB=1 \

@@ -112,7 +112,7 @@ pub struct UpsertClusterGroupConfig {
 // ---------------------------------------------------------------------------
 
 use queryflux_core::config::{ClusterAuth, ClusterConfig, ClusterGroupConfig};
-use queryflux_core::engine_registry::{engine_key, parse_engine_key};
+use queryflux_core::engine_registry::engine_key;
 
 impl UpsertClusterConfig {
     pub fn from_core(cfg: &ClusterConfig) -> Option<Self> {
@@ -146,6 +146,18 @@ impl UpsertClusterConfig {
         }
         if let Some(v) = &cfg.catalog {
             config.insert("catalog".into(), v.clone().into());
+        }
+        if let Some(v) = &cfg.account {
+            config.insert("account".into(), v.clone().into());
+        }
+        if let Some(v) = &cfg.warehouse {
+            config.insert("warehouse".into(), v.clone().into());
+        }
+        if let Some(v) = &cfg.role {
+            config.insert("role".into(), v.clone().into());
+        }
+        if let Some(v) = &cfg.schema {
+            config.insert("schema".into(), v.clone().into());
         }
 
         match &cfg.auth {
@@ -221,71 +233,11 @@ impl UpsertClusterGroupConfig {
 // Conversion helpers: DB records → core config types (for startup loading)
 // ---------------------------------------------------------------------------
 
-impl ClusterConfigRecord {
-    pub fn to_core(&self) -> queryflux_core::error::Result<ClusterConfig> {
-        use queryflux_core::config::TlsConfig;
-        use queryflux_core::error::QueryFluxError;
-
-        let engine = parse_engine_key(&self.engine_key).map_err(|_| {
-            QueryFluxError::Engine(format!("Unknown engine key in DB: '{}'", self.engine_key))
-        })?;
-
-        // Helpers to extract typed values from the config JSON.
-        let s = |key: &str| -> Option<String> {
-            self.config
-                .get(key)
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        };
-        let b = |key: &str| -> bool {
-            self.config
-                .get(key)
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        };
-
-        let auth = match s("authType").as_deref() {
-            Some("basic") => Some(ClusterAuth::Basic {
-                username: s("authUsername").unwrap_or_default(),
-                password: s("authPassword").unwrap_or_default(),
-            }),
-            Some("bearer") => Some(ClusterAuth::Bearer {
-                token: s("authToken").unwrap_or_default(),
-            }),
-            Some("accessKey") => Some(ClusterAuth::AccessKey {
-                access_key_id: s("authUsername").unwrap_or_default(),
-                secret_access_key: s("authPassword").unwrap_or_default(),
-                session_token: s("authToken"),
-            }),
-            Some("roleArn") => Some(ClusterAuth::RoleArn {
-                role_arn: s("authUsername").unwrap_or_default(),
-                external_id: s("authToken"),
-            }),
-            _ => None,
-        };
-
-        Ok(ClusterConfig {
-            engine: Some(engine),
-            enabled: self.enabled,
-            max_running_queries: self.max_running_queries.map(|v| v as u64),
-            endpoint: s("endpoint"),
-            database_path: s("databasePath"),
-            region: s("region"),
-            s3_output_location: s("s3OutputLocation"),
-            workgroup: s("workgroup"),
-            catalog: s("catalog"),
-            tls: if b("tlsInsecureSkipVerify") {
-                Some(TlsConfig {
-                    insecure_skip_verify: true,
-                })
-            } else {
-                None
-            },
-            auth,
-            query_auth: None, // not persisted to DB; loaded from YAML config only
-        })
-    }
-}
+// NOTE: `ClusterConfigRecord::to_core()` has been removed. Engine adapters are
+// now built directly from the JSONB config blob via `try_from_config_json()` on
+// each adapter. Auth extraction uses `parse_auth_from_config_json()` from
+// `queryflux_core::engine_registry`. The persistence layer no longer needs to
+// know about engine-specific config fields.
 
 impl ClusterGroupConfigRecord {
     pub fn to_core(&self) -> ClusterGroupConfig {

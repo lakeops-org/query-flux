@@ -82,8 +82,8 @@ impl FrontendProtocol {
             FrontendProtocol::MySqlWire => SqlDialect::MySql,
             FrontendProtocol::ClickHouseHttp => SqlDialect::ClickHouse,
             FrontendProtocol::FlightSql => SqlDialect::Generic,
-            FrontendProtocol::SnowflakeHttp => SqlDialect::Generic,
-            FrontendProtocol::SnowflakeSqlApi => SqlDialect::Generic,
+            FrontendProtocol::SnowflakeHttp => SqlDialect::Snowflake,
+            FrontendProtocol::SnowflakeSqlApi => SqlDialect::Snowflake,
         }
     }
 }
@@ -99,6 +99,8 @@ pub enum EngineType {
     ClickHouse,
     /// Amazon Athena (Presto/Trino-compatible SQL over S3).
     Athena,
+    /// Snowflake cloud data warehouse.
+    Snowflake,
 }
 
 impl EngineType {
@@ -109,6 +111,7 @@ impl EngineType {
             EngineType::DuckDb | EngineType::DuckDbHttp => SqlDialect::DuckDb,
             EngineType::StarRocks => SqlDialect::StarRocks,
             EngineType::ClickHouse => SqlDialect::ClickHouse,
+            EngineType::Snowflake => SqlDialect::Snowflake,
         }
     }
 }
@@ -121,6 +124,7 @@ pub enum SqlDialect {
     DuckDb,
     StarRocks,
     ClickHouse,
+    Snowflake,
     MySql,
     Postgres,
     Generic,
@@ -146,6 +150,7 @@ impl SqlDialect {
             SqlDialect::DuckDb => "duckdb",
             SqlDialect::StarRocks => "starrocks",
             SqlDialect::ClickHouse => "clickhouse",
+            SqlDialect::Snowflake => "snowflake",
             SqlDialect::MySql => "mysql",
             SqlDialect::Postgres => "postgres",
             SqlDialect::Generic => "",

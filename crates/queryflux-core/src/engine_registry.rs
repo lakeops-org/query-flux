@@ -238,6 +238,54 @@ pub fn validate_cluster_config(
 }
 
 // ---------------------------------------------------------------------------
+// Config JSON helpers
+// ---------------------------------------------------------------------------
+
+/// Extract a `ClusterAuth` from the flat DB JSON format used by persistence.
+///
+/// The JSON blob stores auth as flat keys: `authType`, `authUsername`,
+/// `authPassword`, `authToken`. This is the canonical format produced by
+/// `UpsertClusterConfig::from_core()` and stored in the `config` JSONB column.
+pub fn parse_auth_from_config_json(json: &serde_json::Value) -> Option<ClusterAuth> {
+    let s =
+        |key: &str| -> Option<String> { json.get(key).and_then(|v| v.as_str()).map(String::from) };
+    match s("authType").as_deref() {
+        Some("basic") => Some(ClusterAuth::Basic {
+            username: s("authUsername").unwrap_or_default(),
+            password: s("authPassword").unwrap_or_default(),
+        }),
+        Some("bearer") => Some(ClusterAuth::Bearer {
+            token: s("authToken").unwrap_or_default(),
+        }),
+        Some("keyPair") => Some(ClusterAuth::KeyPair {
+            username: s("authUsername").unwrap_or_default(),
+            private_key_pem: s("authPassword").unwrap_or_default(),
+            private_key_passphrase: s("authToken"),
+        }),
+        Some("accessKey") => Some(ClusterAuth::AccessKey {
+            access_key_id: s("authUsername").unwrap_or_default(),
+            secret_access_key: s("authPassword").unwrap_or_default(),
+            session_token: s("authToken"),
+        }),
+        Some("roleArn") => Some(ClusterAuth::RoleArn {
+            role_arn: s("authUsername").unwrap_or_default(),
+            external_id: s("authToken"),
+        }),
+        _ => None,
+    }
+}
+
+/// Extract an optional string field from a config JSON blob.
+pub fn json_str(json: &serde_json::Value, key: &str) -> Option<String> {
+    json.get(key).and_then(|v| v.as_str()).map(String::from)
+}
+
+/// Extract a boolean field from a config JSON blob (defaults to `false`).
+pub fn json_bool(json: &serde_json::Value, key: &str) -> bool {
+    json.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -251,6 +299,7 @@ pub fn engine_key(engine: &EngineConfig) -> &'static str {
         EngineConfig::StarRocks => "starRocks",
         EngineConfig::ClickHouse => "clickHouse",
         EngineConfig::Athena => "athena",
+        EngineConfig::Snowflake => "snowflake",
     }
 }
 
@@ -263,6 +312,7 @@ pub fn parse_engine_key(s: &str) -> Result<EngineConfig, String> {
         "starRocks" => Ok(EngineConfig::StarRocks),
         "clickHouse" => Ok(EngineConfig::ClickHouse),
         "athena" => Ok(EngineConfig::Athena),
+        "snowflake" => Ok(EngineConfig::Snowflake),
         other => Err(format!("Unknown engine key: '{other}'")),
     }
 }
@@ -276,6 +326,7 @@ impl From<&EngineConfig> for EngineType {
             EngineConfig::StarRocks => EngineType::StarRocks,
             EngineConfig::ClickHouse => EngineType::ClickHouse,
             EngineConfig::Athena => EngineType::Athena,
+            EngineConfig::Snowflake => EngineType::Snowflake,
         }
     }
 }

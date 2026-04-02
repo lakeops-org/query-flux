@@ -2,6 +2,7 @@ import { athenaStudioEngine } from "@/lib/studio-engines/engines/athena";
 import { clickHouseStudioEngine } from "@/lib/studio-engines/engines/clickhouse";
 import { duckDbStudioEngine } from "@/lib/studio-engines/engines/duckdb";
 import { duckDbHttpStudioEngine } from "@/lib/studio-engines/engines/duckdb-http";
+import { snowflakeStudioEngine } from "@/lib/studio-engines/engines/snowflake";
 import { starRocksStudioEngine } from "@/lib/studio-engines/engines/starrocks";
 import { trinoStudioEngine } from "@/lib/studio-engines/engines/trino";
 import type { StudioEngineModule } from "@/lib/studio-engines/types";
@@ -25,6 +26,7 @@ export const STUDIO_ENGINE_MODULES: StudioEngineModule[] = [
   duckDbHttpStudioEngine,
   starRocksStudioEngine,
   athenaStudioEngine,
+  snowflakeStudioEngine,
   clickHouseStudioEngine,
 ];
 

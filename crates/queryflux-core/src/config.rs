@@ -509,6 +509,8 @@ pub enum EngineConfig {
     ClickHouse,
     /// Amazon Athena — serverless SQL over S3 via the AWS SDK.
     Athena,
+    /// Snowflake — cloud-native data warehouse. Connects via the Snowflake REST API.
+    Snowflake,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -534,8 +536,21 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub workgroup: Option<String>,
     /// Default Athena catalog. Defaults to `"AwsDataCatalog"` when omitted.
+    /// For Snowflake, used as the default database name.
     #[serde(default)]
     pub catalog: Option<String>,
+    /// Snowflake account identifier (e.g. `xy12345.us-east-1`). Required when engine is `snowflake`.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// Default Snowflake virtual warehouse (e.g. `COMPUTE_WH`).
+    #[serde(default)]
+    pub warehouse: Option<String>,
+    /// Default Snowflake role (e.g. `ANALYST`).
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Default Snowflake schema (e.g. `PUBLIC`).
+    #[serde(default)]
+    pub schema: Option<String>,
     #[serde(default)]
     pub tls: Option<TlsConfig>,
     /// Type 1 credentials — service account used for health checks and (by default) query execution.

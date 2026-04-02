@@ -169,6 +169,43 @@ impl AthenaAdapter {
         })
     }
 
+    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
+    pub async fn try_from_config_json(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        json: &serde_json::Value,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
+
+        let region = json_str(json, "region").ok_or_else(|| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': missing 'region' for Athena"
+            ))
+        })?;
+        let s3_output = json_str(json, "s3OutputLocation").ok_or_else(|| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': missing 's3OutputLocation' for Athena"
+            ))
+        })?;
+        let auth = parse_auth_from_config_json(json);
+        Self::new(
+            cluster_name,
+            group_name,
+            region,
+            s3_output,
+            json_str(json, "workgroup"),
+            json_str(json, "catalog"),
+            auth,
+        )
+        .await
+        .map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': failed to create Athena adapter ({e})"
+            ))
+        })
+    }
+
     /// Build from persisted / YAML [`ClusterConfig`].
     pub async fn try_from_cluster_config(
         cluster_name: ClusterName,
@@ -727,5 +764,31 @@ impl AthenaAdapter {
                 },
             ],
         }
+    }
+}
+
+pub struct AthenaFactory;
+
+#[async_trait]
+impl crate::EngineAdapterFactory for AthenaFactory {
+    fn engine_key(&self) -> &'static str {
+        "athena"
+    }
+
+    fn descriptor(&self) -> EngineDescriptor {
+        AthenaAdapter::descriptor()
+    }
+
+    async fn build_from_config_json(
+        &self,
+        cluster_name: ClusterName,
+        group: ClusterGroupName,
+        json: &serde_json::Value,
+        cluster_name_str: &str,
+    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        Ok(Arc::new(
+            AthenaAdapter::try_from_config_json(cluster_name, group, json, cluster_name_str)
+                .await?,
+        ))
     }
 }

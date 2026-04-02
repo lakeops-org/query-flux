@@ -21,8 +21,7 @@ const PROTOCOL_SIMPLE_ICONS: Record<string, SimpleIcon> = {
   postgres_wire: siPostgresql,
   clickhouse_http: siClickhouse,
   flight_sql: siApacheparquet,
-  snowflake_http: siSnowflake,
-  snowflake_sql_api: siSnowflake,
+  snowflake: siSnowflake,
 };
 
 function SimpleIconSvg({ icon, className }: { icon: SimpleIcon; className?: string }) {

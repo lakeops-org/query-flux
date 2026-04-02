@@ -71,6 +71,26 @@ impl StarRocksAdapter {
         })
     }
 
+    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
+    pub fn try_from_config_json(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        json: &serde_json::Value,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
+
+        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
+        })?;
+        let auth = parse_auth_from_config_json(json);
+        Self::new(cluster_name, group_name, endpoint, auth).map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': failed to create StarRocks adapter ({e})"
+            ))
+        })
+    }
+
     /// Build from persisted / YAML [`ClusterConfig`].
     pub fn try_from_cluster_config(
         cluster_name: ClusterName,
@@ -559,5 +579,33 @@ impl StarRocksAdapter {
                 },
             ],
         }
+    }
+}
+
+pub struct StarRocksFactory;
+
+#[async_trait]
+impl crate::EngineAdapterFactory for StarRocksFactory {
+    fn engine_key(&self) -> &'static str {
+        "starRocks"
+    }
+
+    fn descriptor(&self) -> EngineDescriptor {
+        StarRocksAdapter::descriptor()
+    }
+
+    async fn build_from_config_json(
+        &self,
+        cluster_name: ClusterName,
+        group: ClusterGroupName,
+        json: &serde_json::Value,
+        cluster_name_str: &str,
+    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        Ok(Arc::new(StarRocksAdapter::try_from_config_json(
+            cluster_name,
+            group,
+            json,
+            cluster_name_str,
+        )?))
     }
 }

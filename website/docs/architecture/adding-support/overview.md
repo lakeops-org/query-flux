@@ -18,8 +18,8 @@ Adding **PostgreSQL wire** as a client entrypoint is **not** the same as adding 
 
 | Page | What it covers |
 |------|----------------|
-| [Backend](backend.md) | Rust adapter (`EngineAdapterTrait`), `registered_engines`, persistence, dispatch notes — plus **QueryFlux Studio** (`StudioEngineModule`, catalog, forms). |
-| [Frontend](frontend.md) | Adding a **new** ingress protocol (`FrontendProtocol`, listener, routing). For existing protocols, see **[Frontends](../frontends/overview.md)**. |
+| [Backend](backend.md) | Rust adapter (`EngineAdapterTrait`, `EngineAdapterFactory`), `registered_engines` (`all_factories`), persistence, dispatch notes — plus **QueryFlux Studio** (`StudioEngineModule`, catalog, forms). |
+| [Frontend](frontend.md) | New ingress protocol: listener, `FrontendProtocol`, dispatch, optional protocol-based routing, admin frontends snapshot. Existing protocols: **[Frontends](../frontends/overview.md)**. |
 
 ---
 

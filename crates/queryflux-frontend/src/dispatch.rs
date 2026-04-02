@@ -14,10 +14,12 @@ use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{
         ClusterGroupName, ClusterName, ExecutingQuery, FrontendProtocol, ProxyQueryId,
-        QueryExecution, QueryStats, QueryStatus, QueuedQuery,
+        QueryEngineStats, QueryExecution, QueryStats, QueryStatus, QueuedQuery,
     },
     session::SessionContext,
 };
+use queryflux_engine_adapters::trino::api::TrinoResponse;
+use queryflux_engine_adapters::EngineAdapterTrait;
 use queryflux_translation::SchemaContext;
 
 use tracing::{debug, info, warn};
@@ -247,8 +249,23 @@ pub async fn dispatch_query(
     };
     // Single write per query — no updates needed between polls.
     // Any QueryFlux instance can serve subsequent polls using this record.
-    let _ = state.persistence.upsert(executing).await;
+    let _ = state.persistence.upsert(executing.clone()).await;
     info!(id = %query_id, backend = %backend_query_id, cluster = %cluster_name, "Query submitted (async)");
+
+    if next_uri.is_none() {
+        if let Some(ref ib) = initial_body {
+            finalize_trino_async_terminal_on_submit(
+                state,
+                &cluster_manager,
+                &executing,
+                &adapter,
+                &session,
+                protocol,
+                ib,
+            )
+            .await;
+        }
+    }
 
     // Rewrite nextUri: swap Trino host → QueryFlux external address, keep full path.
     let proxy_next_uri = next_uri
@@ -258,6 +275,139 @@ pub async fn dispatch_query(
         initial_body,
         proxy_next_uri,
     })
+}
+
+/// Trino may return `FINISHED` with no `nextUri` on the initial POST `/v1/statement` response.
+/// Clients then never call GET `/v1/statement/...`, so [`crate::trino_http::handlers::get_executing_statement`]
+/// never runs — mirror its metrics, `record_query`, and persistence cleanup here.
+async fn finalize_trino_async_terminal_on_submit(
+    state: &Arc<AppState>,
+    cluster_manager: &Arc<dyn ClusterGroupManager>,
+    executing: &ExecutingQuery,
+    adapter: &Arc<dyn EngineAdapterTrait>,
+    session: &SessionContext,
+    protocol: FrontendProtocol,
+    body: &Bytes,
+) {
+    let trino_resp: TrinoResponse = match serde_json::from_slice(body.as_ref()) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(
+                proxy_id = %executing.id,
+                "trino submit terminal body JSON parse failed: {e}; releasing cluster + clearing persistence"
+            );
+            state
+                .metrics
+                .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
+            let _ = cluster_manager
+                .release_cluster(&executing.cluster_group, &executing.cluster_name)
+                .await;
+            let _ = state.persistence.delete(&executing.backend_query_id).await;
+            return;
+        }
+    };
+
+    if trino_resp.next_uri.is_some() {
+        return;
+    }
+
+    let elapsed_ms = (Utc::now() - executing.creation_time)
+        .num_milliseconds()
+        .max(0) as u64;
+
+    let was_translated = executing.translated_sql.is_some();
+    let src_dialect = protocol.default_dialect();
+    let ctx = QueryContext {
+        query_id: &executing.id,
+        sql: executing
+            .translated_sql
+            .as_deref()
+            .unwrap_or(&executing.sql),
+        session,
+        protocol,
+        group: &executing.cluster_group,
+        cluster: &executing.cluster_name,
+        cluster_group_config_id: executing.cluster_group_config_id,
+        cluster_config_id: executing.cluster_config_id,
+        engine_type: adapter.engine_type(),
+        src_dialect,
+        tgt_dialect: adapter.engine_type().dialect(),
+        was_translated,
+        translated_sql: if was_translated {
+            Some(executing.sql.clone())
+        } else {
+            None
+        },
+        query_tags: executing.query_tags.clone(),
+    };
+
+    let engine_stats = Some(QueryEngineStats {
+        engine_elapsed_time_ms: Some(trino_resp.stats.elapsed_time_millis),
+        cpu_time_ms: Some(trino_resp.stats.cpu_time_millis),
+        processed_rows: Some(trino_resp.stats.processed_rows),
+        processed_bytes: Some(trino_resp.stats.processed_bytes),
+        physical_input_bytes: Some(trino_resp.stats.physical_input_bytes),
+        peak_memory_bytes: Some(trino_resp.stats.peak_memory_bytes),
+        spilled_bytes: Some(trino_resp.stats.spilled_bytes),
+        total_splits: Some(trino_resp.stats.total_splits),
+    });
+
+    let backend_id = Some(executing.backend_query_id.0.clone());
+
+    if let Some(err) = &trino_resp.error {
+        state
+            .metrics
+            .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
+        state.record_query(
+            &ctx,
+            QueryOutcome {
+                backend_query_id: backend_id,
+                status: QueryStatus::Failed,
+                execution_ms: elapsed_ms,
+                rows: None,
+                error: Some(err.message.clone()),
+                routing_trace: None,
+                engine_stats,
+            },
+        );
+    } else if trino_resp.stats.state == "FAILED" {
+        state
+            .metrics
+            .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
+        state.record_query(
+            &ctx,
+            QueryOutcome {
+                backend_query_id: backend_id,
+                status: QueryStatus::Failed,
+                execution_ms: elapsed_ms,
+                rows: None,
+                error: Some("Trino query FAILED".to_string()),
+                routing_trace: None,
+                engine_stats,
+            },
+        );
+    } else {
+        state.record_query(
+            &ctx,
+            QueryOutcome {
+                backend_query_id: backend_id,
+                status: QueryStatus::Success,
+                execution_ms: elapsed_ms,
+                rows: None,
+                error: None,
+                routing_trace: None,
+                engine_stats,
+            },
+        );
+        state
+            .metrics
+            .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
+    }
+
+    let _ = cluster_manager
+        .release_cluster(&executing.cluster_group, &executing.cluster_name)
+        .await;
+    let _ = state.persistence.delete(&executing.backend_query_id).await;
 }
 
 #[allow(clippy::too_many_arguments)]

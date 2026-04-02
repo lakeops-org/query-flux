@@ -1,9 +1,11 @@
 pub mod athena;
 pub mod duckdb;
+pub mod snowflake;
 pub mod starrocks;
 pub mod trino;
 
 use std::pin::Pin;
+use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
@@ -11,14 +13,40 @@ use futures::Stream;
 use queryflux_auth::QueryCredentials;
 use queryflux_core::{
     catalog::TableSchema,
+    engine_registry::EngineDescriptor,
     error::{QueryFluxError, Result},
-    query::{BackendQueryId, EngineType, QueryExecution, QueryPollResult},
+    query::{
+        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
+    },
     session::SessionContext,
     tags::QueryTags,
 };
 
 /// A stream of Arrow RecordBatches — the universal output type for all adapters.
 pub type ArrowStream = Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send>>;
+
+/// Factory for constructing engine adapters from raw configuration.
+///
+/// Each engine provides a zero-sized factory struct implementing this trait.
+/// This formalizes the contract that every adapter must support construction
+/// from a DB config JSON blob and expose its descriptor metadata.
+#[async_trait]
+pub trait EngineAdapterFactory: Send + Sync {
+    /// The engine key string matching the DB `engine_key` column (e.g. `"trino"`, `"duckDb"`).
+    fn engine_key(&self) -> &'static str;
+
+    /// Field-level schema used by the admin API and Studio UI.
+    fn descriptor(&self) -> EngineDescriptor;
+
+    /// Build an adapter instance from a raw DB config JSON blob.
+    async fn build_from_config_json(
+        &self,
+        cluster_name: ClusterName,
+        group: ClusterGroupName,
+        json: &serde_json::Value,
+        cluster_name_str: &str,
+    ) -> Result<Arc<dyn EngineAdapterTrait>>;
+}
 
 /// Implemented by each query engine backend (Trino, DuckDB, StarRocks, ClickHouse, ...).
 ///

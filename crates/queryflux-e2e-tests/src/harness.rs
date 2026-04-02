@@ -23,12 +23,14 @@ use queryflux_auth::{
 use queryflux_cluster_manager::{
     cluster_state::ClusterState, simple::SimpleClusterGroupManager, strategy::strategy_from_config,
 };
+use queryflux_core::config::{ClusterAuth, ClusterConfig, EngineConfig};
 use queryflux_core::{
     error::Result as QfResult,
     query::{ClusterGroupName, ClusterName, EngineType},
 };
 use queryflux_engine_adapters::{
-    starrocks::StarRocksAdapter, trino::TrinoAdapter, EngineAdapterTrait,
+    snowflake::SnowflakeAdapter, starrocks::StarRocksAdapter, trino::TrinoAdapter,
+    EngineAdapterTrait,
 };
 use queryflux_frontend::{
     snowflake::http::session_store::SnowflakeSessionStore,
@@ -59,6 +61,7 @@ impl MetricsStore for CapturingMetrics {
 
 pub const GROUP_TRINO: &str = "trino";
 pub const GROUP_STARROCKS: &str = "starrocks";
+pub const GROUP_SNOWFLAKE: &str = "snowflake";
 /// Set when Lakekeeper port is reachable (Iceberg tables seeded by e2e tests via Trino).
 pub const GROUP_LAKEKEEPER: &str = "lakekeeper";
 
@@ -178,10 +181,66 @@ impl TestHarness {
             adapters.insert(cluster.0.clone(), sr as Arc<dyn EngineAdapterTrait>);
         }
 
+        // --- Snowflake (fakesnow) ---
+        let fakesnow_url =
+            std::env::var("FAKESNOW_URL").unwrap_or_else(|_| "http://localhost:18085".to_string());
+        let fakesnow_available = is_fakesnow_ready(&fakesnow_url).await;
+        if fakesnow_available {
+            let group = ClusterGroupName(GROUP_SNOWFLAKE.to_string());
+            let cluster = ClusterName("snowflake-1".to_string());
+            let state = Arc::new(ClusterState::new(
+                cluster.clone(),
+                group.clone(),
+                None,
+                None,
+                EngineType::Snowflake,
+                Some(fakesnow_url.clone()),
+                8,
+                true,
+            ));
+            let cfg = ClusterConfig {
+                engine: Some(EngineConfig::Snowflake),
+                enabled: true,
+                max_running_queries: None,
+                endpoint: Some(fakesnow_url),
+                database_path: None,
+                region: None,
+                s3_output_location: None,
+                workgroup: None,
+                catalog: None,
+                account: Some("fakesnow".to_string()),
+                warehouse: None,
+                role: None,
+                schema: None,
+                tls: None,
+                auth: Some(ClusterAuth::Basic {
+                    username: "fake".to_string(),
+                    password: "snow".to_string(),
+                }),
+                query_auth: None,
+            };
+            let adapter = Arc::new(
+                SnowflakeAdapter::try_from_cluster_config(
+                    cluster.clone(),
+                    group.clone(),
+                    &cfg,
+                    "snowflake-1",
+                )
+                .map_err(|e| anyhow!("Snowflake adapter: {e}"))?,
+            ) as Arc<dyn EngineAdapterTrait>;
+
+            group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
+            group_members.insert(GROUP_SNOWFLAKE.to_string(), vec![cluster.0.clone()]);
+            group_order.push(GROUP_SNOWFLAKE.to_string());
+            adapters.insert(cluster.0.clone(), adapter);
+            available_groups.push(GROUP_SNOWFLAKE.to_string());
+            header_map.insert(GROUP_SNOWFLAKE.to_string(), group);
+        }
+
         if group_states.is_empty() {
             return Err(anyhow!(
-                "No backends reachable. Start docker compose (see docker/docker-compose.test.yml): \
-                 Trino :18081 and/or StarRocks :19030."
+                "No backends reachable. Start docker compose (see docker/test/docker-compose.test.yml): \
+                 Trino :18081 and/or StarRocks :19030 and/or fakesnow :18085."
             ));
         }
 
@@ -290,7 +349,7 @@ impl TestHarness {
 }
 
 fn pick_fallback_group(group_order: &[String]) -> ClusterGroupName {
-    for preferred in [GROUP_TRINO, GROUP_STARROCKS] {
+    for preferred in [GROUP_TRINO, GROUP_STARROCKS, GROUP_SNOWFLAKE] {
         if group_order.iter().any(|g| g == preferred) {
             return ClusterGroupName(preferred.to_string());
         }
@@ -332,5 +391,14 @@ async fn is_lakekeeper_ready(url: &str) -> bool {
     };
     let host = parsed.host_str().unwrap_or("localhost");
     let port = parsed.port().unwrap_or(8181);
+    port_is_open(host, port).await
+}
+
+async fn is_fakesnow_ready(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let host = parsed.host_str().unwrap_or("localhost");
+    let port = parsed.port().unwrap_or(8085);
     port_is_open(host, port).await
 }

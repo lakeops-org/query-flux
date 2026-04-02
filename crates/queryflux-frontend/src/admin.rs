@@ -169,7 +169,7 @@ impl Default for SecurityConfigDto {
 /// One entry protocol / client surface (Trino HTTP, MySQL wire, …).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ProtocolFrontendDto {
-    /// Stable id: `trino_http`, `mysql_wire`, …
+    /// Stable id: `trino_http`, `mysql_wire`, `snowflake`, …
     pub id: String,
     pub label: String,
     pub short_description: String,
@@ -250,18 +250,18 @@ pub fn build_frontends_status(
             "Arrow Flight SQL / gRPC-style access (driver-dependent).",
             frontends.flight_sql.as_ref(),
         ),
-        opt_fe(
-            "snowflake_http",
-            "Snowflake HTTP (wire)",
-            "Snowflake internal HTTP wire protocol (JDBC/ODBC/Python/Go/Node.js connectors).",
-            frontends.snowflake_http.as_ref(),
-        ),
-        opt_fe(
-            "snowflake_sql_api",
-            "Snowflake SQL API",
-            "Snowflake REST SQL API v2 (POST /api/v2/statements).",
-            frontends.snowflake_sql_api.as_ref(),
-        ),
+        {
+            // Single Axum listener: `SnowflakeFrontend` merges connector + SQL API routes; port from YAML `snowflake_http`.
+            let sf = frontends.snowflake_http.as_ref();
+            ProtocolFrontendDto {
+                id: "snowflake".to_string(),
+                label: "Snowflake".to_string(),
+                short_description: "Snowflake-compatible clients on one port: connector session/query flow and REST SQL API v2 (POST /api/v2/statements)."
+                    .to_string(),
+                enabled: sf.map(|c| c.enabled).unwrap_or(false),
+                port: sf.map(|c| c.port),
+            }
+        },
     ];
 
     FrontendsStatusDto {
