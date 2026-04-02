@@ -24,8 +24,8 @@ env:
   RUST_BACKTRACE: 1
   # DuckDB Rust crate: download prebuilt libduckdb in CI (no system libduckdb).
   DUCKDB_DOWNLOAD_LIB: "1"
-  # Faster links on Linux (mold is installed where we compile).
-  RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+  # Do not set RUSTFLAGS to -fuse-ld=mold: mold then fails to resolve -lduckdb from
+  # libduckdb-sys's rustc-link-search (see mold: fatal: library not found: duckdb).
 
 jobs:
   # Fast, no PyO3 / no compile — runs in parallel with clippy + unit tests.
@@ -45,9 +45,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@44c2b7a8a4ea60a981eaca3cf939b5f4305c123b # v4.1.5
-
-      - name: Install mold linker
-        uses: rui314/setup-mold@v1
 
       - uses: dtolnay/rust-toolchain@d8352f6b1d2e870bc5716e7a6d9b65c4cc244a1a
         with:
@@ -79,9 +76,6 @@ jobs:
     steps:
       - uses: actions/checkout@44c2b7a8a4ea60a981eaca3cf939b5f4305c123b # v4.1.5
 
-      - name: Install mold linker
-        uses: rui314/setup-mold@v1
-
       - uses: dtolnay/rust-toolchain@d8352f6b1d2e870bc5716e7a6d9b65c4cc244a1a
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
@@ -100,7 +94,6 @@ jobs:
           python3 -m venv .venv
           .venv/bin/pip install -r requirements.txt
           echo "PYO3_PYTHON=${GITHUB_WORKSPACE}/.venv/bin/python3" >> "$GITHUB_ENV"
-          DUCKDB_DOWNLOAD_LIB=1
           echo "PYTHONPATH=$(.venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
 
       - run: cargo test --tests --workspace --exclude queryflux-e2e-tests --exclude queryflux-bench
@@ -124,9 +117,6 @@ jobs:
            haskell: true
            large-packages: true
            swap-storage: true
-
-       - name: Install mold linker
-         uses: rui314/setup-mold@v1
 
        - uses: dtolnay/rust-toolchain@d8352f6b1d2e870bc5716e7a6d9b65c4cc244a1a
          with:
