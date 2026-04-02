@@ -13,7 +13,12 @@ export type FieldType =
 
 export type ConnectionType = "http" | "mysqlWire" | "embedded";
 
-export type AuthType = "basic" | "bearer" | "accessKey" | "roleArn";
+export type AuthType =
+  | "basic"
+  | "bearer"
+  | "keyPair"
+  | "accessKey"
+  | "roleArn";
 
 export interface ConfigField {
   key: string;
