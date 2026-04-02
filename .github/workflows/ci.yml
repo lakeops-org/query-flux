@@ -142,13 +142,13 @@ jobs:
        # already covered by the clippy job (`--all-targets`).
 
        - name: Start e2e Docker stack
-         run: docker compose -f docker/docker-compose.test.yml --project-directory . up -d --wait trino starrocks sentinel
+         run: docker compose -f docker/test/docker-compose.test.yml --project-directory . up -d --wait trino starrocks sentinel
 
        - name: Engine logs (debug on failure)
          if: failure()
          run: |
-           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 trino || true
-           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 starrocks || true
+           docker compose -f docker/test/docker-compose.test.yml --project-directory . logs --no-color --tail=200 trino || true
+           docker compose -f docker/test/docker-compose.test.yml --project-directory . logs --no-color --tail=200 starrocks || true
 
        - name: E2E tests
          run: |
@@ -161,4 +161,4 @@ jobs:
 
        - name: Stop e2e Docker stack
          if: always()
-         run: docker compose -f docker/docker-compose.test.yml --project-directory . down
+         run: docker compose -f docker/test/docker-compose.test.yml --project-directory . down
