@@ -13,6 +13,11 @@ on:
       - 'docs/**'
       - '*.md'
 
+# One active run per ref: new pushes cancel older in-progress runs on the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 env:
   RUST_TOOLCHAIN_VERSION: "1.91.1"
   CARGO_TERM_COLOR: always
