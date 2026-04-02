@@ -95,6 +95,7 @@ jobs:
           python3 -m venv .venv
           .venv/bin/pip install -r requirements.txt
           echo "PYO3_PYTHON=${GITHUB_WORKSPACE}/.venv/bin/python3" >> "$GITHUB_ENV"
+          DUCKDB_DOWNLOAD_LIB=1
           echo "PYTHONPATH=$(.venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
 
       - run: cargo test --tests --workspace --exclude queryflux-e2e-tests --exclude queryflux-bench
