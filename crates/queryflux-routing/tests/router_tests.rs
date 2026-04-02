@@ -17,9 +17,8 @@ use queryflux_core::{
 use queryflux_routing::{
     chain::RouterChain,
     implementations::{
-        client_tags::ClientTagsRouter, compound::CompoundRouter, header::HeaderRouter,
-        protocol_based::ProtocolBasedRouter, python_script::PythonScriptRouter,
-        query_regex::QueryRegexRouter,
+        compound::CompoundRouter, header::HeaderRouter, protocol_based::ProtocolBasedRouter,
+        python_script::PythonScriptRouter, query_regex::QueryRegexRouter, tags::TagsRouter,
     },
     RouterTrait,
 };
@@ -34,6 +33,7 @@ fn trino_session(headers: &[(&str, &str)]) -> SessionContext {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
+        tags: queryflux_core::tags::QueryTags::new(),
     }
 }
 
@@ -42,6 +42,7 @@ fn postgres_session() -> SessionContext {
         database: None,
         user: Some("alice".to_string()),
         session_params: HashMap::new(),
+        tags: queryflux_core::tags::QueryTags::new(),
     }
 }
 
@@ -50,6 +51,7 @@ fn mysql_session(user: Option<&str>) -> SessionContext {
         schema: None,
         user: user.map(String::from),
         session_vars: HashMap::new(),
+        tags: queryflux_core::tags::QueryTags::new(),
     }
 }
 
@@ -60,6 +62,7 @@ fn clickhouse_session(headers: &[(&str, &str)]) -> SessionContext {
             .map(|(k, v)| (k.to_lowercase(), (*v).to_string()))
             .collect(),
         query_params: HashMap::new(),
+        tags: queryflux_core::tags::QueryTags::new(),
     }
 }
 
@@ -253,16 +256,41 @@ async fn protocol_router_flight_sql_not_routed() {
 }
 
 // ---------------------------------------------------------------------------
-// ClientTagsRouter
+// TagsRouter
 // ---------------------------------------------------------------------------
 
+/// Build a Trino session with tags pre-extracted from a `X-Trino-Client-Tags`-style header value.
+/// Each comma-separated element becomes a key-only tag (None value), matching Trino wire semantics.
+fn trino_session_with_client_tags(tags_header: &str) -> SessionContext {
+    let tags = tags_header
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| (t.to_string(), None))
+        .collect();
+    SessionContext::TrinoHttp {
+        headers: std::collections::HashMap::from([(
+            "x-trino-client-tags".to_string(),
+            tags_header.to_string(),
+        )]),
+        tags,
+    }
+}
+
+fn tag_rule(tags: &[(&str, Option<&str>)], target: &str) -> queryflux_core::config::TagRoutingRule {
+    queryflux_core::config::TagRoutingRule {
+        tags: tags
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.map(str::to_string)))
+            .collect(),
+        target_group: target.to_string(),
+    }
+}
+
 #[tokio::test]
-async fn client_tags_single_match() {
-    let router = ClientTagsRouter::new(HashMap::from([(
-        "premium".to_string(),
-        group("premium-group"),
-    )]));
-    let session = trino_session(&[("x-trino-client-tags", "premium")]);
+async fn tags_trino_key_only_match() {
+    let router = TagsRouter::new(vec![tag_rule(&[("premium", None)], "premium-group")]);
+    let session = trino_session_with_client_tags("premium");
     let result = router
         .route("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
         .await
@@ -271,27 +299,33 @@ async fn client_tags_single_match() {
 }
 
 #[tokio::test]
-async fn client_tags_multi_first_match_wins() {
-    let router = ClientTagsRouter::new(HashMap::from([
-        ("analytics".to_string(), group("analytics-group")),
-        ("premium".to_string(), group("premium-group")),
-    ]));
-    // Tags are evaluated left-to-right; "analytics" appears first in the header
-    let session = trino_session(&[("x-trino-client-tags", "analytics,premium")]);
+async fn tags_kv_match_postgres() {
+    let router = TagsRouter::new(vec![tag_rule(
+        &[("team", Some("analytics"))],
+        "analytics-group",
+    )]);
+    let (tags, _) = queryflux_core::tags::parse_query_tags("team:analytics");
+    let session = SessionContext::PostgresWire {
+        database: None,
+        user: Some("alice".to_string()),
+        session_params: HashMap::new(),
+        tags,
+    };
     let result = router
-        .route("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
+        .route("SELECT 1", &session, &FrontendProtocol::PostgresWire, None)
         .await
         .unwrap();
     assert_eq!(result, Some(group("analytics-group")));
 }
 
 #[tokio::test]
-async fn client_tags_no_match() {
-    let router = ClientTagsRouter::new(HashMap::from([(
-        "premium".to_string(),
-        group("premium-group"),
-    )]));
-    let session = trino_session(&[("x-trino-client-tags", "free,basic")]);
+async fn tags_kv_wrong_value_no_match() {
+    let router = TagsRouter::new(vec![tag_rule(
+        &[("team", Some("analytics"))],
+        "analytics-group",
+    )]);
+    // x-trino-client-tags treats the whole "team:eng" string as a single key-only tag.
+    let session = trino_session_with_client_tags("team:eng");
     let result = router
         .route("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
         .await
@@ -300,12 +334,9 @@ async fn client_tags_no_match() {
 }
 
 #[tokio::test]
-async fn client_tags_absent_header() {
-    let router = ClientTagsRouter::new(HashMap::from([(
-        "premium".to_string(),
-        group("premium-group"),
-    )]));
-    let session = trino_session(&[]); // no client-tags header
+async fn tags_no_tags_no_match() {
+    let router = TagsRouter::new(vec![tag_rule(&[("premium", None)], "premium-group")]);
+    let session = trino_session(&[]); // no tags header
     let result = router
         .route("SELECT 1", &session, &FrontendProtocol::TrinoHttp, None)
         .await
@@ -314,18 +345,20 @@ async fn client_tags_absent_header() {
 }
 
 #[tokio::test]
-async fn client_tags_non_trino_session_returns_none() {
-    let router = ClientTagsRouter::new(HashMap::from([(
-        "premium".to_string(),
-        group("premium-group"),
-    )]));
+async fn tags_and_logic_partial_no_match() {
+    let router = TagsRouter::new(vec![tag_rule(
+        &[("team", Some("eng")), ("env", Some("prod"))],
+        "prod-eng",
+    )]);
+    let (tags, _) = queryflux_core::tags::parse_query_tags("team:eng,env:staging");
+    let session = SessionContext::MySqlWire {
+        schema: None,
+        user: None,
+        session_vars: HashMap::new(),
+        tags,
+    };
     let result = router
-        .route(
-            "SELECT 1",
-            &postgres_session(),
-            &FrontendProtocol::PostgresWire,
-            None,
-        )
+        .route("SELECT 1", &session, &FrontendProtocol::MySqlWire, None)
         .await
         .unwrap();
     assert_eq!(result, None);

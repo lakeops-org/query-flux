@@ -25,6 +25,7 @@ use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{FrontendProtocol, QueryStats},
     session::SessionContext,
+    tags::{parse_query_tags, QueryTags},
 };
 
 use crate::dispatch::{execute_to_sink, ResultSink};
@@ -158,6 +159,7 @@ async fn handle_connection(
         user: if user.is_empty() { None } else { Some(user) },
         schema,
         session_vars: HashMap::new(),
+        tags: QueryTags::new(),
     };
 
     // Command loop.
@@ -185,13 +187,17 @@ async fn handle_connection(
                     .trim_end_matches('\0')
                     .to_string();
                 if let SessionContext::MySqlWire {
-                    user, session_vars, ..
+                    user,
+                    session_vars,
+                    tags,
+                    ..
                 } = &session
                 {
                     session = SessionContext::MySqlWire {
                         schema: if db.is_empty() { None } else { Some(db) },
                         user: user.clone(),
                         session_vars: session_vars.clone(),
+                        tags: tags.clone(),
                     };
                 }
                 write_packet(&mut writer, seq.wrapping_add(1), &build_ok(0, 0)).await?;
@@ -242,7 +248,16 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
     let logical = strip_mysql_conditional_comment(sql);
     let sql_lower = logical.trim().to_lowercase();
 
-    // Fast-path: SET statements — acknowledge without dispatching.
+    // Fast-path: SET query_tags / SET SESSION query_tags — update session tags and ACK.
+    if let Some(new_tags) = try_parse_set_query_tags(logical) {
+        if let SessionContext::MySqlWire { tags, .. } = session {
+            *tags = new_tags;
+        }
+        write_packet(writer, start_seq, &build_ok(0, 0)).await?;
+        return Ok(());
+    }
+
+    // Fast-path: all other SET statements — acknowledge without dispatching.
     if sql_lower.starts_with("set ") || sql_lower.starts_with("set\t") {
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
         return Ok(());
@@ -251,13 +266,17 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
     // Fast-path: USE db sent as COM_QUERY text (mysql CLI does this).
     if let Some(db) = try_parse_use(&sql_lower) {
         if let SessionContext::MySqlWire {
-            user, session_vars, ..
+            user,
+            session_vars,
+            tags,
+            ..
         } = session
         {
             *session = SessionContext::MySqlWire {
                 schema: if db.is_empty() { None } else { Some(db) },
                 user: user.clone(),
                 session_vars: session_vars.clone(),
+                tags: tags.clone(),
             };
         }
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
@@ -844,6 +863,52 @@ fn strip_mysql_conditional_comment(sql: &str) -> &str {
         } else {
             // Unterminated comment — return as-is.
             return t;
+        }
+    }
+}
+
+/// Parse `SET query_tags = '...'` / `SET SESSION query_tags = '...'` (and `query_tag` spelling).
+/// Returns the parsed `QueryTags` on match, `None` otherwise.
+/// Case-insensitive; tolerant of extra whitespace and a trailing semicolon.
+fn try_parse_set_query_tags(sql: &str) -> Option<QueryTags> {
+    let s = sql.trim().trim_end_matches(';').trim();
+    // Must start with SET (case-insensitive).
+    let rest = s.strip_prefix_ci("SET")?;
+    let rest = rest.trim_start();
+    // Optionally skip SESSION keyword.
+    let rest = if rest.to_ascii_lowercase().starts_with("session") {
+        rest["SESSION".len()..].trim_start()
+    } else {
+        rest
+    };
+    // Match query_tags or query_tag key.
+    let rest = if rest.to_ascii_lowercase().starts_with("query_tags") {
+        &rest["query_tags".len()..]
+    } else if rest.to_ascii_lowercase().starts_with("query_tag") {
+        &rest["query_tag".len()..]
+    } else {
+        return None;
+    };
+    let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+    // Strip surrounding single or double quotes.
+    let value = rest
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .or_else(|| rest.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+        .unwrap_or(rest);
+    let (tags, _) = parse_query_tags(value);
+    Some(tags)
+}
+
+trait StripPrefixCi {
+    fn strip_prefix_ci(&self, prefix: &str) -> Option<&str>;
+}
+impl StripPrefixCi for str {
+    fn strip_prefix_ci(&self, prefix: &str) -> Option<&str> {
+        if self.len() >= prefix.len() && self[..prefix.len()].eq_ignore_ascii_case(prefix) {
+            Some(&self[prefix.len()..])
+        } else {
+            None
         }
     }
 }

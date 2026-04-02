@@ -46,6 +46,10 @@ pub struct QuerySummary {
     pub peak_memory_bytes: Option<i64>,
     pub spilled_bytes: Option<i64>,
     pub total_splits: Option<i32>,
+    /// Tags attached to the query at submit time. `null` for older rows without tags.
+    #[schema(value_type = Option<Object>)]
+    #[serde(default)]
+    pub query_tags: Option<serde_json::Value>,
 }
 
 /// Aggregated stats for the last hour, shown on the dashboard.

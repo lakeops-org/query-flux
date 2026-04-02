@@ -36,9 +36,8 @@ use queryflux_persistence::{
 use queryflux_routing::{
     chain::RouterChain,
     implementations::{
-        client_tags::ClientTagsRouter, compound::CompoundRouter, header::HeaderRouter,
-        protocol_based::ProtocolBasedRouter, python_script::PythonScriptRouter,
-        query_regex::QueryRegexRouter,
+        compound::CompoundRouter, header::HeaderRouter, protocol_based::ProtocolBasedRouter,
+        python_script::PythonScriptRouter, query_regex::QueryRegexRouter, tags::TagsRouter,
     },
     RouterTrait,
 };
@@ -83,8 +82,10 @@ async fn main() -> Result<()> {
     // When Postgres is configured we seed cluster/group config on first run and read
     // from the DB on subsequent starts, so persistence must be ready before the
     // two-pass cluster/adapter construction below.
-    let prometheus =
-        Arc::new(PrometheusMetrics::new().context("Failed to init Prometheus metrics")?);
+    let prometheus = Arc::new(
+        PrometheusMetrics::new_with_deny_list(config.queryflux.metrics.tags_deny_list.clone())
+            .context("Failed to init Prometheus metrics")?,
+    );
     let mut pg_store: Option<Arc<PostgresStore>> = None;
 
     let (persistence, metrics): (
@@ -418,12 +419,8 @@ async fn main() -> Result<()> {
                     .collect();
                 routers.push(Box::new(QueryRegexRouter::new(pairs)));
             }
-            RouterConfig::ClientTags { tag_to_group } => {
-                let mapping = tag_to_group
-                    .iter()
-                    .map(|(k, v)| (k.clone(), ClusterGroupName(v.clone())))
-                    .collect();
-                routers.push(Box::new(ClientTagsRouter::new(mapping)));
+            RouterConfig::Tags { rules } => {
+                routers.push(Box::new(TagsRouter::new(rules.clone())));
             }
             RouterConfig::PythonScript {
                 script,
@@ -566,6 +563,12 @@ async fn main() -> Result<()> {
     };
 
     // --- Wrap hot-reloadable fields in LiveConfig ---
+    let group_default_tags: HashMap<String, queryflux_core::tags::QueryTags> = config
+        .cluster_groups
+        .iter()
+        .filter(|(_, g)| !g.default_tags.is_empty())
+        .map(|(name, g)| (name.clone(), g.default_tags.clone()))
+        .collect();
     let live_config = LiveConfig {
         router_chain,
         cluster_manager,
@@ -575,6 +578,7 @@ async fn main() -> Result<()> {
         group_members,
         group_order,
         group_translation_scripts,
+        group_default_tags,
     };
     let adapter_reload_cache = Arc::new(tokio::sync::Mutex::new(AdapterReloadCache {
         adapters: live_config.adapters.clone(),
@@ -1012,6 +1016,7 @@ async fn build_live_config(
         cluster_state::ClusterState, simple::SimpleClusterGroupManager,
         strategy::strategy_from_config,
     };
+    use queryflux_core::tags::QueryTags;
 
     // Build adapters — reuse when serialized cluster config is unchanged.
     for (cluster_name_str, cluster_cfg) in clusters {
@@ -1204,13 +1209,9 @@ async fn build_live_config(
                     queryflux_routing::implementations::query_regex::QueryRegexRouter::new(pairs),
                 ));
             }
-            RouterConfig::ClientTags { tag_to_group } => {
-                let mapping = tag_to_group
-                    .iter()
-                    .map(|(k, v)| (k.clone(), ClusterGroupName(v.clone())))
-                    .collect();
+            RouterConfig::Tags { rules } => {
                 routers.push(Box::new(
-                    queryflux_routing::implementations::client_tags::ClientTagsRouter::new(mapping),
+                    queryflux_routing::implementations::tags::TagsRouter::new(rules.clone()),
                 ));
             }
             RouterConfig::PythonScript {
@@ -1252,6 +1253,12 @@ async fn build_live_config(
     }
     let router_chain = RouterChain::new(routers, fallback);
 
+    let group_default_tags: HashMap<String, QueryTags> = cluster_groups
+        .iter()
+        .filter(|(_, g)| !g.default_tags.is_empty())
+        .map(|(name, g)| (name.clone(), g.default_tags.clone()))
+        .collect();
+
     Ok(LiveConfig {
         router_chain,
         cluster_manager,
@@ -1261,6 +1268,7 @@ async fn build_live_config(
         group_members,
         group_order,
         group_translation_scripts,
+        group_default_tags,
     })
 }
 

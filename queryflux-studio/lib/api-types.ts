@@ -93,6 +93,8 @@ export interface QueryHistoryRecord {
   peak_memory_bytes: number | null;
   spilled_bytes: number | null;
   total_splits: number | null;
+  /** Tags attached at submit time. Key-only tags have null value. Null for older rows. */
+  query_tags: Record<string, string | null> | null;
 }
 
 export interface RoutingTrace {
@@ -310,6 +312,15 @@ export interface CompoundConditionEntry {
   regex?: string;
 }
 
+/** One rule in the new `tags` router: match ALL tags in the map → route to target_group. */
+export interface TagRoutingRule {
+  /** Tag key → value to match. A null value means key-only match (any value). */
+  tags: Record<string, string | null>;
+  target_group?: string;
+  targetGroup?: string;
+  targetGroupId?: number;
+}
+
 export interface RouterConfigEntry {
   type: string;
   // protocolBased — value may be group name (legacy) or numeric id
@@ -325,14 +336,16 @@ export interface RouterConfigEntry {
   // userGroup
   user_to_group?: Record<string, string | number>;
   userToGroupId?: Record<string, number>;
-  // queryRegex
-  rules?: Array<{
-    regex: string;
-    target_group?: string;
-    targetGroup?: string;
-    targetGroupId?: number;
-  }>;
-  // clientTags
+  // queryRegex: elements have `regex`. Tags router: elements have `tags` (RouterConfig::Tags).
+  rules?: Array<
+    | {
+        regex: string;
+        target_group?: string;
+        targetGroup?: string;
+        targetGroupId?: number;
+      }
+    | TagRoutingRule
+  >;
   tag_to_group?: Record<string, string | number>;
   tagToGroupId?: Record<string, number>;
   // pythonScript
@@ -344,6 +357,8 @@ export interface RouterConfigEntry {
   targetGroup?: string;
   target_group?: string;
   targetGroupId?: number;
+  /** @deprecated Prefer `rules`; still sent by some clients and accepted by the API. */
+  tag_rules?: TagRoutingRule[];
 }
 
 export interface UpsertSecurityConfig {

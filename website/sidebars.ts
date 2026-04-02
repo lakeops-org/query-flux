@@ -27,6 +27,7 @@ const sidebars: SidebarsConfig = {
         'architecture/system-map',
         'architecture/query-translation',
         'architecture/routing-and-clusters',
+        'architecture/query-tags',
         'architecture/observability',
         'architecture/adding-engine-support',
         'architecture/auth-authz-design',

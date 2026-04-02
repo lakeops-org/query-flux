@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::tags::{deserialize_config_tags, QueryTags};
+
 // ---------------------------------------------------------------------------
 // Cluster selection strategies
 // ---------------------------------------------------------------------------
@@ -255,6 +257,17 @@ pub enum OpenFgaCredentials {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MetricsConfig {
+    /// Tag keys that should NOT be emitted as Prometheus labels.
+    ///
+    /// By default all query tags are emitted as `queryflux_query_tags_total` labels.
+    /// Use this list to suppress high-cardinality tag keys (e.g. request IDs, timestamps).
+    #[serde(default)]
+    pub tags_deny_list: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryFluxConfig {
@@ -277,6 +290,8 @@ pub struct QueryFluxConfig {
     /// Omit or set to `null` to keep history indefinitely.
     #[serde(default)]
     pub query_history_retention_days: Option<u64>,
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 impl QueryFluxConfig {
@@ -459,6 +474,11 @@ pub struct ClusterGroupConfig {
     /// If both lists are empty/absent, all authenticated users are allowed.
     #[serde(default)]
     pub authorization: ClusterGroupAuthorizationConfig,
+    /// Default tags applied to every query routed to this group.
+    /// Merged with session-level tags at dispatch time; session tags win on the same key.
+    /// Example: `{ team: analytics, cost_center: "701" }`
+    #[serde(default, deserialize_with = "deserialize_config_tags")]
+    pub default_tags: QueryTags,
 }
 
 /// Simple allow-list authorization for a cluster group.
@@ -641,9 +661,13 @@ pub enum RouterConfig {
     QueryRegex {
         rules: Vec<QueryRegexRule>,
     },
+    /// Route by query tags. Rules are evaluated in order; first rule where all specified
+    /// tags match wins. Tag matching: key must be present; if config value is `Some(v)`,
+    /// session tag value must equal `v`; if config value is `None`, any value (or no value)
+    /// matches.
     #[serde(rename_all = "camelCase")]
-    ClientTags {
-        tag_to_group: HashMap<String, String>,
+    Tags {
+        rules: Vec<TagRoutingRule>,
     },
     #[serde(rename_all = "camelCase")]
     PythonScript {
@@ -663,6 +687,19 @@ pub enum RouterConfig {
 #[serde(rename_all = "camelCase")]
 pub struct QueryRegexRule {
     pub regex: String,
+    pub target_group: String,
+}
+
+/// A single rule in a [`RouterConfig::Tags`] router.
+///
+/// All entries in `tags` must match the query's effective tags (AND logic).
+/// `None` as a config value means "key must be present, any value accepted".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagRoutingRule {
+    /// Tags that must all match. Value `null`/absent means key-only match.
+    pub tags: HashMap<String, Option<String>>,
+    /// Cluster group to route to when this rule matches.
     pub target_group: String,
 }
 

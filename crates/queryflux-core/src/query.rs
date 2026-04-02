@@ -194,6 +194,10 @@ pub struct ExecutingQuery {
     pub trino_endpoint: String,
     pub creation_time: DateTime<Utc>,
     pub last_accessed: DateTime<Utc>,
+    /// Effective tags at submit time (group defaults merged with session tags).
+    /// Stored here because poll requests don't repeat the original client headers.
+    #[serde(default)]
+    pub query_tags: crate::tags::QueryTags,
 }
 
 // --- Query execution result model ---

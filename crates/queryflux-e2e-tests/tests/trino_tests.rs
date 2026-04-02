@@ -89,6 +89,39 @@ async fn trino_syntax_error_returns_error() {
     assert!(r.error.is_some(), "expected error for invalid SQL");
 }
 
+#[tokio::test]
+#[ignore = "requires Trino — run with: make test-e2e"]
+async fn trino_query_tags_are_recorded() {
+    require_group!(GROUP_TRINO);
+    harness().clear_records();
+
+    let sql = "SELECT 1 AS tagged_result";
+    let r = client()
+        .execute(
+            sql,
+            &[
+                ("x-qf-group", GROUP_TRINO),
+                ("x-trino-client-tags", "premium,batch"),
+                ("x-trino-session", "query_tag=team:eng"),
+            ],
+        )
+        .await
+        .expect("query");
+    assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
+
+    let record = harness()
+        .wait_for_record(|rec| rec.sql_preview.contains("SELECT 1 AS tagged_result"))
+        .await
+        .expect("query record with tags");
+
+    assert_eq!(record.query_tags.get("premium"), Some(&None));
+    assert_eq!(record.query_tags.get("batch"), Some(&None));
+    assert_eq!(
+        record.query_tags.get("team"),
+        Some(&Some("eng".to_string()))
+    );
+}
+
 // ---------------------------------------------------------------------------
 // TPC-H via Trino's built-in tpch connector
 // ---------------------------------------------------------------------------

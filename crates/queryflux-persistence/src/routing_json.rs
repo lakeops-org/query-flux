@@ -2,6 +2,8 @@
 //! [`queryflux_core::config::RouterConfig`] (group names, what the proxy loads at startup).
 //!
 //! Accepts both camelCase (serde-native) and snake_case (Studio `JSON.stringify`) keys on input.
+//! For `type: "tags"`, also accepts legacy `tag_rules` and per-rule `targetGroupId`, and emits
+//! canonical `{ "rules": [ { "tags", "targetGroup" } ] }` for storage.
 
 use queryflux_core::error::{QueryFluxError, Result};
 use serde_json::{json, Map, Value};
@@ -79,6 +81,21 @@ fn collect_group_names_from_router_json_inner(
         }
         "queryRegex" => {
             if let Some(arr) = v.get("rules").and_then(|x| x.as_array()) {
+                for r in arr {
+                    if let Some(s) =
+                        field(r, "targetGroup", "target_group").and_then(|x| x.as_str())
+                    {
+                        push_str_group(seen, s);
+                    }
+                }
+            }
+        }
+        "tags" => {
+            if let Some(arr) = v
+                .get("rules")
+                .or_else(|| v.get("tag_rules"))
+                .and_then(|x| x.as_array())
+            {
                 for r in arr {
                     if let Some(s) =
                         field(r, "targetGroup", "target_group").and_then(|x| x.as_str())
@@ -279,6 +296,32 @@ fn resolve_one_router_for_storage(v: &Value, id_to_name: &HashMap<i64, String>) 
                 "scriptFile": script_file,
             }))
         }
+        "tags" => {
+            let rules_src = v
+                .get("rules")
+                .or_else(|| v.get("tag_rules"))
+                .and_then(|x| x.as_array());
+            let Some(arr) = rules_src else {
+                return Ok(json!({ "type": "tags", "rules": [] }));
+            };
+            let rules: Result<Vec<Value>> = arr
+                .iter()
+                .map(|rule| {
+                    let tags = rule.get("tags").cloned().unwrap_or(json!({}));
+                    let tg = field(rule, "targetGroup", "target_group")
+                        .or_else(|| rule.get("targetGroupId"));
+                    let name = group_value_to_name(tg.unwrap_or(&Value::Null), id_to_name)?;
+                    Ok(json!({
+                        "tags": tags,
+                        "targetGroup": name,
+                    }))
+                })
+                .collect();
+            Ok(json!({
+                "type": "tags",
+                "rules": Value::Array(rules?),
+            }))
+        }
         _ => Ok(v.clone()),
     }
 }
@@ -378,6 +421,23 @@ fn enrich_one_router_for_api(v: &Value, name_to_id: &HashMap<String, i64>) -> Va
                 }
             }
         }
+        "tags" => {
+            if let Some(arr) = v.get("rules").and_then(|x| x.as_array()) {
+                let new_rules: Vec<Value> = arr
+                    .iter()
+                    .map(|rule| {
+                        let mut ro = rule.as_object().cloned().unwrap_or_default();
+                        if let Some(Value::String(s)) = field(rule, "targetGroup", "target_group") {
+                            if let Some(id) = name_to_id.get(s) {
+                                ro.insert("targetGroupId".to_string(), json!(id));
+                            }
+                        }
+                        Value::Object(ro)
+                    })
+                    .collect();
+                out.insert("rules".to_string(), Value::Array(new_rules));
+            }
+        }
         _ => {}
     }
 
@@ -414,5 +474,27 @@ mod tests {
         m.insert(7, "analytics".to_string());
         let out = resolve_one_router_for_storage(&v, &m).unwrap();
         assert_eq!(out["targetGroup"], json!("analytics"));
+    }
+
+    #[test]
+    fn resolve_tags_tag_rules_and_target_group_id() {
+        let v = json!({
+            "type": "tags",
+            "tag_rules": [
+                {
+                    "tags": { "team": "eng", "premium": null },
+                    "targetGroupId": 3
+                }
+            ]
+        });
+        let mut m = HashMap::new();
+        m.insert(3, "analytics".to_string());
+        let out = resolve_one_router_for_storage(&v, &m).unwrap();
+        assert_eq!(out["type"], json!("tags"));
+        let rules = out["rules"].as_array().unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["targetGroup"], json!("analytics"));
+        assert_eq!(rules[0]["tags"]["team"], json!("eng"));
+        assert_eq!(rules[0]["tags"]["premium"], json!(null));
     }
 }

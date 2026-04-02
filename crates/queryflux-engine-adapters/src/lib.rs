@@ -14,6 +14,7 @@ use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{BackendQueryId, EngineType, QueryExecution, QueryPollResult},
     session::SessionContext,
+    tags::QueryTags,
 };
 
 /// A stream of Arrow RecordBatches — the universal output type for all adapters.
@@ -40,6 +41,7 @@ pub trait EngineAdapterTrait: Send + Sync {
         sql: &str,
         session: &SessionContext,
         credentials: &QueryCredentials,
+        tags: &QueryTags,
     ) -> Result<QueryExecution>;
 
     /// Poll a previously submitted async query for its current state.
@@ -93,6 +95,7 @@ pub trait EngineAdapterTrait: Send + Sync {
         _sql: &str,
         _session: &SessionContext,
         _credentials: &QueryCredentials,
+        _tags: &QueryTags,
     ) -> Result<ArrowStream> {
         Err(QueryFluxError::Engine(format!(
             "Arrow execution not implemented for {:?} adapter",

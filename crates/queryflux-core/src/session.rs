@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::tags::QueryTags;
+
 /// Protocol-specific metadata that travels with a query from the frontend.
 ///
 /// Used by:
@@ -13,6 +15,8 @@ pub enum SessionContext {
     TrinoHttp {
         /// All HTTP headers from the client request (X-Trino-User, X-Trino-Source, etc.)
         headers: HashMap<String, String>,
+        /// Query tags extracted from X-Trino-Client-Tags and X-Trino-Session at request time.
+        tags: QueryTags,
     },
     PostgresWire {
         /// Database from the PG startup message.
@@ -21,6 +25,8 @@ pub enum SessionContext {
         user: Option<String>,
         /// Session parameters set via SET commands.
         session_params: HashMap<String, String>,
+        /// Query tags extracted from startup params (query_tags / query_tag key).
+        tags: QueryTags,
     },
     MySqlWire {
         /// Current schema (from USE statement or initial handshake).
@@ -29,20 +35,34 @@ pub enum SessionContext {
         user: Option<String>,
         /// Session variables set via SET SESSION.
         session_vars: HashMap<String, String>,
+        /// Query tags, updated when client issues SET SESSION query_tags / SET query_tags.
+        tags: QueryTags,
     },
     ClickHouseHttp {
         /// HTTP headers from the client request.
         headers: HashMap<String, String>,
         /// URL query parameters (?database=x&user=y).
         query_params: HashMap<String, String>,
+        /// Query tags extracted from X-QueryFlux-Tags header or query_tags param at request time.
+        tags: QueryTags,
     },
 }
 
 impl SessionContext {
+    /// Return the pre-extracted query tags for this session.
+    pub fn tags(&self) -> &QueryTags {
+        match self {
+            SessionContext::TrinoHttp { tags, .. } => tags,
+            SessionContext::PostgresWire { tags, .. } => tags,
+            SessionContext::MySqlWire { tags, .. } => tags,
+            SessionContext::ClickHouseHttp { tags, .. } => tags,
+        }
+    }
+
     /// Extract the user identity from any protocol variant.
     pub fn user(&self) -> Option<&str> {
         match self {
-            SessionContext::TrinoHttp { headers } => {
+            SessionContext::TrinoHttp { headers, .. } => {
                 headers.get("x-trino-user").map(|s| s.as_str())
             }
             SessionContext::PostgresWire { user, .. } => user.as_deref(),
@@ -56,7 +76,7 @@ impl SessionContext {
     /// Extract the target database/catalog hint from any protocol variant.
     pub fn database(&self) -> Option<&str> {
         match self {
-            SessionContext::TrinoHttp { headers } => {
+            SessionContext::TrinoHttp { headers, .. } => {
                 headers.get("x-trino-catalog").map(|s| s.as_str())
             }
             SessionContext::PostgresWire { database, .. } => database.as_deref(),
@@ -70,7 +90,7 @@ impl SessionContext {
     /// Extract the client source/application name (used for routing and metrics).
     pub fn client_source(&self) -> Option<&str> {
         match self {
-            SessionContext::TrinoHttp { headers } => {
+            SessionContext::TrinoHttp { headers, .. } => {
                 headers.get("x-trino-source").map(|s| s.as_str())
             }
             SessionContext::PostgresWire { session_params, .. } => {

@@ -16,6 +16,7 @@ use queryflux_core::{
         BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
     },
     session::SessionContext,
+    tags::QueryTags,
 };
 use reqwest::Client;
 use tracing::debug;
@@ -199,6 +200,7 @@ impl EngineAdapterTrait for DuckDbHttpAdapter {
         _sql: &str,
         _session: &SessionContext,
         _credentials: &QueryCredentials,
+        _tags: &QueryTags,
     ) -> Result<QueryExecution> {
         Err(QueryFluxError::Engine(
             "DuckDB HTTP requires execute_as_arrow; use the Arrow execution path".to_string(),
@@ -240,6 +242,7 @@ impl EngineAdapterTrait for DuckDbHttpAdapter {
         sql: &str,
         _session: &SessionContext,
         _credentials: &QueryCredentials,
+        _tags: &QueryTags,
     ) -> Result<ArrowStream> {
         debug!(cluster = %self.cluster_name, "Executing DuckDB HTTP query");
         let response = self.run_query(sql).await?;

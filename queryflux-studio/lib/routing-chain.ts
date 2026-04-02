@@ -6,13 +6,22 @@
 import type {
   CompoundConditionEntry,
   RouterConfigEntry,
+  TagRoutingRule,
 } from "@/lib/api-types";
 
 export type ChainItem =
   | { id: string; kind: "protocol"; protocol: string; targetGroupId: number | null }
   | { id: string; kind: "header"; headerName: string; headerValue: string; targetGroupId: number | null }
   | { id: string; kind: "user"; username: string; targetGroupId: number | null }
-  | { id: string; kind: "tag"; tag: string; targetGroupId: number | null }
+  | {
+      id: string;
+      kind: "tag";
+      /** Tag key to match. */
+      tagKey: string;
+      /** Tag value to match. Empty string = key-only (any value). */
+      tagValue: string;
+      targetGroupId: number | null;
+    }
   | { id: string; kind: "regex"; regex: string; targetGroupId: number | null }
   | {
       id: string;
@@ -99,7 +108,31 @@ export function routersToChainItems(
         }
         break;
       }
+      case "tags": {
+        // Canonical API shape: `rules` (serde RouterConfig::Tags). Legacy Studio used `tag_rules`.
+        // We expand each tag key in a rule into a separate UI row (one tag per row).
+        const tagRules = router.rules ?? router.tag_rules ?? [];
+        for (const rule of tagRules) {
+          if (!rule || typeof rule !== "object" || !("tags" in rule)) continue;
+          const tr = rule as TagRoutingRule;
+          const gid =
+            (typeof tr.targetGroupId === "number" ? tr.targetGroupId : undefined) ??
+            cellToGroupId(tr.targetGroup ?? tr.target_group, byName);
+          for (const [key, val] of Object.entries(tr.tags)) {
+            const tagValue = val === null || val === undefined ? "" : val;
+            out.push({
+              id: uid(),
+              kind: "tag",
+              tagKey: key,
+              tagValue,
+              targetGroupId: gid,
+            });
+          }
+        }
+        break;
+      }
       case "clientTags": {
+        // Legacy format: key-only tag → group. Read-only — we always save back as "tags".
         const idMap = router.tagToGroupId;
         const vals = router.tag_to_group ?? {};
         for (const [tag, group] of Object.entries(vals)) {
@@ -109,7 +142,8 @@ export function routersToChainItems(
           out.push({
             id: uid(),
             kind: "tag",
-            tag,
+            tagKey: tag,
+            tagValue: "",
             targetGroupId: gid,
           });
         }
@@ -117,6 +151,7 @@ export function routersToChainItems(
       }
       case "queryRegex": {
         for (const rule of router.rules ?? []) {
+          if (!rule || typeof rule !== "object" || !("regex" in rule)) continue;
           const tgName = rule.targetGroup ?? rule.target_group;
           const gid =
             (typeof rule.targetGroupId === "number" ? rule.targetGroupId : undefined) ??
@@ -214,10 +249,13 @@ export function chainItemsToRouters(items: ChainItem[]): RouterConfigEntry[] {
       }
       case "tag": {
         if (item.targetGroupId == null) continue;
+        const tagRule: TagRoutingRule = {
+          tags: { [item.tagKey]: item.tagValue === "" ? null : item.tagValue },
+          targetGroupId: item.targetGroupId,
+        };
         result.push({
-          type: "clientTags",
-          tag_to_group: { [item.tag]: item.targetGroupId },
-          tagToGroupId: { [item.tag]: item.targetGroupId },
+          type: "tags",
+          rules: [tagRule],
         });
         break;
       }

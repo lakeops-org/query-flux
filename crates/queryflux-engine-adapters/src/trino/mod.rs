@@ -20,6 +20,7 @@ use queryflux_core::{
         QueryExecution, QueryPollResult,
     },
     session::SessionContext,
+    tags::QueryTags,
 };
 use reqwest::{Client, StatusCode};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -111,18 +112,78 @@ impl TrinoAdapter {
         format!("{}{}", self.endpoint.trim_end_matches('/'), path)
     }
 
-    /// Forward X-Trino-* headers from a SessionContext to a reqwest request.
+    /// Forward X-Trino-* headers from a SessionContext to a reqwest request,
+    /// then overlay effective query tags.
+    ///
+    /// Tag forwarding:
+    /// - All effective tags are encoded into the `X-Trino-Client-Tags` header
+    ///   (key-only tags as bare keys, key/value tags as `key=value` pairs).
+    ///
+    /// Effective tags always win: they overwrite any client-supplied tag headers so
+    /// that group default_tags are always reflected in the backend's query metadata.
     fn apply_session_headers(
         &self,
         mut builder: reqwest::RequestBuilder,
         session: &SessionContext,
+        tags: &QueryTags,
     ) -> reqwest::RequestBuilder {
-        if let SessionContext::TrinoHttp { headers } = session {
+        if let SessionContext::TrinoHttp { headers, .. } = session {
             for (k, v) in headers {
-                if k.to_lowercase().starts_with("x-trino-") || k.to_lowercase() == "authorization" {
+                let k_lower = k.to_lowercase();
+                // X-Trino-Client-Tags and X-Trino-Session are rebuilt below so that
+                // effective_tags always win. All other X-Trino-* headers pass through.
+                if k_lower == "x-trino-client-tags" || k_lower == "x-trino-session" {
+                    continue;
+                }
+                if k_lower.starts_with("x-trino-") || k_lower == "authorization" {
                     builder = builder.header(k, v);
                 }
             }
+        }
+
+        // Rebuild X-Trino-Session: keep all non-tag properties from the client, then
+        // the effective tags own X-Trino-Client-Tags (overwriting whatever the client sent).
+        //
+        // X-Trino-Session is a comma-separated list of `name=value` pairs where values
+        // may be percent-encoded. We filter out `query_tag` and `query_tags` keys so
+        // unrelated session properties (join_distribution_type, query_max_run_time, …)
+        // are always preserved.
+        if let SessionContext::TrinoHttp { headers, .. } = session {
+            if let Some(session_props) = headers.get("x-trino-session") {
+                let retained: Vec<&str> = session_props
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|prop| {
+                        let key = prop.split('=').next().unwrap_or("").trim();
+                        key != "query_tag" && key != "query_tags"
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !retained.is_empty() {
+                    builder = builder.header("X-Trino-Session", retained.join(","));
+                }
+            }
+        }
+
+        // All effective tags → X-Trino-Client-Tags.
+        // Key-only tags: "batch" → "batch"
+        // Key-value tags: "team" => Some("eng") → "team:eng"
+        if tags.is_empty() {
+            // No effective tags — forward the original client-tags header unchanged.
+            if let SessionContext::TrinoHttp { headers, .. } = session {
+                if let Some(v) = headers.get("x-trino-client-tags") {
+                    builder = builder.header("X-Trino-Client-Tags", v);
+                }
+            }
+        } else {
+            let client_tags: Vec<String> = tags
+                .iter()
+                .map(|(k, v)| match v {
+                    None => k.clone(),
+                    Some(val) => format!("{k}:{val}"),
+                })
+                .collect();
+            builder = builder.header("X-Trino-Client-Tags", client_tags.join(","));
         }
         builder
     }
@@ -135,13 +196,14 @@ impl EngineAdapterTrait for TrinoAdapter {
         sql: &str,
         session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
+        tags: &QueryTags,
     ) -> Result<QueryExecution> {
         let url = self.trino_url("/v1/statement");
         debug!(cluster = %self.cluster_name, url = %url, "Submitting query to Trino");
 
         let mut req = self.http_client.post(&url).body(sql.to_string());
         req = self.apply_cluster_auth(req);
-        req = self.apply_session_headers(req, session);
+        req = self.apply_session_headers(req, session, tags);
 
         let resp = req
             .send()
@@ -288,6 +350,7 @@ impl EngineAdapterTrait for TrinoAdapter {
         sql: &str,
         session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
+        tags: &QueryTags,
     ) -> Result<crate::ArrowStream> {
         // Submit query — get initial body + first next_uri.
         let execution = self
@@ -295,6 +358,7 @@ impl EngineAdapterTrait for TrinoAdapter {
                 sql,
                 session,
                 &queryflux_auth::QueryCredentials::ServiceAccount,
+                tags,
             )
             .await?;
         let QueryExecution::Async {
@@ -442,12 +506,14 @@ impl EngineAdapterTrait for TrinoAdapter {
                 "x-trino-user".to_string(),
                 "queryflux-catalog-discovery".to_string(),
             )]),
+            tags: QueryTags::new(),
         };
         let execution = self
             .submit_query(
                 &sql,
                 &session,
                 &queryflux_auth::QueryCredentials::ServiceAccount,
+                &QueryTags::new(),
             )
             .await?;
         if let QueryExecution::Async {
@@ -471,12 +537,14 @@ impl TrinoAdapter {
                 "x-trino-user".to_string(),
                 "queryflux-catalog-discovery".to_string(),
             )]),
+            tags: QueryTags::new(),
         };
         let execution = self
             .submit_query(
                 sql,
                 &session,
                 &queryflux_auth::QueryCredentials::ServiceAccount,
+                &QueryTags::new(),
             )
             .await?;
         if let QueryExecution::Async {

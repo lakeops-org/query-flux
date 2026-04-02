@@ -13,6 +13,7 @@ use queryflux_core::{
         BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
     },
     session::SessionContext,
+    tags::QueryTags,
 };
 use tracing::debug;
 
@@ -127,6 +128,7 @@ impl EngineAdapterTrait for DuckDbAdapter {
         _sql: &str,
         _session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
+        _tags: &QueryTags,
     ) -> Result<QueryExecution> {
         Err(QueryFluxError::Engine(
             "DuckDB requires execute_as_arrow; use the Arrow execution path".to_string(),
@@ -170,6 +172,7 @@ impl EngineAdapterTrait for DuckDbAdapter {
         sql: &str,
         _session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
+        _tags: &QueryTags,
     ) -> Result<crate::ArrowStream> {
         debug!(cluster = %self.cluster_name, "Executing DuckDB query as Arrow");
         let conn = Arc::clone(&self.conn);

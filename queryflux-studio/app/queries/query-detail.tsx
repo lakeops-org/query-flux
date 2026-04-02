@@ -1,6 +1,6 @@
 "use client";
 
-import { X, Clock, Server, User, Rows3, Hash, ArrowRight, Fingerprint, Cpu, Database, MemoryStick, HardDrive } from "lucide-react";
+import { X, Clock, Server, User, Rows3, Hash, ArrowRight, Fingerprint, Cpu, Database, MemoryStick, HardDrive, Tag } from "lucide-react";
 import type { QueryHistoryRecord, RoutingTrace } from "@/lib/api-types";
 import { StatusBadge, EngineBadge, formatDuration, formatDateTime } from "@/components/ui-helpers";
 
@@ -54,6 +54,24 @@ export function QueryDetail({
           </div>
 
           <div className="px-6 py-5 space-y-6">
+            {/* Tags */}
+            {query.query_tags && Object.keys(query.query_tags).length > 0 && (
+              <div>
+                <SectionLabel>Tags</SectionLabel>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(query.query_tags).map(([key, val]) => (
+                    <span
+                      key={key}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 text-xs font-medium"
+                    >
+                      <Tag size={9} className="flex-shrink-0" />
+                      {val != null ? `${key}: ${val}` : key}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* SQL */}
             <div>
               <SectionLabel>SQL</SectionLabel>
