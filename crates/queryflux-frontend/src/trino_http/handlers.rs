@@ -204,6 +204,22 @@ fn extract_session(headers: &HeaderMap) -> SessionContext {
     SessionContext::TrinoHttp { headers: h, tags }
 }
 
+/// Percent-encode a session property value for [`set_session_response`] (`X-Trino-Set-Session`),
+/// matching Trino's Java client (`URLEncoder.encode` / `URLDecoder.decode` in `StatementClientV1`).
+/// Commas and other delimiters in the value must not appear raw, because `X-Trino-Session` uses
+/// comma-separated `name=value` pairs on subsequent requests.
+fn encode_trino_session_property_value(value: &str) -> String {
+    urlencoding::encode(value).into_owned()
+}
+
+/// Decode a `query_tags` / `query_tag` value from `X-Trino-Session` (best-effort; invalid escapes
+/// fall back to the raw substring so older unencoded clients keep working).
+fn decode_trino_session_property_value(raw: &str) -> String {
+    urlencoding::decode(raw)
+        .map(|cow| cow.into_owned())
+        .unwrap_or_else(|_| raw.to_string())
+}
+
 fn extract_trino_tags(headers: &std::collections::HashMap<String, String>) -> QueryTags {
     let mut tags = QueryTags::new();
     // X-Trino-Client-Tags: comma-separated key-only strings.
@@ -212,14 +228,23 @@ fn extract_trino_tags(headers: &std::collections::HashMap<String, String>) -> Qu
             tags.insert(tag.to_string(), None);
         }
     }
-    // X-Trino-Session may contain `query_tags=<value>` or `query_tag=<value>`.
+    // X-Trino-Session: comma-separated `name=value` pairs (Trino client protocol). Values are
+    // percent-encoded when they contain commas; split on commas only separates properties, not
+    // characters inside an encoded value.
     if let Some(session_props) = headers.get("x-trino-session") {
-        for prop in session_props.split(',').map(str::trim) {
-            let val = prop
-                .strip_prefix("query_tags=")
-                .or_else(|| prop.strip_prefix("query_tag="));
-            if let Some(val) = val {
-                let (parsed, _) = parse_query_tags(val);
+        for prop in session_props
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            let Some(eq) = prop.find('=') else {
+                continue;
+            };
+            let (key, raw_val) = prop.split_at(eq);
+            let raw_val = &raw_val[1..];
+            if key.eq_ignore_ascii_case("query_tags") || key.eq_ignore_ascii_case("query_tag") {
+                let val = decode_trino_session_property_value(raw_val);
+                let (parsed, _) = parse_query_tags(&val);
                 tags.extend(parsed);
                 break;
             }
@@ -319,7 +344,14 @@ fn set_session_response(query_id: &str, prop_key: &str, prop_val: &str) -> Respo
     Response::builder()
         .status(axum::http::StatusCode::OK)
         .header("content-type", "application/json")
-        .header("X-Trino-Set-Session", format!("{prop_key}={prop_val}"))
+        .header(
+            "X-Trino-Set-Session",
+            format!(
+                "{}={}",
+                prop_key,
+                encode_trino_session_property_value(prop_val)
+            ),
+        )
         .body(Body::from(json))
         .unwrap()
 }
@@ -875,4 +907,47 @@ pub async fn delete_executing_statement(
     }
 
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[cfg(test)]
+mod trino_session_property_encoding_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn encode_decode_roundtrip_commas_and_colons() {
+        let raw = "team:eng,cost_center:701";
+        let enc = encode_trino_session_property_value(raw);
+        assert!(
+            enc.contains("%2C") || enc.contains("%2c"),
+            "comma should be percent-encoded, got {enc:?}"
+        );
+        assert_eq!(decode_trino_session_property_value(&enc), raw);
+    }
+
+    #[test]
+    fn extract_trino_tags_decodes_query_tags_session_value() {
+        let mut h = HashMap::new();
+        h.insert(
+            "x-trino-session".to_string(),
+            format!(
+                "query_tags={}",
+                encode_trino_session_property_value("team:eng,cost_center:701")
+            ),
+        );
+        let tags = extract_trino_tags(&h);
+        assert_eq!(tags.get("team"), Some(&Some("eng".to_string())));
+        assert_eq!(tags.get("cost_center"), Some(&Some("701".to_string())));
+    }
+
+    #[test]
+    fn extract_trino_tags_plain_ascii_still_works() {
+        let mut h = HashMap::new();
+        h.insert(
+            "x-trino-session".to_string(),
+            "query_tag=team:eng".to_string(),
+        );
+        let tags = extract_trino_tags(&h);
+        assert_eq!(tags.get("team"), Some(&Some("eng".to_string())));
+    }
 }

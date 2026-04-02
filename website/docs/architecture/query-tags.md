@@ -40,11 +40,13 @@ Use the standard `X-Trino-Client-Tags` header. Each comma-separated element is t
 X-Trino-Client-Tags: batch,premium
 ```
 
-For key-value tags, include them in the `X-Trino-Session` header as the `query_tag` or `query_tags` property (k:v or JSON format):
+For key-value tags, include them in the `X-Trino-Session` header as the `query_tag` or `query_tags` property (k:v or JSON format). Trino’s HTTP client treats the header as **comma-separated** `name=value` session properties and uses **percent-encoding** for values (same rules as `application/x-www-form-urlencoded`), so a **single** `query_tags` value that itself contains commas must be encoded — otherwise the comma would start a new property. Example for one property whose value is the k:v list `team:eng,cost_center:701`:
 
 ```http
-X-Trino-Session: query_tag=team:eng,cost_center:701
+X-Trino-Session: query_tags=team%3Aeng%2Ccost_center%3A701
 ```
+
+QueryFlux decodes that value when reading the header, and when you use `SET SESSION` below it emits `X-Trino-Set-Session` with the same encoding so the CLI round-trips safely.
 
 Or from the Trino CLI / JDBC, issue a `SET SESSION` statement before your query. QueryFlux intercepts it locally and echoes the property back via `X-Trino-Set-Session` so the client carries it in subsequent requests:
 

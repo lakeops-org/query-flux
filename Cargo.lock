@@ -3585,6 +3585,7 @@ dependencies = [
  "tonic",
  "tower-http",
  "tracing",
+ "urlencoding",
  "utoipa",
 ]
 
