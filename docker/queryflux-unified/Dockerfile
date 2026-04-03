@@ -62,6 +62,7 @@ RUN /usr/local/bin/python3 -m venv /opt/venv && \
 ENV PYO3_PYTHON=/opt/venv/bin/python3
 ENV PYTHONPATH=/opt/venv/site-packages
 ENV DUCKDB_DOWNLOAD_LIB=1
+ENV DUCKDB_STATIC=1
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:/usr/lib/arm-linux-gnueabihf:/usr/lib/i386-linux-gnu
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./

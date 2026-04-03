@@ -5,11 +5,11 @@ COMPOSE_TEST := docker compose -f docker/test/docker-compose.test.yml --project-
 # site-packages for `.venv` (any Python 3.x); expanded when recipes run after `make setup`.
 PYTHONPATH_VENV = $(shell .venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')
 
-# DuckDB: on Linux, download the prebuilt lib (see libduckdb-sys). On macOS, use
-# `brew install duckdb` (see `.cargo/config.toml` linker paths) or set `DUCKDB_DOWNLOAD_LIB=1`
-# yourself to fetch the official osx-universal dylib instead.
+# DuckDB: on Linux, download prebuilt libs and link statically so rust-lld can resolve the crate
+# (dylib -lduckdb often fails with lld). On macOS use `brew install duckdb` or DUCKDB_DOWNLOAD_LIB=1.
 ifeq ($(shell uname -s),Linux)
 export DUCKDB_DOWNLOAD_LIB := 1
+export DUCKDB_STATIC := 1
 endif
 
 # Trino `tpch` schema used when loading Iceberg tables (see docker/fixtures/init.sql + data-loader).

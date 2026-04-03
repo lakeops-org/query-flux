@@ -1,0 +1,11 @@
+# macOS: prefer `brew install duckdb` (ships libduckdb + pkg-config). Linker search paths
+# below match default Homebrew prefixes. Without brew, run `export DUCKDB_DOWNLOAD_LIB=1`
+# so libduckdb-sys downloads the official osx-universal dylib.
+#
+# Linux: do not set global rustflags here; `Makefile` / CI set `DUCKDB_DOWNLOAD_LIB=1`.
+
+[target.aarch64-apple-darwin]
+rustflags = ["-L", "/opt/homebrew/lib"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-L", "/usr/local/lib"]

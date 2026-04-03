@@ -22,10 +22,10 @@ env:
   RUST_TOOLCHAIN_VERSION: "1.91.1"
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # DuckDB Rust crate: download prebuilt libduckdb in CI (no system libduckdb).
+  # DuckDB: download prebuilt libs; static link avoids rust-lld "unable to find library -lduckdb"
+  # (dylib + rustc-link-search is mishandled; same class of issue as mold).
   DUCKDB_DOWNLOAD_LIB: "1"
-  # Do not set RUSTFLAGS to -fuse-ld=mold: mold then fails to resolve -lduckdb from
-  # libduckdb-sys's rustc-link-search (see mold: fatal: library not found: duckdb).
+  DUCKDB_STATIC: "1"
 
 jobs:
   # Fast, no PyO3 / no compile — runs in parallel with clippy + unit tests.
@@ -55,6 +55,7 @@ jobs:
         with:
           shared-key: queryflux
           cache-on-failure: true
+          env-vars: DUCKDB_STATIC
 
       - uses: actions/setup-python@v5
         with:
@@ -84,6 +85,7 @@ jobs:
         with:
           shared-key: queryflux
           cache-on-failure: true
+          env-vars: DUCKDB_STATIC
 
       - uses: actions/setup-python@v5
         with:
@@ -127,6 +129,7 @@ jobs:
          with:
            shared-key: queryflux
            cache-on-failure: true
+           env-vars: DUCKDB_STATIC
 
        - uses: actions/setup-python@v5
          with:
