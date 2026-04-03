@@ -18,7 +18,7 @@ queryflux:
       port: 8445
 ```
 
-Config key: `snowflakeHttp`. Protocol identifiers: `FrontendProtocol::SnowflakeHttp` (wire) and `FrontendProtocol::SnowflakeSqlApi` (SQL API). Default dialect: `SqlDialect::Generic` (both).
+Config key: `snowflakeHttp`. Protocol identifiers: `FrontendProtocol::SnowflakeHttp` (wire) and `FrontendProtocol::SnowflakeSqlApi` (SQL API). Default dialect: `SqlDialect::Snowflake` (both).
 
 The `snowflakeHttp` frontend starts a single HTTP listener that serves **both** wire and SQL API routes. There is no separate port for `snowflakeSqlApi` — both protocol surfaces are merged onto the same listener.
 
@@ -182,7 +182,7 @@ curl -X POST http://localhost:8445/api/v2/statements \
 
 ## Dialect and translation
 
-Both Snowflake protocol flavors map to `SqlDialect::Generic` as their default source dialect. When routing lands on a Trino cluster, for example, sqlglot translates the SQL from the generic dialect to Trino. If the target engine's dialect matches, translation is skipped.
+Both Snowflake protocol flavors map to `SqlDialect::Snowflake` as their default source dialect. When routing lands on a Trino cluster, for example, sqlglot translates the SQL from the Snowflake dialect to Trino. If the target engine's dialect matches, translation is skipped.
 
 ## Related
 

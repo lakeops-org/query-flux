@@ -15,7 +15,7 @@ A **frontend** is the entry point for client traffic into QueryFlux. Each fronte
 | [PostgreSQL wire](postgres-wire.md) | `postgresWire` | 5432 | PostgreSQL v3 wire | Postgres | **Done** |
 | [MySQL wire](mysql-wire.md) | `mysqlWire` | 3306 | MySQL wire | MySQL | **Done** |
 | [Arrow Flight SQL](flight-sql.md) | `flightSql` | 50051 | gRPC (Arrow Flight) | Generic | **Done** |
-| [Snowflake](snowflake.md) | `snowflakeHttp` | 8445 | HTTP REST (JSON) | Generic | **Done** |
+| [Snowflake](snowflake.md) | `snowflakeHttp` | 8445 | HTTP REST (JSON) | Snowflake | **Done** |
 | ClickHouse HTTP | `clickhouseHttp` | 8123 | HTTP | ClickHouse | Planned |
 
 ## Shared architecture
