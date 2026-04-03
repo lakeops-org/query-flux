@@ -319,10 +319,7 @@ async fn finalize_trino_async_terminal_on_submit(
     let src_dialect = protocol.default_dialect();
     let ctx = QueryContext {
         query_id: &executing.id,
-        sql: executing
-            .translated_sql
-            .as_deref()
-            .unwrap_or(&executing.sql),
+        sql: &executing.sql,
         session,
         protocol,
         group: &executing.cluster_group,
@@ -334,7 +331,7 @@ async fn finalize_trino_async_terminal_on_submit(
         tgt_dialect: adapter.engine_type().dialect(),
         was_translated,
         translated_sql: if was_translated {
-            Some(executing.sql.clone())
+            executing.translated_sql.clone()
         } else {
             None
         },

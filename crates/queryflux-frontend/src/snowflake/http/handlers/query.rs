@@ -124,11 +124,12 @@ pub async fn query_request(
         .unwrap_or_default();
 
     // Clone fields out of the session (must not hold DashMap ref across await).
-    let (auth_ctx, group, database, schema) = {
+    let (auth_ctx, group, user, database, schema) = {
         match state.snowflake_sessions.get(&qf_token) {
             Some(s) => (
                 s.auth_ctx.clone(),
                 s.group.clone(),
+                s.user.clone(),
                 s.database.clone().unwrap_or_default(),
                 s.schema.clone().unwrap_or_default(),
             ),
@@ -137,10 +138,7 @@ pub async fn query_request(
     };
 
     let session_ctx = SessionContext::MySqlWire {
-        user: state
-            .snowflake_sessions
-            .get(&qf_token)
-            .and_then(|s| s.user.clone()),
+        user,
         schema: Some(database.clone()),
         session_vars: HashMap::new(),
         tags: QueryTags::default(),

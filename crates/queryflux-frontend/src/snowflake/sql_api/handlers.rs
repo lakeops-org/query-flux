@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::Array;
+use arrow::array::{Array, StringArray};
 use arrow::compute::cast as arrow_cast;
 use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;
@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::dispatch::{execute_to_sink, ResultSink};
 use crate::snowflake::http::format::schema_to_rowtype;
-use crate::snowflake::http::handlers::common::{parse_snowflake_json_body, sf_error};
+use crate::snowflake::http::handlers::common::parse_snowflake_json_body;
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -54,9 +54,14 @@ impl ResultSink for SqlApiSink {
     }
 
     async fn on_batch(&mut self, batch: &RecordBatch) -> Result<()> {
+        let cast_columns: Vec<CastColumn> = (0..batch.num_columns())
+            .map(|col_idx| CastColumn::new(batch.column(col_idx)))
+            .collect();
+
         for row_idx in 0..batch.num_rows() {
-            let row: Vec<Value> = (0..batch.num_columns())
-                .map(|col_idx| array_value_to_json(batch.column(col_idx).as_ref(), row_idx))
+            let row: Vec<Value> = cast_columns
+                .iter()
+                .map(|col| col.value_at(row_idx))
                 .collect();
             self.rows.push(row);
         }
@@ -112,23 +117,52 @@ impl SqlApiSink {
     }
 }
 
-/// Serialize a single array value at `row` to a SQL API v2 JSON value (string or null).
-fn array_value_to_json(arr: &dyn Array, row: usize) -> Value {
-    if arr.is_null(row) {
-        return Value::Null;
-    }
-    // Cast to Utf8 for uniform string serialization.
-    let string_arr = arrow_cast(arr, &DataType::Utf8);
-    match string_arr {
-        Ok(s) => {
-            if let Some(str_arr) = s.as_any().downcast_ref::<arrow::array::StringArray>() {
-                Value::String(str_arr.value(row).to_string())
-            } else {
-                Value::Null
-            }
+/// A column pre-cast to Utf8 so the conversion happens once per batch, not once per cell.
+enum CastColumn {
+    Strings(Arc<dyn Array>),
+    Unsupported(DataType),
+}
+
+impl CastColumn {
+    fn new(arr: &Arc<dyn Array>) -> Self {
+        if *arr.data_type() == DataType::Utf8 {
+            return Self::Strings(Arc::clone(arr));
         }
-        Err(_) => Value::String(format!("{:?}", arr.data_type())),
+        match arrow_cast(arr, &DataType::Utf8) {
+            Ok(casted) => Self::Strings(casted),
+            Err(_) => Self::Unsupported(arr.data_type().clone()),
+        }
     }
+
+    fn value_at(&self, row: usize) -> Value {
+        match self {
+            Self::Strings(arr) => {
+                if arr.is_null(row) {
+                    return Value::Null;
+                }
+                let str_arr = arr.as_any().downcast_ref::<StringArray>().unwrap();
+                Value::String(str_arr.value(row).to_string())
+            }
+            Self::Unsupported(dt) => Value::String(format!("{dt:?}")),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SQL API v2 error helper — preserves the real HTTP status code
+// ---------------------------------------------------------------------------
+
+fn sql_api_error(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        axum::Json(json!({
+            "code": code,
+            "message": message,
+            "sqlState": "P0001",
+            "statementHandle": ""
+        })),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -143,14 +177,14 @@ pub async fn submit_statement(
 ) -> Response {
     let body_json: Value = match parse_snowflake_json_body(&headers, &body) {
         Ok(v) => v,
-        Err(_) => return sf_error(StatusCode::BAD_REQUEST, 390000, "Invalid JSON body"),
+        Err(_) => return sql_api_error(StatusCode::BAD_REQUEST, "390000", "Invalid JSON body"),
     };
     let sql = body_json["statement"].as_str().unwrap_or("").to_string();
 
     // Stateless auth: Bearer token in Authorization header.
     let auth_ctx = match authenticate(&state, &headers).await {
         Ok(ctx) => ctx,
-        Err(e) => return sf_error(StatusCode::UNAUTHORIZED, 390002, &e.to_string()),
+        Err(e) => return sql_api_error(StatusCode::UNAUTHORIZED, "390002", &e.to_string()),
     };
 
     let session_ctx = SessionContext::MySqlWire {
@@ -172,7 +206,7 @@ pub async fn submit_statement(
     };
     let group = match group {
         Ok(g) => g,
-        Err(e) => return sf_error(StatusCode::BAD_GATEWAY, 390000, &e.to_string()),
+        Err(e) => return sql_api_error(StatusCode::BAD_GATEWAY, "390000", &e.to_string()),
     };
 
     let handle = Uuid::new_v4().to_string();
