@@ -22,10 +22,12 @@ env:
   RUST_TOOLCHAIN_VERSION: "1.91.1"
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # DuckDB: download prebuilt libs; static link avoids rust-lld "unable to find library -lduckdb"
-  # (dylib + rustc-link-search is mishandled; same class of issue as mold).
-  DUCKDB_DOWNLOAD_LIB: "1"
-  DUCKDB_STATIC: "1"
+  # libduckdb-sys: point at system-installed lib so rust-lld resolves -lduckdb reliably.
+  # The "Install libduckdb" step in each job puts the .so + headers there.
+  DUCKDB_LIB_DIR: /usr/local/lib
+  DUCKDB_INCLUDE_DIR: /usr/local/include
+  # Must match duckdb crate version: duckdb 1.85.1 → libduckdb-sys 1.10501.0 → DuckDB v1.5.1.
+  DUCKDB_VERSION: "1.5.1"
 
 jobs:
   # Fast, no PyO3 / no compile — runs in parallel with clippy + unit tests.
@@ -46,6 +48,15 @@ jobs:
     steps:
       - uses: actions/checkout@44c2b7a8a4ea60a981eaca3cf939b5f4305c123b # v4.1.5
 
+      - name: Install libduckdb
+        run: |
+          curl -fsSL "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/libduckdb-linux-amd64.zip" -o /tmp/duckdb.zip
+          unzip -o /tmp/duckdb.zip -d /tmp/duckdb
+          sudo cp /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo cp /tmp/duckdb/duckdb.h /usr/local/include/
+          sudo cp /tmp/duckdb/duckdb.hpp /usr/local/include/ 2>/dev/null || true
+          sudo ldconfig
+
       - uses: dtolnay/rust-toolchain@d8352f6b1d2e870bc5716e7a6d9b65c4cc244a1a
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
@@ -55,7 +66,6 @@ jobs:
         with:
           shared-key: queryflux
           cache-on-failure: true
-          env-vars: DUCKDB_STATIC
 
       - uses: actions/setup-python@v5
         with:
@@ -77,6 +87,15 @@ jobs:
     steps:
       - uses: actions/checkout@44c2b7a8a4ea60a981eaca3cf939b5f4305c123b # v4.1.5
 
+      - name: Install libduckdb
+        run: |
+          curl -fsSL "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/libduckdb-linux-amd64.zip" -o /tmp/duckdb.zip
+          unzip -o /tmp/duckdb.zip -d /tmp/duckdb
+          sudo cp /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo cp /tmp/duckdb/duckdb.h /usr/local/include/
+          sudo cp /tmp/duckdb/duckdb.hpp /usr/local/include/ 2>/dev/null || true
+          sudo ldconfig
+
       - uses: dtolnay/rust-toolchain@d8352f6b1d2e870bc5716e7a6d9b65c4cc244a1a
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
@@ -85,7 +104,6 @@ jobs:
         with:
           shared-key: queryflux
           cache-on-failure: true
-          env-vars: DUCKDB_STATIC
 
       - uses: actions/setup-python@v5
         with:
@@ -121,6 +139,15 @@ jobs:
            large-packages: true
            swap-storage: true
 
+       - name: Install libduckdb
+         run: |
+           curl -fsSL "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/libduckdb-linux-amd64.zip" -o /tmp/duckdb.zip
+           unzip -o /tmp/duckdb.zip -d /tmp/duckdb
+           sudo cp /tmp/duckdb/libduckdb.so /usr/local/lib/
+           sudo cp /tmp/duckdb/duckdb.h /usr/local/include/
+           sudo cp /tmp/duckdb/duckdb.hpp /usr/local/include/ 2>/dev/null || true
+           sudo ldconfig
+
        - uses: dtolnay/rust-toolchain@d8352f6b1d2e870bc5716e7a6d9b65c4cc244a1a
          with:
            toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
@@ -129,7 +156,6 @@ jobs:
          with:
            shared-key: queryflux
            cache-on-failure: true
-           env-vars: DUCKDB_STATIC
 
        - uses: actions/setup-python@v5
          with:

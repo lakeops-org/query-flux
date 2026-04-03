@@ -80,7 +80,6 @@ ENV PYO3_PYTHON=/opt/venv/bin/python3
 ENV PYTHONPATH=/opt/venv/site-packages
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 ENV DUCKDB_DOWNLOAD_LIB=1
-ENV DUCKDB_STATIC=1
 ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
