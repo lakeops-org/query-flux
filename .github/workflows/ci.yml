@@ -144,12 +144,6 @@ jobs:
        - name: Start e2e Docker stack
          run: docker compose -f docker/docker-compose.test.yml --project-directory . up -d --wait trino starrocks sentinel
 
-       - name: Engine logs (debug on failure)
-         if: failure()
-         run: |
-           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 trino || true
-           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 starrocks || true
-
        - name: E2E tests
          run: |
            TRINO_URL=http://localhost:18081 \
@@ -158,6 +152,12 @@ jobs:
            MINIO_ENDPOINT=localhost:19000 \
            DUCKDB_DOWNLOAD_LIB=1 \
            cargo test -p queryflux-e2e-tests -- --test-threads=1 --include-ignored
+
+       - name: Engine logs (debug on failure)
+         if: failure()
+         run: |
+           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 trino || true
+           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 starrocks || true
 
        - name: Stop e2e Docker stack
          if: always()

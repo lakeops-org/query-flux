@@ -2,7 +2,7 @@
 ///
 /// Backends are optional and discovered via connectivity / env:
 ///   TRINO_URL         — default http://localhost:18081
-///   STARROCKS_URL     — default mysql://root@localhost:19030
+///   STARROCKS_URL     — default mysql://root@localhost:9030 (matches docker-compose.test.yml)
 ///
 /// Lakekeeper / Iceberg (optional):
 ///   LAKEKEEPER_URL, MINIO_ENDPOINT — StarRocks external catalog DDL only.
@@ -179,8 +179,8 @@ impl TestHarness {
 
         if group_states.is_empty() {
             return Err(anyhow!(
-                "No backends reachable. Start docker compose (see docker/test/docker-compose.test.yml): \
-                 Trino :18081 and/or StarRocks :19030."
+                "No backends reachable. Start docker compose (see docker/docker-compose.test.yml): \
+                 Trino :18081 and/or StarRocks :9030."
             ));
         }
 

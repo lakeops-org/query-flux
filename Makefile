@@ -2,6 +2,9 @@ CARGO        := $(HOME)/.cargo/bin/cargo
 COMPOSE      := docker compose -f docker/docker-compose.yml --project-directory .
 COMPOSE_TEST := docker compose -f docker/docker-compose.test.yml --project-directory .
 
+# site-packages for `.venv` — works for any Python 3.x (CI uses 3.12, dev may use 3.13).
+PYTHONPATH_VENV = $(shell .venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null)
+
 # Trino `tpch` schema used when loading Iceberg tables (see docker/fixtures/init.sql + data-loader).
 # tiny = default fast tests; sf1 ≈ 1.5M orders (long load, heavy E2E).
 TPCH_SCALE ?= tiny
@@ -27,7 +30,7 @@ env:
 
 server:
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	RUST_LOG=queryflux=info,queryflux_frontend=info \
 	DUCKDB_DOWNLOAD_LIB=1 \
 	$(CARGO) run --bin queryflux -- --config config.local.yaml
@@ -55,7 +58,7 @@ clippy:
 test:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) test --tests --workspace --exclude queryflux-e2e-tests
 
 ## Micro-benchmark: mock Trino + StarRocks backends vs QueryFlux (release build).
@@ -63,10 +66,10 @@ test:
 benchmark:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) build --release --bin queryflux
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) run --release -p queryflux-bench
 
 ## Run E2E tests. Spins up Trino + StarRocks + Lakekeeper via Docker.
@@ -77,10 +80,10 @@ benchmark:
 test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	TRINO_URL=http://localhost:18081 \
 	STARROCKS_URL=mysql://root@localhost:9030 \
 	LAKEKEEPER_URL=http://localhost:18181 \
