@@ -19,7 +19,6 @@ Everything below is implemented and available on the `main` branch.
 | | PostgreSQL wire protocol (port 5432) |
 | | MySQL wire protocol (port 3306) |
 | | Arrow Flight SQL (gRPC) |
-| | Snowflake HTTP wire + SQL API v2 ([docs](/docs/architecture/frontends/snowflake)) |
 | | Admin REST API + OpenAPI / Swagger UI (port 9000) |
 | **Backends** | Trino — async HTTP polling, transparent `nextUri` proxying |
 | | DuckDB — embedded, in-process, Arrow result sets |

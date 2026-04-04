@@ -571,7 +571,7 @@ clusters:
 
 ### Snowflake (future adapter)
 - No header-based impersonation
-- Service account should use key-pair auth (RSA JWT), not password — Snowflake's recommended pattern for automated connections (as used by Yuki)
+- Service account should use key-pair auth (RSA JWT), not password — Snowflake's recommended pattern for automated connections
 - `tokenExchange` or `serviceAccount` are the two options
 - Private keys must not be stored in config files in production; use `secretRef` to Secrets Manager
 
