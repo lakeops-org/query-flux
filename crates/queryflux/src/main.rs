@@ -208,8 +208,7 @@ async fn main() -> Result<()> {
                     None
                 }
             };
-            let max_running =
-                max_running_queries_u64_from_db(&r.name, r.max_running_queries)?;
+            let max_running = max_running_queries_u64_from_db(&r.name, r.max_running_queries)?;
             clusters.insert(
                 r.name.clone(),
                 queryflux_core::engine_registry::cluster_config_from_persisted_json(
