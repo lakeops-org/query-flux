@@ -40,6 +40,7 @@ struct TrinoResponse {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(default)]
 struct TrinoStats {
     #[allow(dead_code)]
     state: String,

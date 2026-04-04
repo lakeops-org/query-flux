@@ -164,7 +164,11 @@ pub async fn query_request(
 
     let session_ctx = SessionContext::MySqlWire {
         user,
-        schema: Some(database.clone()),
+        schema: Some(if schema.is_empty() {
+            database.clone()
+        } else {
+            schema.clone()
+        }),
         session_vars: HashMap::new(),
         tags: QueryTags::default(),
     };

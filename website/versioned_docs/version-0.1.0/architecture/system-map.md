@@ -73,7 +73,7 @@ queryflux/
 ├── grafana/                        # Grafana provisioning + dashboards
 ├── docker/                         # Docker Compose files
 │   ├── docker-compose.yml          # Local dev: Trino + Postgres + Prometheus + Grafana
-│   └── test/docker-compose.test.yml  # E2E test stack (isolated ports)
+│   └── test/docker-compose.test.yml  # E2E stack — full path `docker/test/docker-compose.test.yml`
 ├── config.local.yaml               # Example config for local development
 └── Makefile                        # build / run / test shortcuts
 ```

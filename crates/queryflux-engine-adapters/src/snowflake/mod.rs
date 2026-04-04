@@ -50,11 +50,15 @@ impl SnowflakeAdapter {
             ))
         })?;
 
-        let auth = parse_auth_from_config_json(json).ok_or_else(|| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': Snowflake requires 'auth' configuration"
-            ))
-        })?;
+        let auth = parse_auth_from_config_json(json)
+            .map_err(|e| {
+                QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+            })?
+            .ok_or_else(|| {
+                QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name_str}': Snowflake requires 'auth' configuration"
+                ))
+            })?;
 
         let (username, sf_auth) = map_auth(&auth).map_err(|msg| {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': {msg}"))
@@ -512,13 +516,13 @@ impl crate::EngineAdapterFactory for SnowflakeFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-        cluster_name_str: &str,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
         Ok(Arc::new(SnowflakeAdapter::try_from_config_json(
             cluster_name,
             group,
             json,
-            cluster_name_str,
+            name.as_str(),
         )?))
     }
 }

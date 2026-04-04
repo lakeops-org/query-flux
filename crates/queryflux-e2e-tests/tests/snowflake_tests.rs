@@ -192,12 +192,21 @@ async fn snowflake_query_recorded_in_metrics() {
     let h = harness();
     h.clear_records();
     let c = client();
-    c.execute_on("SELECT 999 AS metric_test", GROUP_SNOWFLAKE)
-        .await
-        .expect("query");
+    let marker = format!(
+        "qf_metric_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let sql = format!("SELECT 999 AS metric_test -- {marker}");
+    c.execute_on(&sql, GROUP_SNOWFLAKE).await.expect("query");
 
     let record = h
-        .wait_for_record(|r| r.cluster_group.0 == GROUP_SNOWFLAKE)
+        .wait_for_record(|r| {
+            r.cluster_group.0 == GROUP_SNOWFLAKE && r.sql_preview.contains(&marker)
+        })
         .await;
     assert!(
         record.is_some(),

@@ -107,7 +107,21 @@ pub fn passthrough_headers(headers: &HeaderMap) -> HashMap<String, String> {
         .filter_map(|(k, v)| {
             let name = k.as_str().to_lowercase();
             // Never forward Authorization — we inject the service-account token ourselves.
-            if name == "authorization" || name == "host" || name == "content-length" {
+            // Drop hop-by-hop / transport headers (same idea as `proxy_response`).
+            if matches!(
+                name.as_str(),
+                "authorization"
+                    | "host"
+                    | "content-length"
+                    | "connection"
+                    | "keep-alive"
+                    | "te"
+                    | "trailer"
+                    | "transfer-encoding"
+                    | "upgrade"
+                    | "proxy-authenticate"
+                    | "proxy-authorization"
+            ) {
                 return None;
             }
             v.to_str()

@@ -22,7 +22,7 @@ impl SnowflakeFrontend {
         Self { state, port }
     }
 
-    fn router(&self) -> Router {
+    pub fn router(&self) -> Router {
         http::routes()
             .merge(sql_api::routes())
             .with_state(self.state.clone())

@@ -44,7 +44,6 @@ pub trait EngineAdapterFactory: Send + Sync {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-        cluster_name_str: &str,
     ) -> Result<Arc<dyn EngineAdapterTrait>>;
 }
 

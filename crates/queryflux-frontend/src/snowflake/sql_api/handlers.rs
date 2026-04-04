@@ -120,7 +120,8 @@ impl SqlApiSink {
 /// A column pre-cast to Utf8 so the conversion happens once per batch, not once per cell.
 enum CastColumn {
     Strings(Arc<dyn Array>),
-    Unsupported(DataType),
+    /// Values we cannot stringify for JSON without corrupting data.
+    Unsupported,
 }
 
 impl CastColumn {
@@ -130,7 +131,7 @@ impl CastColumn {
         }
         match arrow_cast(arr, &DataType::Utf8) {
             Ok(casted) => Self::Strings(casted),
-            Err(_) => Self::Unsupported(arr.data_type().clone()),
+            Err(_) => Self::Unsupported,
         }
     }
 
@@ -143,7 +144,7 @@ impl CastColumn {
                 let str_arr = arr.as_any().downcast_ref::<StringArray>().unwrap();
                 Value::String(str_arr.value(row).to_string())
             }
-            Self::Unsupported(dt) => Value::String(format!("{dt:?}")),
+            Self::Unsupported => Value::Null,
         }
     }
 }
@@ -179,7 +180,17 @@ pub async fn submit_statement(
         Ok(v) => v,
         Err(_) => return sql_api_error(StatusCode::BAD_REQUEST, "390000", "Invalid JSON body"),
     };
-    let sql = body_json["statement"].as_str().unwrap_or("").to_string();
+    let Some(sql) = body_json["statement"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+    else {
+        return sql_api_error(
+            StatusCode::BAD_REQUEST,
+            "390000",
+            "Missing or empty statement",
+        );
+    };
+    let sql = sql.to_string();
 
     // Stateless auth: Bearer token in Authorization header.
     let auth_ctx = match authenticate(&state, &headers).await {

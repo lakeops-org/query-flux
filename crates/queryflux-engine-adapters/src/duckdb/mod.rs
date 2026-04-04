@@ -77,7 +77,9 @@ impl DuckDbAdapter {
         use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
 
         let database_path = json_str(json, "databasePath");
-        let auth = parse_auth_from_config_json(json);
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+        })?;
         let motherduck_token = auth.and_then(|a| {
             if let ClusterAuth::Bearer { token } = a {
                 Some(token)
@@ -445,13 +447,13 @@ impl crate::EngineAdapterFactory for DuckDbFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-        cluster_name_str: &str,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
         Ok(Arc::new(DuckDbAdapter::try_from_config_json(
             cluster_name,
             group,
             json,
-            cluster_name_str,
+            name.as_str(),
         )?))
     }
 }

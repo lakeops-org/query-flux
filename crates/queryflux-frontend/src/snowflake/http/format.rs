@@ -322,10 +322,14 @@ pub fn batches_to_arrow_base64(schema: &Arc<Schema>, batches: &[RecordBatch]) ->
 
     let mut buf = Vec::new();
     if let Ok(mut writer) = StreamWriter::try_new(&mut buf, &sf_schema) {
-        for batch in &sf_batches {
-            let _ = writer.write(batch);
+        for (i, batch) in sf_batches.iter().enumerate() {
+            if let Err(e) = writer.write(batch) {
+                tracing::warn!("Failed to write Arrow batch {i} to IPC stream: {e}");
+            }
         }
-        let _ = writer.finish();
+        if let Err(e) = writer.finish() {
+            tracing::warn!("Failed to finish Arrow IPC stream: {e}");
+        }
     }
     base64::engine::general_purpose::STANDARD.encode(&buf)
 }

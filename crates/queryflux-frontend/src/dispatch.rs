@@ -392,6 +392,9 @@ async fn finalize_trino_async_terminal_on_submit(
             },
         );
     } else {
+        state
+            .metrics
+            .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
         state.record_query(
             &ctx,
             QueryOutcome {
@@ -404,9 +407,6 @@ async fn finalize_trino_async_terminal_on_submit(
                 engine_stats,
             },
         );
-        state
-            .metrics
-            .on_query_finished(&executing.cluster_group.0, &executing.cluster_name.0);
     }
 
     let _ = cluster_manager

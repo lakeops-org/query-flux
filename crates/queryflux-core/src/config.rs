@@ -332,8 +332,6 @@ pub struct FrontendsConfig {
     pub flight_sql: Option<FrontendConfig>,
     #[serde(default)]
     pub snowflake_http: Option<FrontendConfig>,
-    #[serde(default)]
-    pub snowflake_sql_api: Option<FrontendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -188,7 +188,20 @@ impl AthenaAdapter {
                 "cluster '{cluster_name_str}': missing 's3OutputLocation' for Athena"
             ))
         })?;
-        let auth = parse_auth_from_config_json(json);
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+        })?;
+        let auth = match auth {
+            Some(a @ ClusterAuth::AccessKey { .. }) | Some(a @ ClusterAuth::RoleArn { .. }) => {
+                Some(a)
+            }
+            Some(_) => {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name_str}': Athena only supports accessKey or roleArn auth"
+                )));
+            }
+            None => None,
+        };
         Self::new(
             cluster_name,
             group_name,
@@ -784,11 +797,10 @@ impl crate::EngineAdapterFactory for AthenaFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-        cluster_name_str: &str,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
         Ok(Arc::new(
-            AthenaAdapter::try_from_config_json(cluster_name, group, json, cluster_name_str)
-                .await?,
+            AthenaAdapter::try_from_config_json(cluster_name, group, json, name.as_str()).await?,
         ))
     }
 }

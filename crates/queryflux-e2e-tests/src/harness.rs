@@ -33,7 +33,7 @@ use queryflux_engine_adapters::{
     EngineAdapterTrait,
 };
 use queryflux_frontend::{
-    snowflake::http::session_store::SnowflakeSessionStore,
+    snowflake::{http::session_store::SnowflakeSessionStore, SnowflakeFrontend},
     state::LiveConfig,
     trino_http::{state::AppState, TrinoHttpFrontend},
 };
@@ -293,7 +293,9 @@ impl TestHarness {
             snowflake_sessions: SnowflakeSessionStore::new(Default::default()),
         });
 
-        let router: Router = TrinoHttpFrontend::new(state, port).router();
+        let trino_fe = TrinoHttpFrontend::new(state.clone(), port);
+        let snowflake_fe = SnowflakeFrontend::new(state, port);
+        let router: Router = trino_fe.router().merge(snowflake_fe.router());
         let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {

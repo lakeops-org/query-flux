@@ -106,7 +106,9 @@ impl TrinoAdapter {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
         })?;
         let tls_skip = json_bool(json, "tlsInsecureSkipVerify");
-        let auth = parse_auth_from_config_json(json);
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+        })?;
         Ok(Self::new(
             cluster_name,
             group_name,
@@ -908,13 +910,13 @@ impl crate::EngineAdapterFactory for TrinoFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-        cluster_name_str: &str,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
         Ok(Arc::new(TrinoAdapter::try_from_config_json(
             cluster_name,
             group,
             json,
-            cluster_name_str,
+            name.as_str(),
         )?))
     }
 }

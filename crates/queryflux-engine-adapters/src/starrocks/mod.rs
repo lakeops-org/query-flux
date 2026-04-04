@@ -104,7 +104,9 @@ impl StarRocksAdapter {
         let endpoint = json_str(json, "endpoint").ok_or_else(|| {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
         })?;
-        let auth = parse_auth_from_config_json(json);
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+        })?;
         Self::new(cluster_name, group_name, endpoint, auth)
     }
 
@@ -612,13 +614,13 @@ impl crate::EngineAdapterFactory for StarRocksFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-        cluster_name_str: &str,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
         Ok(Arc::new(StarRocksAdapter::try_from_config_json(
             cluster_name,
             group,
             json,
-            cluster_name_str,
+            name.as_str(),
         )?))
     }
 }

@@ -153,7 +153,9 @@ impl DuckDbHttpAdapter {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
         })?;
         let tls_skip = json_bool(json, "tlsInsecureSkipVerify");
-        let auth = parse_auth_from_config_json(json);
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+        })?;
         Self::new(cluster_name, group_name, endpoint, tls_skip, auth).map_err(|e| {
             QueryFluxError::Engine(format!(
                 "cluster '{cluster_name_str}': failed to create DuckDB HTTP adapter ({e})"
@@ -585,13 +587,13 @@ impl crate::EngineAdapterFactory for DuckDbHttpFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-        cluster_name_str: &str,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
         Ok(Arc::new(DuckDbHttpAdapter::try_from_config_json(
             cluster_name,
             group,
             json,
-            cluster_name_str,
+            name.as_str(),
         )?))
     }
 }

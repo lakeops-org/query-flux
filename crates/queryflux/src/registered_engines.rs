@@ -49,7 +49,6 @@ pub async fn build_adapter_from_record(
     group: ClusterGroupName,
     engine_key: &str,
     config_json: &serde_json::Value,
-    cluster_name_str: &str,
 ) -> Result<Arc<dyn EngineAdapterTrait>> {
     let factories = all_factories();
     let factory = factories
@@ -58,7 +57,7 @@ pub async fn build_adapter_from_record(
         .ok_or_else(|| anyhow::anyhow!("Unknown engine key: '{engine_key}'"))?;
 
     factory
-        .build_from_config_json(cluster_name, group, config_json, cluster_name_str)
+        .build_from_config_json(cluster_name, group, config_json)
         .await
         .map_err(map_qf_err)
 }

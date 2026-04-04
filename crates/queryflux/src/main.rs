@@ -196,9 +196,18 @@ async fn main() -> Result<()> {
                         role: None,
                         schema: None,
                         tls: None,
-                        auth: queryflux_core::engine_registry::parse_auth_from_config_json(
+                        auth: match queryflux_core::engine_registry::parse_auth_from_config_json(
                             &r.config,
-                        ),
+                        ) {
+                            Ok(a) => a,
+                            Err(e) => {
+                                tracing::warn!(
+                                    cluster = %r.name,
+                                    "invalid auth in cluster config JSON: {e}"
+                                );
+                                None
+                            }
+                        },
                         query_auth:
                             queryflux_core::engine_registry::parse_query_auth_from_config_json(
                                 &r.config,
@@ -328,7 +337,6 @@ async fn main() -> Result<()> {
                 placeholder_group,
                 &record.engine_key,
                 &record.config,
-                &record.name,
             )
             .await
             .with_context(|| format!("Failed to build adapter for cluster '{}'", record.name))?;
@@ -709,6 +717,8 @@ async fn main() -> Result<()> {
             .iter()
             .map(|(_, s)| (s.cluster_name.0.clone(), s.clone()))
             .collect(),
+        routing_fallback: config.routing_fallback.clone(),
+        routers_cfg: config.routers.clone(),
     }));
     let live = Arc::new(tokio::sync::RwLock::new(live_config));
 
@@ -1109,6 +1119,10 @@ struct AdapterReloadCache {
     /// Preserved across reloads so that health status and running-query counters
     /// are not reset to their initial values every time the config is reloaded.
     cluster_states: HashMap<String, Arc<ClusterState>>,
+    /// Last-known routing from DB (or YAML at startup). Used when `load_routing_config` returns
+    /// `Ok(None)` so periodic reload does not wipe routing.
+    routing_fallback: String,
+    routers_cfg: Vec<queryflux_core::config::RouterConfig>,
 }
 
 fn health_targets_from_groups(
@@ -1199,7 +1213,6 @@ async fn build_live_config(
             placeholder_group,
             &record.engine_key,
             &record.config,
-            cluster_name_str,
         )
         .await
         {
@@ -1265,11 +1278,9 @@ async fn build_live_config(
             let cluster_cid = cluster_ids_by_name.get(member_name.as_str()).copied();
             let group_cid = group_ids_by_name.get(group_name.as_str()).copied();
 
-            // Reuse the previous state when the cluster config is unchanged so that
-            // is_healthy and running_queries are not reset across reloads.
-            // When config changed or the cluster is new, create a fresh state but
-            // still inherit is_healthy from the previous generation so the UI does not
-            // flash healthy for 30 s until the next health-check tick.
+            // When the JSONB + engine_key fingerprint is unchanged, rebuild `ClusterState` from
+            // the current record anyway (group membership, IDs, endpoint, max_q may still change)
+            // but copy health and queue counters from the previous generation.
             let cfg_json = serde_json::to_string(&(record.engine_key.as_str(), &record.config))
                 .unwrap_or_default();
             let config_unchanged = cache
@@ -1278,37 +1289,24 @@ async fn build_live_config(
                 .map(String::as_str)
                 == Some(cfg_json.as_str());
 
-            let state = if config_unchanged {
-                if let Some(prev) = cache.cluster_states.get(member_name.as_str()) {
-                    prev.clone()
-                } else {
-                    Arc::new(ClusterState::new(
-                        ClusterName(member_name.clone()),
-                        group_key.clone(),
-                        cluster_cid,
-                        group_cid,
-                        engine_type,
-                        endpoint,
-                        max_q,
-                        record.enabled,
-                    ))
+            let state = Arc::new(ClusterState::new(
+                ClusterName(member_name.clone()),
+                group_key.clone(),
+                cluster_cid,
+                group_cid,
+                engine_type,
+                endpoint,
+                max_q,
+                record.enabled,
+            ));
+            if let Some(prev) = cache.cluster_states.get(member_name.as_str()) {
+                let snap = prev.snapshot();
+                state.set_healthy(snap.is_healthy);
+                if config_unchanged {
+                    state.set_running_queries(snap.running_queries);
+                    state.set_queued_queries(snap.queued_queries);
                 }
-            } else {
-                let s = Arc::new(ClusterState::new(
-                    ClusterName(member_name.clone()),
-                    group_key.clone(),
-                    cluster_cid,
-                    group_cid,
-                    engine_type,
-                    endpoint,
-                    max_q,
-                    record.enabled,
-                ));
-                if let Some(prev) = cache.cluster_states.get(member_name.as_str()) {
-                    s.set_healthy(prev.is_healthy());
-                }
-                s
-            };
+            }
             states.push(state);
         }
 
@@ -1347,7 +1345,16 @@ async fn build_live_config(
                     role: None,
                     schema: None,
                     tls: None,
-                    auth: parse_auth_from_config_json(&r.config),
+                    auth: match parse_auth_from_config_json(&r.config) {
+                        Ok(a) => a,
+                        Err(e) => {
+                            tracing::warn!(
+                                cluster = %r.name,
+                                "reload: invalid auth in cluster config JSON: {e}"
+                            );
+                            None
+                        }
+                    },
                     query_auth: parse_query_auth_from_config_json(&r.config),
                 },
             ))
@@ -1509,7 +1516,7 @@ async fn reload_live_config(
         .map(|r| (r.name.clone(), r.to_core()))
         .collect();
 
-    // Load routing from DB if present; otherwise fall back to empty defaults.
+    // Load routing from DB if present; otherwise keep last-known routing (startup YAML or previous DB load).
     let (routing_fallback, routers_cfg) = match pg.load_routing_config().await {
         Ok(Some(loaded)) => {
             let mut routers = Vec::new();
@@ -1521,9 +1528,11 @@ async fn reload_live_config(
                     }
                 }
             }
+            cache.routing_fallback = loaded.routing_fallback.clone();
+            cache.routers_cfg.clone_from(&routers);
             (loaded.routing_fallback, routers)
         }
-        Ok(None) => (String::new(), Vec::new()),
+        Ok(None) => (cache.routing_fallback.clone(), cache.routers_cfg.clone()),
         Err(e) => {
             return Err(anyhow::anyhow!("reload: load_routing_config: {e}"));
         }

@@ -246,32 +246,44 @@ pub fn validate_cluster_config(
 /// The JSON blob stores auth as flat keys: `authType`, `authUsername`,
 /// `authPassword`, `authToken`. This is the canonical format produced by
 /// `UpsertClusterConfig::from_core()` and stored in the `config` JSONB column.
-pub fn parse_auth_from_config_json(json: &serde_json::Value) -> Option<ClusterAuth> {
+///
+/// - Missing / empty `authType` → `Ok(None)`.
+/// - Known `authType` with missing required fields → `Err` (so callers fail fast instead of
+///   building adapters with empty credentials).
+pub fn parse_auth_from_config_json(
+    json: &serde_json::Value,
+) -> Result<Option<ClusterAuth>, String> {
     let s =
         |key: &str| -> Option<String> { json.get(key).and_then(|v| v.as_str()).map(String::from) };
+    let require = |key: &str| -> Result<String, String> {
+        s(key)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("missing or empty '{key}' for this authType"))
+    };
     match s("authType").as_deref() {
-        Some("basic") => Some(ClusterAuth::Basic {
-            username: s("authUsername").unwrap_or_default(),
-            password: s("authPassword").unwrap_or_default(),
-        }),
-        Some("bearer") => Some(ClusterAuth::Bearer {
-            token: s("authToken").unwrap_or_default(),
-        }),
-        Some("keyPair") => Some(ClusterAuth::KeyPair {
-            username: s("authUsername").unwrap_or_default(),
-            private_key_pem: s("authPassword").unwrap_or_default(),
+        None | Some("") => Ok(None),
+        Some("basic") => Ok(Some(ClusterAuth::Basic {
+            username: require("authUsername")?,
+            password: require("authPassword")?,
+        })),
+        Some("bearer") => Ok(Some(ClusterAuth::Bearer {
+            token: require("authToken")?,
+        })),
+        Some("keyPair") => Ok(Some(ClusterAuth::KeyPair {
+            username: require("authUsername")?,
+            private_key_pem: require("authPassword")?,
             private_key_passphrase: s("authToken"),
-        }),
-        Some("accessKey") => Some(ClusterAuth::AccessKey {
-            access_key_id: s("authUsername").unwrap_or_default(),
-            secret_access_key: s("authPassword").unwrap_or_default(),
+        })),
+        Some("accessKey") => Ok(Some(ClusterAuth::AccessKey {
+            access_key_id: require("authUsername")?,
+            secret_access_key: require("authPassword")?,
             session_token: s("authToken"),
-        }),
-        Some("roleArn") => Some(ClusterAuth::RoleArn {
-            role_arn: s("authUsername").unwrap_or_default(),
+        })),
+        Some("roleArn") => Ok(Some(ClusterAuth::RoleArn {
+            role_arn: require("authUsername")?,
             external_id: s("authToken"),
-        }),
-        _ => None,
+        })),
+        Some(other) => Err(format!("unsupported authType: '{other}'")),
     }
 }
 

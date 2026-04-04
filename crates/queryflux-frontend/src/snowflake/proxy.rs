@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use bytes::Bytes;
 use reqwest::{Client, Method, Response};
@@ -30,6 +31,8 @@ impl SnowflakeProxy {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
+                .timeout(Duration::from_secs(300))
+                .connect_timeout(Duration::from_secs(30))
                 .build()
                 .expect("failed to build SnowflakeProxy reqwest client"),
         }
