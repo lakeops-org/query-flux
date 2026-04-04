@@ -295,7 +295,16 @@ impl EngineAdapterTrait for TrinoAdapter {
             });
         }
 
-        let next_uri = trino_resp.next_uri.clone();
+        // Trino may return `stats.state: "FINISHED"` while still including `nextUri` for one more
+        // poll. The e2e client (and `trino-rust-client`) stop as soon as they see FINISHED, so our
+        // proxy must treat that as terminal too — otherwise we never run `record_query` on the last
+        // GET the client actually performs.
+        let state = trino_resp.stats.state.as_str();
+        let mut next_uri = trino_resp.next_uri.clone();
+        if next_uri.is_some() && state.eq_ignore_ascii_case("FINISHED") {
+            next_uri = None;
+        }
+
         let engine_stats = if next_uri.is_none() {
             let s = &trino_resp.stats;
             Some(QueryEngineStats {

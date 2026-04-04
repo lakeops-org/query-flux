@@ -20,5 +20,7 @@ unzip -o "${zip}" -d "${extract_dir}"
 
 sudo cp "${extract_dir}/libduckdb.so" /usr/local/lib/
 sudo cp "${extract_dir}/duckdb.h" /usr/local/include/
-sudo cp "${extract_dir}/duckdb.hpp" /usr/local/include/ 2>/dev/null || true
+if [[ -f "${extract_dir}/duckdb.hpp" ]]; then
+  sudo cp "${extract_dir}/duckdb.hpp" /usr/local/include/
+fi
 sudo ldconfig
