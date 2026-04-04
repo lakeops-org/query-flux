@@ -67,7 +67,20 @@ pub struct AppState {
     pub authorization: Arc<dyn AuthorizationChecker>,
     /// Resolves per-user `QueryCredentials` from `AuthContext` + cluster `queryAuth` config.
     pub identity_resolver: Arc<BackendIdentityResolver>,
-    /// Active Snowflake wire-protocol sessions (Form 1). Shared across all handlers.
+    /// Active Snowflake **HTTP wire** sessions (Snowflake connector “Form 1”), keyed by the
+    /// token issued at login.
+    ///
+    /// **Process-local only** — not shared across QueryFlux replicas. Multi-instance deployments
+    /// must use load-balancer **session affinity** (sticky routing) so login and all follow-up
+    /// requests hit the same instance, or sessions will fail with “not found”. Rolling restarts
+    /// drop in-memory sessions unless clients reconnect. See `queryflux.enforceSnowflakeHttpSessionAffinity`
+    /// and `frontends.snowflakeHttp.sessionAffinityAcknowledged` in config to assert affinity is configured.
+    ///
+    /// (Shared persistence for these sessions is not implemented yet.)
+    ///
+    /// Session lifetime is enforced in-process via `SnowflakeSessionStore::validate_snowflake_session`
+    /// (max age + idle timeout; see `frontends.snowflakeHttp.snowflakeSessionMaxAgeSecs` /
+    /// `snowflakeSessionIdleTimeoutSecs` in YAML).
     pub snowflake_sessions: Arc<SnowflakeSessionStore>,
 }
 

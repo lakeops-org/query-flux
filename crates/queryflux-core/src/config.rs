@@ -292,6 +292,14 @@ pub struct QueryFluxConfig {
     pub query_history_retention_days: Option<u64>,
     #[serde(default)]
     pub metrics: MetricsConfig,
+    /// When `true`, refuse to start if the Snowflake HTTP frontend is enabled but
+    /// [`FrontendConfig::session_affinity_acknowledged`] is not set on that frontend.
+    ///
+    /// Use this in multi-replica deployments after configuring the load balancer for
+    /// **session affinity** (sticky routing) to one QueryFlux instance per Snowflake client token.
+    /// Default `false` keeps single-replica and dev setups unchanged.
+    #[serde(default)]
+    pub enforce_snowflake_http_session_affinity: bool,
 }
 
 impl QueryFluxConfig {
@@ -334,6 +342,26 @@ pub struct FrontendConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub port: u16,
+    /// Operator assertion: the load balancer provides **session affinity** for this frontend
+    /// so a given client’s connections reach the same QueryFlux instance.
+    ///
+    /// **Snowflake HTTP wire protocol** (`snowflakeHttp`) keeps login sessions in process memory;
+    /// without sticky routing, requests after login may hit another replica and fail with
+    /// “session not found”. Other frontends ignore this flag.
+    ///
+    /// Set to `true` only after configuring affinity (e.g. consistent hash on `Authorization` /
+    /// Snowflake token, or cookie-based stickiness). Pair with
+    /// [`QueryFluxConfig::enforce_snowflake_http_session_affinity`] to fail fast if unset.
+    #[serde(default)]
+    pub session_affinity_acknowledged: bool,
+    /// **Snowflake HTTP wire only** — max session lifetime in seconds (from login).
+    /// Omitted → 86400 (24h). `0` = no max-age limit.
+    #[serde(default)]
+    pub snowflake_session_max_age_secs: Option<u64>,
+    /// **Snowflake HTTP wire only** — idle timeout in seconds since the last validated request
+    /// (heartbeat, token refresh, query). Omitted → 14400 (4h). `0` = no idle limit.
+    #[serde(default)]
+    pub snowflake_session_idle_timeout_secs: Option<u64>,
 }
 
 impl Default for FrontendConfig {
@@ -341,6 +369,9 @@ impl Default for FrontendConfig {
         Self {
             enabled: true,
             port: 8080,
+            session_affinity_acknowledged: false,
+            snowflake_session_max_age_secs: None,
+            snowflake_session_idle_timeout_secs: None,
         }
     }
 }

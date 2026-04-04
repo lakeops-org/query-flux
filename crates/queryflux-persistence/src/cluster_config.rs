@@ -200,6 +200,12 @@ impl UpsertClusterConfig {
             None => {}
         }
 
+        if let Some(qa) = &cfg.query_auth {
+            if let Ok(v) = serde_json::to_value(qa) {
+                config.insert("queryAuth".into(), v);
+            }
+        }
+
         Some(Self {
             engine_key: engine_key.to_owned(),
             enabled: cfg.enabled,
@@ -234,10 +240,9 @@ impl UpsertClusterGroupConfig {
 // ---------------------------------------------------------------------------
 
 // NOTE: `ClusterConfigRecord::to_core()` has been removed. Engine adapters are
-// now built directly from the JSONB config blob via `try_from_config_json()` on
-// each adapter. Auth extraction uses `parse_auth_from_config_json()` from
-// `queryflux_core::engine_registry`. The persistence layer no longer needs to
-// know about engine-specific config fields.
+// built from the JSONB config blob via `try_from_config_json()` on each adapter.
+// Type 1 auth uses `parse_auth_from_config_json`; Type 2 (`queryAuth`) uses
+// `parse_query_auth_from_config_json` — both in `queryflux_core::engine_registry`.
 
 impl ClusterGroupConfigRecord {
     pub fn to_core(&self) -> ClusterGroupConfig {

@@ -13,7 +13,7 @@ use queryflux_core::tags::{merge_tags, QueryTags};
 use queryflux_core::{
     error::{QueryFluxError, Result},
     query::{
-        ClusterGroupName, ClusterName, ExecutingQuery, FrontendProtocol, ProxyQueryId,
+        ClusterGroupName, ClusterName, EngineType, ExecutingQuery, FrontendProtocol, ProxyQueryId,
         QueryEngineStats, QueryExecution, QueryStats, QueryStatus, QueuedQuery,
     },
     session::SessionContext,
@@ -252,18 +252,22 @@ pub async fn dispatch_query(
     let _ = state.persistence.upsert(executing.clone()).await;
     info!(id = %query_id, backend = %backend_query_id, cluster = %cluster_name, "Query submitted (async)");
 
+    // Trino-specific: FINISHED on first POST with no nextUri. Other async engines must not run
+    // this path — it parses Trino JSON and would corrupt metrics / persistence if misapplied.
     if next_uri.is_none() {
         if let Some(ref ib) = initial_body {
-            finalize_trino_async_terminal_on_submit(
-                state,
-                &cluster_manager,
-                &executing,
-                &adapter,
-                &session,
-                protocol,
-                ib,
-            )
-            .await;
+            if adapter.engine_type() == EngineType::Trino {
+                finalize_trino_async_terminal_on_submit(
+                    state,
+                    &cluster_manager,
+                    &executing,
+                    &adapter,
+                    &session,
+                    protocol,
+                    ib,
+                )
+                .await;
+            }
         }
     }
 
@@ -319,7 +323,11 @@ async fn finalize_trino_async_terminal_on_submit(
     let src_dialect = protocol.default_dialect();
     let ctx = QueryContext {
         query_id: &executing.id,
-        sql: &executing.sql,
+        // Original SQL: when translated, `ExecutingQuery.translated_sql` holds it; otherwise `sql` is original.
+        sql: executing
+            .translated_sql
+            .as_deref()
+            .unwrap_or(&executing.sql),
         session,
         protocol,
         group: &executing.cluster_group,
@@ -331,7 +339,7 @@ async fn finalize_trino_async_terminal_on_submit(
         tgt_dialect: adapter.engine_type().dialect(),
         was_translated,
         translated_sql: if was_translated {
-            executing.translated_sql.clone()
+            Some(executing.sql.clone())
         } else {
             None
         },

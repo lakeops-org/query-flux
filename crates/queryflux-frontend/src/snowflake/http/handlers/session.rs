@@ -99,6 +99,7 @@ pub async fn login_request(
     };
 
     let qf_token = Uuid::new_v4().to_string();
+    let now = Instant::now();
     state.snowflake_sessions.insert(
         qf_token.clone(),
         SnowflakeSession {
@@ -108,7 +109,8 @@ pub async fn login_request(
             group,
             database: database.clone(),
             schema: schema.clone(),
-            created_at: Instant::now(),
+            created_at: now,
+            last_seen: now,
         },
     );
 
@@ -166,7 +168,11 @@ pub async fn heartbeat(State(state): State<Arc<AppState>>, headers: HeaderMap) -
             )
         }
     };
-    if !state.snowflake_sessions.contains(&token) {
+    if state
+        .snowflake_sessions
+        .validate_snowflake_session(&token)
+        .is_none()
+    {
         return sf_error(
             StatusCode::UNAUTHORIZED,
             390104,

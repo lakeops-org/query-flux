@@ -81,3 +81,6 @@ mysql_async = { version = "0.36.1", default-features = false, features = ["defau
 
 # OpenAPI documentation
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono"] }
+
+# Snowflake engine backend — lakeops fork includes `QueryExecutor::snowflake_columns` for empty rowsets.
+snowflake-connector-rs = { git = "https://github.com/lakeops-org/snowflake-connector-rs", branch = "main" }

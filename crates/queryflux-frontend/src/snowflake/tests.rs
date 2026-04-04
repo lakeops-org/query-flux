@@ -234,7 +234,7 @@ mod snowflake_frontend {
             auth_provider: Arc::new(NoneAuthProvider::new(false)) as Arc<dyn AuthProvider>,
             authorization: Arc::new(AllowAllAuthorization) as Arc<dyn AuthorizationChecker>,
             identity_resolver: Arc::new(BackendIdentityResolver::new()),
-            snowflake_sessions: SnowflakeSessionStore::new(),
+            snowflake_sessions: SnowflakeSessionStore::new(Default::default()),
         });
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

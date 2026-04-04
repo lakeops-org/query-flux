@@ -1,10 +1,10 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, StringBuilder};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use futures::stream;
 use queryflux_auth::QueryCredentials;
 use queryflux_core::{
     catalog::TableSchema,
@@ -18,8 +18,11 @@ use queryflux_core::{
     tags::QueryTags,
 };
 use snowflake_connector_rs::{
-    SnowflakeAuthMethod, SnowflakeClient, SnowflakeClientConfig, SnowflakeColumnType, SnowflakeRow,
+    SnowflakeAuthMethod, SnowflakeClient, SnowflakeClientConfig, SnowflakeColumn,
+    SnowflakeColumnType, SnowflakeEndpointConfig, SnowflakeQueryConfig, SnowflakeRow,
+    SnowflakeSessionConfig,
 };
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use url::Url;
 
 use crate::EngineAdapterTrait;
@@ -57,38 +60,17 @@ impl SnowflakeAdapter {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': {msg}"))
         })?;
 
-        let client_cfg = SnowflakeClientConfig {
+        let client = build_snowflake_client(SnowflakeClientParams {
+            cluster_name_str,
             account: account.clone(),
+            username,
+            sf_auth,
             warehouse: json_str(json, "warehouse"),
             database: json_str(json, "catalog"),
             schema: json_str(json, "schema"),
             role: json_str(json, "role"),
-            timeout: Some(std::time::Duration::from_secs(300)),
-        };
-
-        let client = SnowflakeClient::new(&username, sf_auth, client_cfg).map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to create Snowflake client: {e}"
-            ))
+            endpoint: json_str(json, "endpoint"),
         })?;
-
-        let client = if let Some(endpoint) = json_str(json, "endpoint") {
-            let url = Url::parse(&endpoint).map_err(|e| {
-                QueryFluxError::Engine(format!(
-                    "cluster '{cluster_name_str}': invalid endpoint URL: {e}"
-                ))
-            })?;
-            let host = url.host_str().unwrap_or_default();
-            let port = url.port();
-            let protocol = Some(url.scheme().to_string());
-            client.with_address(host, port, protocol).map_err(|e| {
-                QueryFluxError::Engine(format!(
-                    "cluster '{cluster_name_str}': failed to configure Snowflake endpoint: {e}"
-                ))
-            })?
-        } else {
-            client
-        };
 
         Ok(Self {
             cluster_name,
@@ -120,38 +102,17 @@ impl SnowflakeAdapter {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': {msg}"))
         })?;
 
-        let client_cfg = SnowflakeClientConfig {
+        let client = build_snowflake_client(SnowflakeClientParams {
+            cluster_name_str,
             account: account.clone(),
+            username,
+            sf_auth,
             warehouse: cfg.warehouse.clone(),
             database: cfg.catalog.clone(),
             schema: cfg.schema.clone(),
             role: cfg.role.clone(),
-            timeout: Some(std::time::Duration::from_secs(300)),
-        };
-
-        let client = SnowflakeClient::new(&username, sf_auth, client_cfg).map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to create Snowflake client: {e}"
-            ))
+            endpoint: cfg.endpoint.clone(),
         })?;
-
-        let client = if let Some(endpoint) = &cfg.endpoint {
-            let url = Url::parse(endpoint).map_err(|e| {
-                QueryFluxError::Engine(format!(
-                    "cluster '{cluster_name_str}': invalid endpoint URL: {e}"
-                ))
-            })?;
-            let host = url.host_str().unwrap_or_default();
-            let port = url.port();
-            let protocol = Some(url.scheme().to_string());
-            client.with_address(host, port, protocol).map_err(|e| {
-                QueryFluxError::Engine(format!(
-                    "cluster '{cluster_name_str}': failed to configure Snowflake endpoint: {e}"
-                ))
-            })?
-        } else {
-            client
-        };
 
         Ok(Self {
             cluster_name,
@@ -178,6 +139,58 @@ impl SnowflakeAdapter {
             .filter_map(|row| row.at::<String>(0).ok())
             .collect())
     }
+}
+
+struct SnowflakeClientParams<'a> {
+    cluster_name_str: &'a str,
+    account: String,
+    username: String,
+    sf_auth: SnowflakeAuthMethod,
+    warehouse: Option<String>,
+    database: Option<String>,
+    schema: Option<String>,
+    role: Option<String>,
+    endpoint: Option<String>,
+}
+
+fn build_snowflake_client(p: SnowflakeClientParams<'_>) -> Result<SnowflakeClient> {
+    let mut session = SnowflakeSessionConfig::default();
+    if let Some(w) = p.warehouse {
+        session = session.with_warehouse(w);
+    }
+    if let Some(d) = p.database {
+        session = session.with_database(d);
+    }
+    if let Some(s) = p.schema {
+        session = session.with_schema(s);
+    }
+    if let Some(r) = p.role {
+        session = session.with_role(r);
+    }
+
+    let query = SnowflakeQueryConfig::default()
+        .with_async_query_completion_timeout(Duration::from_secs(300));
+
+    let mut cfg = SnowflakeClientConfig::new(p.username, p.account, p.sf_auth)
+        .with_session(session)
+        .with_query(query);
+
+    if let Some(ep) = p.endpoint {
+        let url = Url::parse(&ep).map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{}': invalid endpoint URL: {e}",
+                p.cluster_name_str
+            ))
+        })?;
+        cfg = cfg.with_endpoint(SnowflakeEndpointConfig::custom_base_url(url));
+    }
+
+    SnowflakeClient::new(cfg).map_err(|e| {
+        QueryFluxError::Engine(format!(
+            "cluster '{}': failed to create Snowflake client: {e}",
+            p.cluster_name_str
+        ))
+    })
 }
 
 fn map_auth(auth: &ClusterAuth) -> std::result::Result<(String, SnowflakeAuthMethod), String> {
@@ -288,40 +301,65 @@ impl EngineAdapterTrait for SnowflakeAdapter {
             })?;
         }
 
-        let rows = sf_session
-            .query(sql)
+        let executor = sf_session
+            .execute(sql)
             .await
             .map_err(|e| QueryFluxError::Engine(format!("Snowflake query failed: {e}")))?;
 
-        if rows.is_empty() {
-            return Ok(Box::pin(stream::empty()));
-        }
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<RecordBatch>>();
 
-        let col_types = rows[0].column_types();
-        let fields: Vec<Field> = col_types
-            .iter()
-            .map(|c| {
-                Field::new(
-                    c.name(),
-                    snowflake_type_to_arrow(c.column_type()),
-                    c.column_type().nullable(),
-                )
-            })
-            .collect();
-        let schema = Arc::new(ArrowSchema::new(fields));
+        tokio::spawn(async move {
+            // Metadata is on the first response even when `rowSet` / chunks are empty (e.g. LIMIT 0).
+            let col_types = executor.snowflake_columns();
+            let fields: Vec<Field> = col_types
+                .iter()
+                .map(|c| {
+                    Field::new(
+                        c.name(),
+                        snowflake_type_to_arrow(c.column_type()),
+                        c.column_type().nullable(),
+                    )
+                })
+                .collect();
+            let schema = Arc::new(ArrowSchema::new(fields));
+            if schema.fields().is_empty() {
+                return;
+            }
 
-        let num_cols = schema.fields().len();
-        let mut columns: Vec<ArrayRef> = Vec::with_capacity(num_cols);
-        for (col_idx, sf_type) in col_types.iter().enumerate() {
-            let dt = schema.field(col_idx).data_type();
-            let col = build_arrow_column(dt, sf_type.column_type(), &rows, col_idx)?;
-            columns.push(col);
-        }
+            let mut emitted_rows = false;
+            loop {
+                let chunk = match executor.fetch_next_chunk().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Err(QueryFluxError::Engine(format!(
+                            "Snowflake query failed: {e}"
+                        ))));
+                        return;
+                    }
+                };
+                let Some(rows) = chunk else { break };
 
-        let batch = RecordBatch::try_new(schema, columns)
-            .map_err(|e| QueryFluxError::Engine(format!("Snowflake RecordBatch failed: {e}")))?;
+                if rows.is_empty() {
+                    continue;
+                }
+                emitted_rows = true;
+                match build_snowflake_record_batch(Arc::clone(&schema), &col_types, &rows) {
+                    Ok(batch) => {
+                        let _ = tx.send(Ok(batch));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+                }
+            }
 
-        Ok(Box::pin(stream::iter(std::iter::once(Ok(batch)))))
+            if !emitted_rows {
+                let _ = tx.send(Ok(RecordBatch::new_empty(schema)));
+            }
+        });
+
+        Ok(Box::pin(UnboundedReceiverStream::new(rx)))
     }
 
     async fn list_catalogs(&self) -> Result<Vec<String>> {
@@ -503,6 +541,21 @@ fn snowflake_type_to_arrow(ct: &SnowflakeColumnType) -> DataType {
         "boolean" => DataType::Boolean,
         _ => DataType::Utf8,
     }
+}
+
+fn build_snowflake_record_batch(
+    schema: Arc<ArrowSchema>,
+    col_types: &[SnowflakeColumn],
+    rows: &[SnowflakeRow],
+) -> Result<RecordBatch> {
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(col_types.len());
+    for (col_idx, sf_col) in col_types.iter().enumerate() {
+        let dt = schema.field(col_idx).data_type();
+        let col = build_arrow_column(dt, sf_col.column_type(), rows, col_idx)?;
+        columns.push(col);
+    }
+    RecordBatch::try_new(schema, columns)
+        .map_err(|e| QueryFluxError::Engine(format!("Snowflake RecordBatch failed: {e}")))
 }
 
 fn build_arrow_column(

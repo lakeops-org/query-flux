@@ -22,7 +22,7 @@ use crate::dispatch::{execute_to_sink, ResultSink};
 use crate::snowflake::http::format::sf_query_response;
 use crate::state::AppState;
 
-use super::common::{decode_snowflake_request_body, extract_snowflake_token, sf_error};
+use super::common::{extract_snowflake_token, parse_snowflake_json_body, sf_error};
 
 // ---------------------------------------------------------------------------
 // ResultSink that accumulates Arrow batches into Snowflake JSON format
@@ -117,25 +117,50 @@ pub async fn query_request(
     };
 
     // Parse SQL from body (body may be gzip per Snowflake Python connector).
-    let sql: String = decode_snowflake_request_body(&headers, &body)
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-        .and_then(|v| v["sqlText"].as_str().map(|s| s.to_string()))
-        .unwrap_or_default();
-
-    // Clone fields out of the session (must not hold DashMap ref across await).
-    let (auth_ctx, group, user, database, schema) = {
-        match state.snowflake_sessions.get(&qf_token) {
-            Some(s) => (
-                s.auth_ctx.clone(),
-                s.group.clone(),
-                s.user.clone(),
-                s.database.clone().unwrap_or_default(),
-                s.schema.clone().unwrap_or_default(),
-            ),
-            None => return sf_error(StatusCode::UNAUTHORIZED, 390390, "Session not found"),
+    let body_json: Value = match parse_snowflake_json_body(&headers, &body) {
+        Ok(v) => v,
+        Err(_) => {
+            return sf_error(
+                StatusCode::BAD_REQUEST,
+                390000,
+                "Invalid query request body",
+            );
         }
     };
+    let sql = match body_json
+        .get("sqlText")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        Some(s) => s.to_string(),
+        None => {
+            return sf_error(
+                StatusCode::BAD_REQUEST,
+                390000,
+                "Missing or invalid sqlText",
+            );
+        }
+    };
+
+    // Validate TTL/idle, bump last_seen, clone fields (must not hold DashMap guard across await).
+    let snapshot = match state
+        .snowflake_sessions
+        .validate_snowflake_session(&qf_token)
+    {
+        Some(v) => v.snapshot,
+        None => {
+            return sf_error(
+                StatusCode::UNAUTHORIZED,
+                390390,
+                "Session not found or expired",
+            );
+        }
+    };
+    let auth_ctx = snapshot.auth_ctx;
+    let group = snapshot.group;
+    let user = snapshot.user;
+    let database = snapshot.database.unwrap_or_default();
+    let schema = snapshot.schema.unwrap_or_default();
 
     let session_ctx = SessionContext::MySqlWire {
         user,

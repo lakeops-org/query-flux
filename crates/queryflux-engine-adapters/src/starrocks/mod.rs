@@ -43,14 +43,35 @@ pub struct StarRocksAdapter {
 }
 
 impl StarRocksAdapter {
+    /// When `auth` is [`Some`](Option::Some), it must be [`ClusterAuth::Basic`]; other variants error.
     pub fn new(
         cluster_name: ClusterName,
         group_name: ClusterGroupName,
         endpoint: String,
         auth: Option<ClusterAuth>,
     ) -> Result<Self> {
-        let base_opts = Opts::from_url(&endpoint)
-            .map_err(|e| QueryFluxError::Engine(format!("StarRocks invalid URL: {e}")))?;
+        if let Some(ref a) = auth {
+            let unsupported = match a {
+                ClusterAuth::Basic { .. } => None,
+                ClusterAuth::Bearer { .. } => Some("bearer"),
+                ClusterAuth::KeyPair { .. } => Some("keyPair"),
+                ClusterAuth::AccessKey { .. } => Some("accessKey"),
+                ClusterAuth::RoleArn { .. } => Some("roleArn"),
+            };
+            if let Some(kind) = unsupported {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{}': StarRocks only supports ClusterAuth::basic (MySQL username/password); unsupported auth type '{kind}'",
+                    cluster_name.0
+                )));
+            }
+        }
+
+        let base_opts = Opts::from_url(&endpoint).map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{}': StarRocks invalid endpoint URL: {e}",
+                cluster_name.0
+            ))
+        })?;
 
         // Always disable Unix socket preference — StarRocks doesn't support the
         // `@@socket` system variable that mysql_async queries when prefer_socket=true.
@@ -84,11 +105,7 @@ impl StarRocksAdapter {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
         })?;
         let auth = parse_auth_from_config_json(json);
-        Self::new(cluster_name, group_name, endpoint, auth).map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to create StarRocks adapter ({e})"
-            ))
-        })
+        Self::new(cluster_name, group_name, endpoint, auth)
     }
 
     /// Build from persisted / YAML [`ClusterConfig`].
@@ -101,11 +118,7 @@ impl StarRocksAdapter {
         let endpoint = cfg.endpoint.clone().ok_or_else(|| {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
         })?;
-        Self::new(cluster_name, group_name, endpoint, cfg.auth.clone()).map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to create StarRocks adapter ({e})"
-            ))
-        })
+        Self::new(cluster_name, group_name, endpoint, cfg.auth.clone())
     }
 
     /// Execute a DDL/setup statement that returns no rows (CREATE EXTERNAL CATALOG, etc.).

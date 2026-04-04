@@ -20,7 +20,10 @@ use queryflux_frontend::{
     flight_sql::FlightSqlFrontend,
     mysql_wire::MysqlWireFrontend,
     postgres_wire::PostgresWireFrontend,
-    snowflake::{http::session_store::SnowflakeSessionStore, SnowflakeFrontend},
+    snowflake::{
+        http::session_store::{SnowflakeHttpSessionPolicy, SnowflakeSessionStore},
+        SnowflakeFrontend,
+    },
     state::LiveConfig,
     trino_http::{state::AppState, TrinoHttpFrontend},
     FrontendListenerTrait,
@@ -168,9 +171,9 @@ async fn main() -> Result<()> {
             .iter()
             .map(|r| (r.name.clone(), r.id))
             .collect();
-        // Build minimal ClusterConfig values for validation and group resolution.
-        // Engine-specific fields are NOT populated — adapters are built from the
-        // raw JSONB later via build_adapter_from_record.
+        // Build minimal ClusterConfig values for validation, group resolution, and
+        // `BackendIdentityResolver` (`queryAuth`). Adapters are still built from the
+        // raw JSONB via `build_adapter_from_record`.
         config.clusters = db_cluster_records
             .iter()
             .filter_map(|r| {
@@ -196,7 +199,10 @@ async fn main() -> Result<()> {
                         auth: queryflux_core::engine_registry::parse_auth_from_config_json(
                             &r.config,
                         ),
-                        query_auth: None,
+                        query_auth:
+                            queryflux_core::engine_registry::parse_query_auth_from_config_json(
+                                &r.config,
+                            ),
                     },
                 ))
             })
@@ -607,6 +613,29 @@ async fn main() -> Result<()> {
         }
     }
 
+    // --- Snowflake HTTP: sessions are in-memory on this process only ---
+    if let Some(sf) = config.queryflux.frontends.snowflake_http.as_ref() {
+        if sf.enabled {
+            if config.queryflux.enforce_snowflake_http_session_affinity
+                && !sf.session_affinity_acknowledged
+            {
+                anyhow::bail!(
+                    "Snowflake HTTP is enabled and queryflux.enforceSnowflakeHttpSessionAffinity is true, \
+                     but frontends.snowflakeHttp.sessionAffinityAcknowledged is false. \
+                     Wire sessions live in process memory; configure your load balancer for session affinity \
+                     to the same QueryFlux replica for all requests that reuse the Snowflake login token \
+                     (e.g. consistent hash on the Authorization header), then set sessionAffinityAcknowledged: true. \
+                     For a single-replica deployment, omit enforceSnowflakeHttpSessionAffinity."
+                );
+            }
+            tracing::info!(
+                "Snowflake HTTP frontend: login sessions are stored in this process only; \
+                 multi-replica setups require load balancer session affinity to the same instance per client token. \
+                 Set queryflux.enforceSnowflakeHttpSessionAffinity: true with sessionAffinityAcknowledged: true after configuring routing."
+            );
+        }
+    }
+
     let identity_resolver = Arc::new(BackendIdentityResolver::new());
     let cluster_configs = config.clusters.clone();
 
@@ -639,27 +668,38 @@ async fn main() -> Result<()> {
         group_translation_scripts,
         group_default_tags,
     };
-    // Seed the reload cache. When Postgres is active, use the raw JSONB config for
-    // fingerprinting (same format that build_live_config uses on reload). For YAML-only,
-    // serialize the ClusterConfig.
-    let initial_config_json: HashMap<String, String> =
-        if let Some(records) = &startup_cluster_records {
-            records
-                .iter()
-                .map(|r| {
-                    (
-                        r.name.clone(),
-                        serde_json::to_string(&r.config).unwrap_or_default(),
-                    )
-                })
-                .collect()
-        } else {
-            live_config
-                .cluster_configs
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::to_string(v).unwrap_or_default()))
-                .collect()
-        };
+    // Seed the reload cache. When Postgres is active, fingerprint `engine_key` + JSONB config
+    // (same format as `build_live_config` on reload) so an engine change rebuilds adapters even
+    // when the config blob shape is unchanged. For YAML-only, fold canonical `engine_key` + `ClusterConfig`.
+    let initial_config_json: HashMap<String, String> = if let Some(records) =
+        &startup_cluster_records
+    {
+        records
+            .iter()
+            .map(|r| {
+                (
+                    r.name.clone(),
+                    serde_json::to_string(&(r.engine_key.as_str(), &r.config)).unwrap_or_default(),
+                )
+            })
+            .collect()
+    } else {
+        live_config
+            .cluster_configs
+            .iter()
+            .map(|(k, v)| {
+                let ek = v
+                    .engine
+                    .as_ref()
+                    .map(queryflux_core::engine_registry::engine_key)
+                    .unwrap_or("");
+                (
+                    k.clone(),
+                    serde_json::to_string(&(ek, v)).unwrap_or_default(),
+                )
+            })
+            .collect()
+    };
     let adapter_reload_cache = Arc::new(tokio::sync::Mutex::new(AdapterReloadCache {
         adapters: live_config.adapters.clone(),
         config_json: initial_config_json,
@@ -672,6 +712,14 @@ async fn main() -> Result<()> {
     }));
     let live = Arc::new(tokio::sync::RwLock::new(live_config));
 
+    let snowflake_session_policy = config
+        .queryflux
+        .frontends
+        .snowflake_http
+        .as_ref()
+        .map(SnowflakeHttpSessionPolicy::from_frontend_config)
+        .unwrap_or_default();
+
     let app_state = Arc::new(AppState {
         external_address: external_address.clone(),
         live: live.clone(),
@@ -681,7 +729,7 @@ async fn main() -> Result<()> {
         auth_provider,
         authorization,
         identity_resolver,
-        snowflake_sessions: SnowflakeSessionStore::new(),
+        snowflake_sessions: SnowflakeSessionStore::new(snowflake_session_policy),
     });
 
     // --- Start admin server (Prometheus /metrics + future /admin/* endpoints) ---
@@ -1052,7 +1100,8 @@ type GroupStatesMap = HashMap<
 >;
 
 /// Holds adapter instances between DB reloads. Adapters are recreated when the
-/// serialized [`ClusterConfig`] for a cluster changes so pools pick up new endpoints/credentials.
+/// reload fingerprint changes (`engine_key` + config JSON), so engine switches and
+/// endpoint/credential updates rebuild adapters.
 struct AdapterReloadCache {
     adapters: HashMap<String, Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>>,
     config_json: HashMap<String, String>,
@@ -1090,8 +1139,8 @@ fn health_targets_from_groups(
 /// in each `ClusterConfigRecord`, bypassing the `ClusterConfig` god struct.
 ///
 /// `cache` holds adapter instances from the previous generation. Adapters are reused
-/// only when the cluster's JSON-serialized config matches the previous reload; otherwise
-/// they are rebuilt (e.g. endpoint or password changed).
+/// only when the fingerprint of `engine_key` + JSONB config matches the previous reload;
+/// otherwise they are rebuilt (e.g. engine switch, endpoint, or password changed).
 #[allow(clippy::too_many_arguments)]
 async fn build_live_config(
     cluster_records: &[queryflux_persistence::cluster_config::ClusterConfigRecord],
@@ -1107,7 +1156,9 @@ async fn build_live_config(
         cluster_state::ClusterState, simple::SimpleClusterGroupManager,
         strategy::strategy_from_config,
     };
-    use queryflux_core::engine_registry::{json_str, parse_engine_key};
+    use queryflux_core::engine_registry::{
+        json_str, parse_auth_from_config_json, parse_engine_key, parse_query_auth_from_config_json,
+    };
     use queryflux_core::tags::QueryTags;
 
     // Build a lookup map from records for group member resolution.
@@ -1127,7 +1178,8 @@ async fn build_live_config(
             cache.config_json.remove(cluster_name_str.as_str());
             continue;
         }
-        let cfg_json = serde_json::to_string(&record.config).unwrap_or_default();
+        let cfg_json = serde_json::to_string(&(record.engine_key.as_str(), &record.config))
+            .unwrap_or_default();
         let reuse = cache.adapters.contains_key(cluster_name_str.as_str())
             && cache
                 .config_json
@@ -1218,7 +1270,8 @@ async fn build_live_config(
             // When config changed or the cluster is new, create a fresh state but
             // still inherit is_healthy from the previous generation so the UI does not
             // flash healthy for 30 s until the next health-check tick.
-            let cfg_json = serde_json::to_string(&record.config).unwrap_or_default();
+            let cfg_json = serde_json::to_string(&(record.engine_key.as_str(), &record.config))
+                .unwrap_or_default();
             let config_unchanged = cache
                 .config_json
                 .get(member_name.as_str())
@@ -1272,8 +1325,7 @@ async fn build_live_config(
         .collect();
     let cluster_manager = Arc::new(SimpleClusterGroupManager::new(group_states));
 
-    // Build minimal ClusterConfig values for BackendIdentityResolver.
-    // query_auth is not persisted to DB, so it's always None for DB-loaded clusters.
+    // Build minimal ClusterConfig values for BackendIdentityResolver (`queryAuth` from JSONB).
     let cluster_configs: HashMap<String, queryflux_core::config::ClusterConfig> = cluster_records
         .iter()
         .filter_map(|r| {
@@ -1295,8 +1347,8 @@ async fn build_live_config(
                     role: None,
                     schema: None,
                     tls: None,
-                    auth: None,
-                    query_auth: None,
+                    auth: parse_auth_from_config_json(&r.config),
+                    query_auth: parse_query_auth_from_config_json(&r.config),
                 },
             ))
         })
