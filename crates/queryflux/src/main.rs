@@ -208,12 +208,14 @@ async fn main() -> Result<()> {
                     None
                 }
             };
+            let max_running =
+                max_running_queries_u64_from_db(&r.name, r.max_running_queries)?;
             clusters.insert(
                 r.name.clone(),
                 queryflux_core::engine_registry::cluster_config_from_persisted_json(
                     engine,
                     r.enabled,
-                    r.max_running_queries.map(|v| v as u64),
+                    max_running,
                     &r.config,
                     auth,
                     query_auth,
@@ -1064,6 +1066,19 @@ type GroupStatesMap = HashMap<
     ),
 >;
 
+/// Convert optional Postgres `BIGINT` (`max_running_queries`) to `Option<u64>`.
+/// Negative values fail fast (invalid row).
+fn max_running_queries_u64_from_db(cluster: &str, v: Option<i64>) -> Result<Option<u64>> {
+    match v {
+        None => Ok(None),
+        Some(n) => u64::try_from(n).map(Some).map_err(|_| {
+            anyhow::anyhow!(
+                "cluster '{cluster}': max_running_queries must be non-negative (got {n})"
+            )
+        }),
+    }
+}
+
 /// Holds adapter instances between DB reloads. Adapters are recreated when the
 /// reload fingerprint changes (`engine_key` + config JSON), so engine switches and
 /// endpoint/credential updates rebuild adapters.
@@ -1227,9 +1242,7 @@ async fn build_live_config(
                 Err(_) => continue,
             };
             let engine_type = EngineType::from(&engine);
-            let max_q = record
-                .max_running_queries
-                .map(|v| v as u64)
+            let max_q = max_running_queries_u64_from_db(member_name, record.max_running_queries)?
                 .unwrap_or(group_config.max_running_queries);
             let endpoint = json_str(&record.config, "endpoint");
             let cluster_cid = cluster_ids_by_name.get(member_name.as_str()).copied();
@@ -1303,12 +1316,13 @@ async fn build_live_config(
                 None
             }
         };
+        let max_running = max_running_queries_u64_from_db(&r.name, r.max_running_queries)?;
         cluster_configs.insert(
             r.name.clone(),
             cluster_config_from_persisted_json(
                 engine,
                 r.enabled,
-                r.max_running_queries.map(|v| v as u64),
+                max_running,
                 &r.config,
                 auth,
                 query_auth,

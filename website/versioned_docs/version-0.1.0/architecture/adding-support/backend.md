@@ -31,7 +31,7 @@ So you implement **two constructors** on the adapter (plus a small **factory** t
 
 ## Follow this order (Rust)
 
-Treat **[Trino](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/trino/mod.rs)** as the default template (sync HTTP). Use **[Athena](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/athena/mod.rs)** if your setup is **async** (e.g. cloud SDK init).
+Treat **[Trino](https://github.com/lakeops-org/queryflux/blob/4291f8cdae851fec39e12c18acdfa5ae109e8c91/crates/queryflux-engine-adapters/src/trino/mod.rs)** as the default template (sync HTTP). Use **[Athena](https://github.com/lakeops-org/queryflux/blob/4291f8cdae851fec39e12c18acdfa5ae109e8c91/crates/queryflux-engine-adapters/src/athena/mod.rs)** if your setup is **async** (e.g. cloud SDK init).
 
 ### Step 1 — Name the engine in core (`queryflux-core`)
 
