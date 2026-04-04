@@ -1,6 +1,6 @@
 CARGO        := $(HOME)/.cargo/bin/cargo
 COMPOSE      := docker compose -f docker/docker-compose.yml --project-directory .
-COMPOSE_TEST := docker compose -f docker/test/docker-compose.test.yml --project-directory .
+COMPOSE_TEST := docker compose -f docker/docker-compose.test.yml --project-directory .
 
 # site-packages for `.venv` (any Python 3.x); expanded when recipes run after `make setup`.
 PYTHONPATH_VENV = $(shell .venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')
@@ -81,9 +81,9 @@ benchmark:
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) run --release -p queryflux-bench
 
-## Run E2E tests. Spins up Trino + StarRocks + fakesnow + Lakekeeper via Docker.
+## Run E2E tests. Spins up Trino + StarRocks + Lakekeeper stack via Docker.
 ## Same command as CI `.github/workflows/ci.yml` (`make test-e2e`).
-## Requires reachable engines; see docker/test/docker-compose.test.yml.
+## Requires reachable engines; see docker/docker-compose.test.yml.
 ## `--test-threads=1`: StarRocks Iceberg is slow; default parallel libtest + `#[serial]` makes
 ## every test report libtest's 60s "slow test" spam while threads wait on the serial lock.
 ## Iceberg/Lakekeeper tables are created by the e2e crate (no TPC-H loader).
@@ -91,12 +91,11 @@ test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
-	$(COMPOSE_TEST) up -d --wait trino starrocks fakesnow sentinel
+	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	TRINO_URL=http://localhost:18081 \
 	STARROCKS_URL=mysql://root@localhost:9030 \
-	FAKESNOW_URL=http://localhost:18085 \
 	LAKEKEEPER_URL=http://localhost:18181 \
 	MINIO_ENDPOINT=localhost:19000 \
 	$(CARGO) test -p queryflux-e2e-tests --manifest-path Cargo.toml -- --test-threads=1 --include-ignored --nocapture
