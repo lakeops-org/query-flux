@@ -270,7 +270,9 @@ impl TestHarness {
     where
         F: Fn(&QueryRecord) -> bool,
     {
-        for _ in 0..50 {
+        // `AppState::record_query` schedules `MetricsStore::record_query` via `tokio::spawn`.
+        // On slow shared runners the task can land after several hundred ms; keep a generous window.
+        for _ in 0..150 {
             if let Some(record) = self
                 .records
                 .lock()
