@@ -85,7 +85,7 @@ Authoritative shapes are the serde types in `queryflux-core` (`config.rs`) and w
 
 - **PyO3 / Python not found:** Set `PYO3_PYTHON` to the venv’s `python3` and ensure `make setup` completed.
 - **Port conflicts:** Adjust ports in `docker/docker-compose.yml` or disable conflicting local services.
-- **E2E failures:** Bring up `docker/docker-compose.test.yml` (Trino, StarRocks, Iceberg stack); see `make test-e2e`.
+- **E2E failures:** Bring up `docker/test/docker-compose.test.yml` (Trino, StarRocks, Iceberg stack); see `make test-e2e`.
 
 For contribution expectations (PRs, tests, docs), see **[Contributing](/docs/contribute)**.
 

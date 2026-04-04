@@ -14,6 +14,9 @@ queryflux:
     trinoHttp:
       enabled: true
       port: 8080
+    flightSql:
+      enabled: false
+      port: 50051
   persistence:
     type: inMemory  # or: postgres
 
@@ -39,6 +42,7 @@ clusterGroups:
 routers:
   - type: protocolBased
     trinoHttp: trino-default
+    flightSql: trino-default
 
   - type: header
     headerName: x-target-engine

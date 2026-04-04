@@ -3554,6 +3554,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3565,8 +3566,11 @@ dependencies = [
  "arrow-ipc",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "chrono",
+ "dashmap",
+ "flate2",
  "futures",
  "prost",
  "queryflux-auth",
@@ -3580,6 +3584,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -3587,6 +3592,7 @@ dependencies = [
  "tracing",
  "urlencoding",
  "utoipa",
+ "uuid",
 ]
 
 [[package]]

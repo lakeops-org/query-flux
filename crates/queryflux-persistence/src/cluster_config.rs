@@ -112,11 +112,16 @@ pub struct UpsertClusterGroupConfig {
 // ---------------------------------------------------------------------------
 
 use queryflux_core::config::{ClusterAuth, ClusterConfig, ClusterGroupConfig};
-use queryflux_core::engine_registry::{engine_key, parse_engine_key};
+use queryflux_core::engine_registry::engine_key;
 
 impl UpsertClusterConfig {
-    pub fn from_core(cfg: &ClusterConfig) -> Option<Self> {
-        let engine = cfg.engine.as_ref()?;
+    /// Serializes `ClusterConfig` into the JSONB shape stored in Postgres.
+    ///
+    /// Returns `Ok(None)` when `engine` is missing. Fails if `queryAuth` cannot be encoded.
+    pub fn from_core(cfg: &ClusterConfig) -> Result<Option<Self>, serde_json::Error> {
+        let Some(engine) = cfg.engine.as_ref() else {
+            return Ok(None);
+        };
         let engine_key = engine_key(engine);
 
         let mut config = serde_json::Map::new();
@@ -188,12 +193,16 @@ impl UpsertClusterConfig {
             None => {}
         }
 
-        Some(Self {
+        if let Some(qa) = &cfg.query_auth {
+            config.insert("queryAuth".into(), serde_json::to_value(qa)?);
+        }
+
+        Ok(Some(Self {
             engine_key: engine_key.to_owned(),
             enabled: cfg.enabled,
             max_running_queries: cfg.max_running_queries.map(|v| v as i64),
             config: serde_json::Value::Object(config),
-        })
+        }))
     }
 }
 
@@ -221,71 +230,10 @@ impl UpsertClusterGroupConfig {
 // Conversion helpers: DB records → core config types (for startup loading)
 // ---------------------------------------------------------------------------
 
-impl ClusterConfigRecord {
-    pub fn to_core(&self) -> queryflux_core::error::Result<ClusterConfig> {
-        use queryflux_core::config::TlsConfig;
-        use queryflux_core::error::QueryFluxError;
-
-        let engine = parse_engine_key(&self.engine_key).map_err(|_| {
-            QueryFluxError::Engine(format!("Unknown engine key in DB: '{}'", self.engine_key))
-        })?;
-
-        // Helpers to extract typed values from the config JSON.
-        let s = |key: &str| -> Option<String> {
-            self.config
-                .get(key)
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        };
-        let b = |key: &str| -> bool {
-            self.config
-                .get(key)
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        };
-
-        let auth = match s("authType").as_deref() {
-            Some("basic") => Some(ClusterAuth::Basic {
-                username: s("authUsername").unwrap_or_default(),
-                password: s("authPassword").unwrap_or_default(),
-            }),
-            Some("bearer") => Some(ClusterAuth::Bearer {
-                token: s("authToken").unwrap_or_default(),
-            }),
-            Some("accessKey") => Some(ClusterAuth::AccessKey {
-                access_key_id: s("authUsername").unwrap_or_default(),
-                secret_access_key: s("authPassword").unwrap_or_default(),
-                session_token: s("authToken"),
-            }),
-            Some("roleArn") => Some(ClusterAuth::RoleArn {
-                role_arn: s("authUsername").unwrap_or_default(),
-                external_id: s("authToken"),
-            }),
-            _ => None,
-        };
-
-        Ok(ClusterConfig {
-            engine: Some(engine),
-            enabled: self.enabled,
-            max_running_queries: self.max_running_queries.map(|v| v as u64),
-            endpoint: s("endpoint"),
-            database_path: s("databasePath"),
-            region: s("region"),
-            s3_output_location: s("s3OutputLocation"),
-            workgroup: s("workgroup"),
-            catalog: s("catalog"),
-            tls: if b("tlsInsecureSkipVerify") {
-                Some(TlsConfig {
-                    insecure_skip_verify: true,
-                })
-            } else {
-                None
-            },
-            auth,
-            query_auth: None, // not persisted to DB; loaded from YAML config only
-        })
-    }
-}
+// NOTE: `ClusterConfigRecord::to_core()` has been removed. Engine adapters are
+// built from the JSONB config blob via `try_from_config_json()` on each adapter.
+// Type 1 auth uses `parse_auth_from_config_json`; Type 2 (`queryAuth`) uses
+// `parse_query_auth_from_config_json` — both in `queryflux_core::engine_registry`.
 
 impl ClusterGroupConfigRecord {
     pub fn to_core(&self) -> ClusterGroupConfig {

@@ -8,29 +8,61 @@ use queryflux_core::config::{ClusterConfig, EngineConfig};
 use queryflux_core::engine_registry::EngineDescriptor;
 use queryflux_core::error::QueryFluxError;
 use queryflux_core::query::{ClusterGroupName, ClusterName};
-use queryflux_engine_adapters::athena::AthenaAdapter;
-use queryflux_engine_adapters::duckdb::http::DuckDbHttpAdapter;
-use queryflux_engine_adapters::duckdb::DuckDbAdapter;
-use queryflux_engine_adapters::starrocks::StarRocksAdapter;
-use queryflux_engine_adapters::trino::TrinoAdapter;
-use queryflux_engine_adapters::EngineAdapterTrait;
+use queryflux_engine_adapters::athena::{AthenaAdapter, AthenaFactory};
+use queryflux_engine_adapters::duckdb::http::{DuckDbHttpAdapter, DuckDbHttpFactory};
+use queryflux_engine_adapters::duckdb::{DuckDbAdapter, DuckDbFactory};
+use queryflux_engine_adapters::starrocks::{StarRocksAdapter, StarRocksFactory};
+use queryflux_engine_adapters::trino::{TrinoAdapter, TrinoFactory};
+use queryflux_engine_adapters::{EngineAdapterFactory, EngineAdapterTrait};
+
+/// All registered engine adapter factories.
+///
+/// Adding a new engine means adding its factory here — the rest is driven by
+/// the [`EngineAdapterFactory`] trait.
+pub fn all_factories() -> Vec<Box<dyn EngineAdapterFactory>> {
+    vec![
+        Box::new(TrinoFactory),
+        Box::new(DuckDbFactory),
+        Box::new(DuckDbHttpFactory),
+        Box::new(StarRocksFactory),
+        Box::new(AthenaFactory),
+    ]
+}
 
 /// All engine descriptors for [`queryflux_core::engine_registry::EngineRegistry`].
 pub fn all_descriptors() -> Vec<EngineDescriptor> {
-    vec![
-        TrinoAdapter::descriptor(),
-        DuckDbAdapter::descriptor(),
-        DuckDbHttpAdapter::descriptor(),
-        StarRocksAdapter::descriptor(),
-        AthenaAdapter::descriptor(),
-    ]
+    all_factories().iter().map(|f| f.descriptor()).collect()
 }
 
 fn map_qf_err(e: QueryFluxError) -> anyhow::Error {
     anyhow::Error::new(e)
 }
 
+/// Build an adapter directly from a DB record's engine key + config JSON blob.
+///
+/// This is the DB load path: `JSONB -> adapter`, bypassing the `ClusterConfig` god struct.
+/// Looks up the matching [`EngineAdapterFactory`] by `engine_key`.
+pub async fn build_adapter_from_record(
+    cluster_name: ClusterName,
+    group: ClusterGroupName,
+    engine_key: &str,
+    config_json: &serde_json::Value,
+) -> Result<Arc<dyn EngineAdapterTrait>> {
+    let factories = all_factories();
+    let factory = factories
+        .iter()
+        .find(|f| f.engine_key() == engine_key)
+        .ok_or_else(|| anyhow::anyhow!("Unknown engine key: '{engine_key}'"))?;
+
+    factory
+        .build_from_config_json(cluster_name, group, config_json)
+        .await
+        .map_err(map_qf_err)
+}
+
 /// Build an adapter for `cluster_cfg`. `cluster_name_str` is used only in error context messages.
+///
+/// This is the YAML load path: `ClusterConfig -> adapter`. Kept for backward compatibility.
 pub async fn build_adapter(
     cluster_name: ClusterName,
     placeholder_group: ClusterGroupName,

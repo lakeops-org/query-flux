@@ -1,7 +1,7 @@
 /// Unit tests for router implementations (`Header`, `ProtocolBased`, `ClientTags`, `QueryRegex`,
 /// `Compound`, `PythonScript`) and `RouterChain`.
 ///
-/// Covers all `FrontendProtocol` variants on `ProtocolBasedRouter`, `CompoundCondition` kinds
+/// Covers `FrontendProtocol` variants on `ProtocolBasedRouter`, `CompoundCondition` kinds
 /// (including `Header` on Trino HTTP + ClickHouse HTTP), and chain fallthrough.
 ///
 /// No engine or HTTP server required — pure routing logic.
@@ -146,6 +146,7 @@ async fn protocol_router_trino_http() {
         postgres_wire: Some(group("pg-group")),
         mysql_wire: None,
         clickhouse_http: None,
+        flight_sql: None,
     };
     let session = trino_session(&[]);
     let result = router
@@ -162,6 +163,7 @@ async fn protocol_router_postgres_wire() {
         postgres_wire: Some(group("pg-group")),
         mysql_wire: None,
         clickhouse_http: None,
+        flight_sql: None,
     };
     let result = router
         .route(
@@ -182,6 +184,7 @@ async fn protocol_router_unconfigured() {
         postgres_wire: None, // not configured
         mysql_wire: None,
         clickhouse_http: None,
+        flight_sql: None,
     };
     let result = router
         .route(
@@ -202,6 +205,7 @@ async fn protocol_router_mysql_wire() {
         postgres_wire: None,
         mysql_wire: Some(group("mysql-group")),
         clickhouse_http: None,
+        flight_sql: None,
     };
     let result = router
         .route(
@@ -222,6 +226,7 @@ async fn protocol_router_clickhouse_http() {
         postgres_wire: None,
         mysql_wire: None,
         clickhouse_http: Some(group("ch-group")),
+        flight_sql: None,
     };
     let result = router
         .route(
@@ -236,13 +241,15 @@ async fn protocol_router_clickhouse_http() {
 }
 
 #[tokio::test]
-async fn protocol_router_flight_sql_not_routed() {
+async fn protocol_router_flight_sql() {
     let router = ProtocolBasedRouter {
         trino_http: Some(group("trino-group")),
         postgres_wire: Some(group("pg-group")),
         mysql_wire: Some(group("mysql-group")),
         clickhouse_http: Some(group("ch-group")),
+        flight_sql: Some(group("sf-analytics")),
     };
+    // `ProtocolBasedRouter` routes on frontend protocol only (session is ignored).
     let result = router
         .route(
             "SELECT 1",
@@ -252,7 +259,7 @@ async fn protocol_router_flight_sql_not_routed() {
         )
         .await
         .unwrap();
-    assert_eq!(result, None);
+    assert_eq!(result, Some(group("sf-analytics")));
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,6 +1050,7 @@ async fn chain_protocol_based_then_header_fallback() {
                 postgres_wire: Some(group("pg-from-protocol")),
                 mysql_wire: None,
                 clickhouse_http: None,
+                flight_sql: None,
             }),
             Box::new(HeaderRouter::new(
                 "x-tenant".to_string(),

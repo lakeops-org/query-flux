@@ -648,6 +648,8 @@ pub enum RouterConfig {
         mysql_wire: Option<String>,
         #[serde(default)]
         clickhouse_http: Option<String>,
+        #[serde(default)]
+        flight_sql: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Header {

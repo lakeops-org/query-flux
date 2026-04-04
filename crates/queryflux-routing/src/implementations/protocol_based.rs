@@ -9,12 +9,13 @@ use crate::RouterTrait;
 
 /// Routes based on which frontend protocol the client used.
 /// Useful for directing MySQL-wire clients (StarRocks) to a different group
-/// than Trino HTTP clients.
+/// than Trino HTTP clients, or Flight SQL clients to a dedicated group.
 pub struct ProtocolBasedRouter {
     pub trino_http: Option<ClusterGroupName>,
     pub postgres_wire: Option<ClusterGroupName>,
     pub mysql_wire: Option<ClusterGroupName>,
     pub clickhouse_http: Option<ClusterGroupName>,
+    pub flight_sql: Option<ClusterGroupName>,
 }
 
 #[async_trait]
@@ -35,7 +36,7 @@ impl RouterTrait for ProtocolBasedRouter {
             FrontendProtocol::PostgresWire => self.postgres_wire.clone(),
             FrontendProtocol::MySqlWire => self.mysql_wire.clone(),
             FrontendProtocol::ClickHouseHttp => self.clickhouse_http.clone(),
-            FrontendProtocol::FlightSql => None,
+            FrontendProtocol::FlightSql => self.flight_sql.clone(),
         };
         Ok(group)
     }

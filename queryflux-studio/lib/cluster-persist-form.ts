@@ -22,6 +22,10 @@ export const MANAGED_CONFIG_JSON_KEYS = new Set([
   "s3OutputLocation",
   "workgroup",
   "catalog",
+  "account",
+  "warehouse",
+  "role",
+  "schema",
 ]);
 
 function jsonScalarToString(v: unknown): string {
@@ -44,6 +48,10 @@ export function persistedClusterConfigToFlat(
   flat.s3OutputLocation = jsonScalarToString(config.s3OutputLocation);
   flat.workgroup = jsonScalarToString(config.workgroup);
   flat.catalog = jsonScalarToString(config.catalog);
+  flat.account = jsonScalarToString(config.account);
+  flat.warehouse = jsonScalarToString(config.warehouse);
+  flat.role = jsonScalarToString(config.role);
+  flat.schema = jsonScalarToString(config.schema);
 
   const authType = jsonScalarToString(config.authType);
   if (authType) flat["auth.type"] = authType;
@@ -80,6 +88,10 @@ export function flatToPersistedConfig(flat: Record<string, string>): Record<stri
   if (flat.s3OutputLocation?.trim()) cfg.s3OutputLocation = flat.s3OutputLocation.trim();
   if (flat.workgroup?.trim()) cfg.workgroup = flat.workgroup.trim();
   if (flat.catalog?.trim()) cfg.catalog = flat.catalog.trim();
+  if (flat.account?.trim()) cfg.account = flat.account.trim();
+  if (flat.warehouse?.trim()) cfg.warehouse = flat.warehouse.trim();
+  if (flat.role?.trim()) cfg.role = flat.role.trim();
+  if (flat.schema?.trim()) cfg.schema = flat.schema.trim();
   return cfg;
 }
 
@@ -126,6 +138,10 @@ export function mergeClusterConfigFromFlat(
   setOrDel("s3OutputLocation", flat.s3OutputLocation, "s3OutputLocation");
   setOrDel("workgroup", flat.workgroup, "workgroup");
   setOrDel("catalog", flat.catalog, "catalog");
+  setOrDel("account", flat.account, "account");
+  setOrDel("warehouse", flat.warehouse, "warehouse");
+  setOrDel("role", flat.role, "role");
+  setOrDel("schema", flat.schema, "schema");
 
   return out;
 }
@@ -157,6 +173,10 @@ export function buildValidateShape(flat: Record<string, string>): Record<string,
   }
   if (flat.region) o.region = flat.region;
   if (flat.s3OutputLocation) o.s3OutputLocation = flat.s3OutputLocation;
+  if (flat.account) o.account = flat.account;
+  if (flat.warehouse) o.warehouse = flat.warehouse;
+  if (flat.role) o.role = flat.role;
+  if (flat.schema) o.schema = flat.schema;
   const auth: Record<string, string> = {};
   if (flat["auth.type"]) auth.type = flat["auth.type"];
   if (flat["auth.username"]) auth.username = flat["auth.username"];

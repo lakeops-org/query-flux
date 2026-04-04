@@ -14,6 +14,9 @@ queryflux:
     trinoHttp:
       enabled: true
       port: 8080
+    snowflakeHttp:
+      enabled: true
+      port: 8445
   persistence:
     type: inMemory  # or: postgres
 
@@ -39,6 +42,8 @@ clusterGroups:
 routers:
   - type: protocolBased
     trinoHttp: trino-default
+    snowflakeHttp: trino-default
+    snowflakeSqlApi: trino-default
 
   - type: header
     headerName: x-target-engine

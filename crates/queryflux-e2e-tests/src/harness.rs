@@ -2,7 +2,7 @@
 ///
 /// Backends are optional and discovered via connectivity / env:
 ///   TRINO_URL         — default http://localhost:18081
-///   STARROCKS_URL     — default mysql://root@localhost:19030
+///   STARROCKS_URL     — default mysql://root@localhost:9030 (matches docker-compose.test.yml)
 ///
 /// Lakekeeper / Iceberg (optional):
 ///   LAKEKEEPER_URL, MINIO_ENDPOINT — StarRocks external catalog DDL only.
@@ -180,7 +180,7 @@ impl TestHarness {
         if group_states.is_empty() {
             return Err(anyhow!(
                 "No backends reachable. Start docker compose (see docker/docker-compose.test.yml): \
-                 Trino :18081 and/or StarRocks :19030."
+                 Trino :18081 and/or StarRocks :9030."
             ));
         }
 
@@ -232,7 +232,8 @@ impl TestHarness {
             identity_resolver: Arc::new(BackendIdentityResolver::new()),
         });
 
-        let router: Router = TrinoHttpFrontend::new(state, port).router();
+        let trino_fe = TrinoHttpFrontend::new(state, port);
+        let router: Router = trino_fe.router();
         let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {

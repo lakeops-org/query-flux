@@ -5,3 +5,14 @@
 *.duckdb
 config.yaml
 .venv/
+
+# Local-only tooling (never commit or push)
+.idea/
+.cursor/
+.claude/
+snowflake-client/
+examples/node-starrocks-via-queryflux/
+
+# Local config and notes (never commit or push)
+config.local.yaml
+PERFORMANCE_FINDINGS.md

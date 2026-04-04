@@ -126,6 +126,10 @@ async fn main() -> Result<()> {
     // Filled when Postgres loads cluster/group rows — used for query_history FKs on ClusterState.
     let mut cluster_ids_by_name: HashMap<String, i64> = HashMap::new();
     let mut group_ids_by_name: HashMap<String, i64> = HashMap::new();
+    // DB cluster records kept for adapter building via build_adapter_from_record.
+    let mut startup_cluster_records: Option<
+        Vec<queryflux_persistence::cluster_config::ClusterConfigRecord>,
+    > = None;
 
     // --- When Postgres is active, load cluster/group config from DB ---
     // Merge YAML-defined clusters and groups into Postgres on **every** startup when the
@@ -137,10 +141,18 @@ async fn main() -> Result<()> {
         if !config.clusters.is_empty() {
             info!("Applying cluster definitions from YAML to Postgres");
             for (name, cfg) in &config.clusters {
-                if let Some(upsert) = UpsertClusterConfig::from_core(cfg) {
-                    pg.upsert_cluster_config(name, &upsert)
-                        .await
-                        .with_context(|| format!("Upsert cluster '{name}' from YAML"))?;
+                match UpsertClusterConfig::from_core(cfg) {
+                    Ok(Some(upsert)) => {
+                        pg.upsert_cluster_config(name, &upsert)
+                            .await
+                            .with_context(|| format!("Upsert cluster '{name}' from YAML"))?;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        return Err(anyhow::Error::from(e).context(format!(
+                            "cluster '{name}': serializing queryAuth for Postgres seed"
+                        )));
+                    }
                 }
             }
         }
@@ -155,23 +167,62 @@ async fn main() -> Result<()> {
 
         // Effective config comes from Postgres (YAML above only upserts keys that appear in the file).
         info!("Loading cluster and group configs from Postgres");
-        let cluster_records = pg
+        let db_cluster_records = pg
             .list_cluster_configs()
             .await
             .context("Load cluster configs from DB")?;
-        cluster_ids_by_name = cluster_records
+        cluster_ids_by_name = db_cluster_records
             .iter()
             .map(|r| (r.name.clone(), r.id))
             .collect();
-        config.clusters = cluster_records
-            .into_iter()
-            .map(|r| {
-                let name = r.name.clone();
-                r.to_core()
-                    .map(|c| (name, c))
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-            })
-            .collect::<anyhow::Result<_>>()?;
+        // Build minimal ClusterConfig values for validation, group resolution, and
+        // `BackendIdentityResolver` (`queryAuth`). Adapters are still built from the
+        // raw JSONB via `build_adapter_from_record`.
+        let mut clusters: HashMap<String, queryflux_core::config::ClusterConfig> = HashMap::new();
+        for r in &db_cluster_records {
+            let engine = match queryflux_core::engine_registry::parse_engine_key(&r.engine_key) {
+                Ok(e) => e,
+                Err(err) => {
+                    tracing::warn!(cluster = %r.name, "skipping cluster: {err}");
+                    continue;
+                }
+            };
+            let query_auth =
+                match queryflux_core::engine_registry::parse_query_auth_from_config_json(&r.config)
+                {
+                    Ok(qa) => qa,
+                    Err(e) => {
+                        return Err(e).with_context(|| {
+                            format!("cluster '{}': invalid queryAuth in JSONB", r.name)
+                        });
+                    }
+                };
+            let auth = match queryflux_core::engine_registry::parse_auth_from_config_json(&r.config)
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!(
+                        cluster = %r.name,
+                        "invalid auth in cluster config JSON: {e}"
+                    );
+                    None
+                }
+            };
+            let max_running = max_running_queries_u64_from_db(&r.name, r.max_running_queries)?;
+            clusters.insert(
+                r.name.clone(),
+                queryflux_core::engine_registry::cluster_config_from_persisted_json(
+                    engine,
+                    r.enabled,
+                    max_running,
+                    &r.config,
+                    auth,
+                    query_auth,
+                ),
+            );
+        }
+        config.clusters = clusters;
+        startup_cluster_records = Some(db_cluster_records);
 
         let group_records = pg
             .list_group_configs()
@@ -278,23 +329,43 @@ async fn main() -> Result<()> {
     let mut adapters: AdapterMap = HashMap::new();
 
     // Pass 1 — one adapter per cluster.
-    for (cluster_name_str, cluster_cfg) in &config.clusters {
-        if !cluster_cfg.enabled {
-            tracing::info!(cluster = %cluster_name_str, "Cluster disabled — skipping");
-            continue;
+    // DB path: build from JSONB records directly; YAML path: build from ClusterConfig.
+    if let Some(records) = &startup_cluster_records {
+        for record in records {
+            if !record.enabled {
+                tracing::info!(cluster = %record.name, "Cluster disabled — skipping");
+                continue;
+            }
+            let cluster_name = ClusterName(record.name.clone());
+            let placeholder_group = ClusterGroupName("_".to_string());
+            let adapter = registered_engines::build_adapter_from_record(
+                cluster_name,
+                placeholder_group,
+                &record.engine_key,
+                &record.config,
+            )
+            .await
+            .with_context(|| format!("Failed to build adapter for cluster '{}'", record.name))?;
+            adapters.insert(record.name.clone(), adapter);
         }
-        let cluster_name = ClusterName(cluster_name_str.clone());
-        let placeholder_group = ClusterGroupName("_".to_string());
-        let adapter = registered_engines::build_adapter(
-            cluster_name,
-            placeholder_group,
-            cluster_cfg,
-            cluster_name_str,
-        )
-        .await
-        .with_context(|| format!("Failed to build adapter for cluster '{cluster_name_str}'"))?;
-
-        adapters.insert(cluster_name_str.clone(), adapter);
+    } else {
+        for (cluster_name_str, cluster_cfg) in &config.clusters {
+            if !cluster_cfg.enabled {
+                tracing::info!(cluster = %cluster_name_str, "Cluster disabled — skipping");
+                continue;
+            }
+            let cluster_name = ClusterName(cluster_name_str.clone());
+            let placeholder_group = ClusterGroupName("_".to_string());
+            let adapter = registered_engines::build_adapter(
+                cluster_name,
+                placeholder_group,
+                cluster_cfg,
+                cluster_name_str,
+            )
+            .await
+            .with_context(|| format!("Failed to build adapter for cluster '{cluster_name_str}'"))?;
+            adapters.insert(cluster_name_str.clone(), adapter);
+        }
     }
 
     // Pass 2 — one group entry per cluster_group, resolving member cluster names.
@@ -392,6 +463,7 @@ async fn main() -> Result<()> {
                 postgres_wire,
                 mysql_wire,
                 clickhouse_http,
+                flight_sql,
             } => {
                 routers.push(Box::new(ProtocolBasedRouter {
                     trino_http: trino_http.as_ref().map(|s| ClusterGroupName(s.clone())),
@@ -400,6 +472,7 @@ async fn main() -> Result<()> {
                     clickhouse_http: clickhouse_http
                         .as_ref()
                         .map(|s| ClusterGroupName(s.clone())),
+                    flight_sql: flight_sql.as_ref().map(|s| ClusterGroupName(s.clone())),
                 }));
             }
             RouterConfig::Header {
@@ -580,19 +653,49 @@ async fn main() -> Result<()> {
         group_translation_scripts,
         group_default_tags,
     };
-    let adapter_reload_cache = Arc::new(tokio::sync::Mutex::new(AdapterReloadCache {
-        adapters: live_config.adapters.clone(),
-        config_json: live_config
+    // Seed the reload cache. When Postgres is active, fingerprint `engine_key` + JSONB config
+    // (same format as `build_live_config` on reload) so an engine change rebuilds adapters even
+    // when the config blob shape is unchanged. For YAML-only, fold canonical `engine_key` + `ClusterConfig`.
+    let initial_config_json: HashMap<String, String> = if let Some(records) =
+        &startup_cluster_records
+    {
+        records
+            .iter()
+            .map(|r| {
+                (
+                    r.name.clone(),
+                    serde_json::to_string(&(r.engine_key.as_str(), &r.config)).unwrap_or_default(),
+                )
+            })
+            .collect()
+    } else {
+        live_config
             .cluster_configs
             .iter()
-            .map(|(k, v)| (k.clone(), serde_json::to_string(v).unwrap_or_default()))
-            .collect(),
+            .map(|(k, v)| {
+                let ek = v
+                    .engine
+                    .as_ref()
+                    .map(queryflux_core::engine_registry::engine_key)
+                    .unwrap_or("");
+                (
+                    k.clone(),
+                    serde_json::to_string(&(ek, v)).unwrap_or_default(),
+                )
+            })
+            .collect()
+    };
+    let adapter_reload_cache = Arc::new(tokio::sync::Mutex::new(AdapterReloadCache {
+        adapters: live_config.adapters.clone(),
+        config_json: initial_config_json,
         // Seed with the initial cluster states so the first reload can inherit health status.
         cluster_states: live_config
             .health_check_targets
             .iter()
             .map(|(_, s)| (s.cluster_name.0.clone(), s.clone()))
             .collect(),
+        routing_fallback: config.routing_fallback.clone(),
+        routers_cfg: config.routers.clone(),
     }));
     let live = Arc::new(tokio::sync::RwLock::new(live_config));
 
@@ -940,11 +1043,11 @@ async fn main() -> Result<()> {
     };
 
     tokio::select! {
-        r = frontend.listen()    => r.map_err(|e| anyhow::anyhow!("{e}"))?,
-        r = admin.listen()       => r.map_err(|e| anyhow::anyhow!("{e}"))?,
-        r = mysql_future         => r.map_err(|e| anyhow::anyhow!("{e}"))?,
-        r = postgres_future      => r.map_err(|e| anyhow::anyhow!("{e}"))?,
-        r = flight_sql_future    => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = frontend.listen()   => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = admin.listen()      => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = mysql_future        => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = postgres_future     => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = flight_sql_future   => r.map_err(|e| anyhow::anyhow!("{e}"))?,
     }
 
     Ok(())
@@ -962,8 +1065,22 @@ type GroupStatesMap = HashMap<
     ),
 >;
 
+/// Convert optional Postgres `BIGINT` (`max_running_queries`) to `Option<u64>`.
+/// Negative values fail fast (invalid row).
+fn max_running_queries_u64_from_db(cluster: &str, v: Option<i64>) -> Result<Option<u64>> {
+    match v {
+        None => Ok(None),
+        Some(n) => u64::try_from(n).map(Some).map_err(|_| {
+            anyhow::anyhow!(
+                "cluster '{cluster}': max_running_queries must be non-negative (got {n})"
+            )
+        }),
+    }
+}
+
 /// Holds adapter instances between DB reloads. Adapters are recreated when the
-/// serialized [`ClusterConfig`] for a cluster changes so pools pick up new endpoints/credentials.
+/// reload fingerprint changes (`engine_key` + config JSON), so engine switches and
+/// endpoint/credential updates rebuild adapters.
 struct AdapterReloadCache {
     adapters: HashMap<String, Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>>,
     config_json: HashMap<String, String>,
@@ -971,6 +1088,10 @@ struct AdapterReloadCache {
     /// Preserved across reloads so that health status and running-query counters
     /// are not reset to their initial values every time the config is reloaded.
     cluster_states: HashMap<String, Arc<ClusterState>>,
+    /// Last-known routing from DB (or YAML at startup). Used when `load_routing_config` returns
+    /// `Ok(None)` so periodic reload does not wipe routing.
+    routing_fallback: String,
+    routers_cfg: Vec<queryflux_core::config::RouterConfig>,
 }
 
 fn health_targets_from_groups(
@@ -995,15 +1116,17 @@ fn health_targets_from_groups(
     out
 }
 
-/// Build a `LiveConfig` from the cluster/group maps and router chain components
-/// that were loaded from either YAML or the database.
+/// Build a `LiveConfig` from DB cluster records, group maps, and router chain components.
+///
+/// This is the DB load path: adapters are built directly from the JSONB config blob
+/// in each `ClusterConfigRecord`, bypassing the `ClusterConfig` god struct.
 ///
 /// `cache` holds adapter instances from the previous generation. Adapters are reused
-/// only when the cluster's JSON-serialized config matches the previous reload; otherwise
-/// they are rebuilt (e.g. endpoint or password changed).
+/// only when the fingerprint of `engine_key` + JSONB config matches the previous reload;
+/// otherwise they are rebuilt (e.g. engine switch, endpoint, or password changed).
 #[allow(clippy::too_many_arguments)]
 async fn build_live_config(
-    clusters: &std::collections::HashMap<String, queryflux_core::config::ClusterConfig>,
+    cluster_records: &[queryflux_persistence::cluster_config::ClusterConfigRecord],
     cluster_groups: &std::collections::HashMap<String, queryflux_core::config::ClusterGroupConfig>,
     cluster_ids_by_name: &HashMap<String, i64>,
     group_ids_by_name: &HashMap<String, i64>,
@@ -1016,32 +1139,51 @@ async fn build_live_config(
         cluster_state::ClusterState, simple::SimpleClusterGroupManager,
         strategy::strategy_from_config,
     };
+    use queryflux_core::engine_registry::{
+        cluster_config_from_persisted_json, json_str, parse_auth_from_config_json,
+        parse_engine_key, parse_query_auth_from_config_json,
+    };
     use queryflux_core::tags::QueryTags;
 
+    // Build a lookup map from records for group member resolution.
+    let records_by_name: HashMap<
+        &str,
+        &queryflux_persistence::cluster_config::ClusterConfigRecord,
+    > = cluster_records
+        .iter()
+        .map(|r| (r.name.as_str(), r))
+        .collect();
+
+    let prev_config_json = cache.config_json.clone();
+
     // Build adapters — reuse when serialized cluster config is unchanged.
-    for (cluster_name_str, cluster_cfg) in clusters {
-        if !cluster_cfg.enabled {
-            cache.adapters.remove(cluster_name_str);
-            cache.config_json.remove(cluster_name_str);
+    for record in cluster_records {
+        let cluster_name_str = &record.name;
+        if !record.enabled {
+            cache.adapters.remove(cluster_name_str.as_str());
+            cache.config_json.remove(cluster_name_str.as_str());
             continue;
         }
-        let cfg_json = serde_json::to_string(cluster_cfg).unwrap_or_default();
+        let cfg_json = serde_json::to_string(&(record.engine_key.as_str(), &record.config))
+            .unwrap_or_default();
         let reuse = cache.adapters.contains_key(cluster_name_str.as_str())
-            && cache.config_json.get(cluster_name_str).map(String::as_str)
+            && prev_config_json
+                .get(cluster_name_str.as_str())
+                .map(String::as_str)
                 == Some(cfg_json.as_str());
         if reuse {
             continue;
         }
-        cache.adapters.remove(cluster_name_str);
-        cache.config_json.remove(cluster_name_str);
+        cache.adapters.remove(cluster_name_str.as_str());
+        cache.config_json.remove(cluster_name_str.as_str());
 
         let cluster_name = ClusterName(cluster_name_str.clone());
         let placeholder_group = ClusterGroupName("_".to_string());
-        let adapter = match registered_engines::build_adapter(
+        let adapter = match registered_engines::build_adapter_from_record(
             cluster_name,
             placeholder_group,
-            cluster_cfg,
-            cluster_name_str,
+            &record.engine_key,
+            &record.config,
         )
         .await
         {
@@ -1054,10 +1196,12 @@ async fn build_live_config(
         cache.adapters.insert(cluster_name_str.clone(), adapter);
         cache.config_json.insert(cluster_name_str.clone(), cfg_json);
     }
-    cache.adapters.retain(|name, _| clusters.contains_key(name));
+    cache
+        .adapters
+        .retain(|name, _| records_by_name.contains_key(name.as_str()));
     cache
         .config_json
-        .retain(|name, _| clusters.contains_key(name));
+        .retain(|name, _| records_by_name.contains_key(name.as_str()));
 
     // Build group states.
     let mut group_states: GroupStatesMap = HashMap::new();
@@ -1081,8 +1225,8 @@ async fn build_live_config(
                 );
                 continue;
             }
-            let cluster_cfg = match clusters.get(member_name) {
-                Some(c) => c,
+            let record = match records_by_name.get(member_name.as_str()) {
+                Some(r) => r,
                 None => {
                     tracing::warn!(group = %group_name, cluster = %member_name, "Reload: group references unknown cluster");
                     continue;
@@ -1092,59 +1236,45 @@ async fn build_live_config(
                 tracing::info!(group = %group_name, cluster = %member_name, "Reload: skipping disabled/missing cluster in group");
                 continue;
             }
-            let engine = match cluster_cfg.engine.as_ref() {
-                Some(e) => e,
-                None => continue,
+            let engine = match parse_engine_key(&record.engine_key) {
+                Ok(e) => e,
+                Err(_) => continue,
             };
-            let engine_type = EngineType::from(engine);
-            let max_q = cluster_cfg
-                .max_running_queries
+            let engine_type = EngineType::from(&engine);
+            let max_q = max_running_queries_u64_from_db(member_name, record.max_running_queries)?
                 .unwrap_or(group_config.max_running_queries);
-            let cluster_cid = cluster_ids_by_name.get(member_name).copied();
+            let endpoint = json_str(&record.config, "endpoint");
+            let cluster_cid = cluster_ids_by_name.get(member_name.as_str()).copied();
             let group_cid = group_ids_by_name.get(group_name.as_str()).copied();
 
-            // Reuse the previous state when the cluster config is unchanged so that
-            // is_healthy and running_queries are not reset across reloads.
-            // When config changed or the cluster is new, create a fresh state but
-            // still inherit is_healthy from the previous generation so the UI does not
-            // flash healthy for 30 s until the next health-check tick.
-            let cfg_json = serde_json::to_string(cluster_cfg).unwrap_or_default();
-            let config_unchanged =
-                cache.config_json.get(member_name).map(String::as_str) == Some(cfg_json.as_str());
+            // When the JSONB + engine_key fingerprint is unchanged, rebuild `ClusterState` from
+            // the current record anyway (group membership, IDs, endpoint, max_q may still change)
+            // but copy health and queue counters from the previous generation.
+            let cfg_json = serde_json::to_string(&(record.engine_key.as_str(), &record.config))
+                .unwrap_or_default();
+            let config_unchanged = prev_config_json
+                .get(member_name.as_str())
+                .map(String::as_str)
+                == Some(cfg_json.as_str());
 
-            let state = if config_unchanged {
-                if let Some(prev) = cache.cluster_states.get(member_name) {
-                    // Config identical — reuse the same Arc to preserve all live state.
-                    prev.clone()
-                } else {
-                    Arc::new(ClusterState::new(
-                        ClusterName(member_name.clone()),
-                        group_key.clone(),
-                        cluster_cid,
-                        group_cid,
-                        engine_type,
-                        cluster_cfg.endpoint.clone(),
-                        max_q,
-                        cluster_cfg.enabled,
-                    ))
+            let state = Arc::new(ClusterState::new(
+                ClusterName(member_name.clone()),
+                group_key.clone(),
+                cluster_cid,
+                group_cid,
+                engine_type,
+                endpoint,
+                max_q,
+                record.enabled,
+            ));
+            if let Some(prev) = cache.cluster_states.get(member_name.as_str()) {
+                let snap = prev.snapshot();
+                state.set_healthy(snap.is_healthy);
+                if config_unchanged {
+                    state.set_running_queries(snap.running_queries);
+                    state.set_queued_queries(snap.queued_queries);
                 }
-            } else {
-                let s = Arc::new(ClusterState::new(
-                    ClusterName(member_name.clone()),
-                    group_key.clone(),
-                    cluster_cid,
-                    group_cid,
-                    engine_type,
-                    cluster_cfg.endpoint.clone(),
-                    max_q,
-                    cluster_cfg.enabled,
-                ));
-                // Inherit last known health so the UI doesn't flip to healthy on every reload.
-                if let Some(prev) = cache.cluster_states.get(member_name) {
-                    s.set_healthy(prev.is_healthy());
-                }
-                s
-            };
+            }
             states.push(state);
         }
 
@@ -1155,12 +1285,49 @@ async fn build_live_config(
     }
 
     let health_check_targets = health_targets_from_groups(&group_states, &cache.adapters);
-    // Refresh the cached states so the next reload generation can reuse/inherit from these.
     cache.cluster_states = health_check_targets
         .iter()
         .map(|(_, s)| (s.cluster_name.0.clone(), s.clone()))
         .collect();
     let cluster_manager = Arc::new(SimpleClusterGroupManager::new(group_states));
+
+    // Build minimal ClusterConfig values for BackendIdentityResolver (`queryAuth` from JSONB).
+    let mut cluster_configs: HashMap<String, queryflux_core::config::ClusterConfig> =
+        HashMap::new();
+    for r in cluster_records {
+        let engine = match parse_engine_key(&r.engine_key) {
+            Ok(e) => e,
+            Err(err) => {
+                tracing::warn!(cluster = %r.name, "reload: {err}");
+                continue;
+            }
+        };
+        let query_auth = parse_query_auth_from_config_json(&r.config).map_err(|e| {
+            anyhow::anyhow!("cluster '{}': invalid queryAuth in JSONB: {e}", r.name)
+        })?;
+        let auth = match parse_auth_from_config_json(&r.config) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(
+                    cluster = %r.name,
+                    "reload: invalid auth in cluster config JSON: {e}"
+                );
+                None
+            }
+        };
+        let max_running = max_running_queries_u64_from_db(&r.name, r.max_running_queries)?;
+        cluster_configs.insert(
+            r.name.clone(),
+            cluster_config_from_persisted_json(
+                engine,
+                r.enabled,
+                max_running,
+                &r.config,
+                auth,
+                query_auth,
+            ),
+        );
+    }
 
     // Build router chain.
     let fallback = ClusterGroupName(routing_fallback.to_string());
@@ -1173,6 +1340,7 @@ async fn build_live_config(
                 postgres_wire,
                 mysql_wire,
                 clickhouse_http,
+                flight_sql,
             } => {
                 routers.push(Box::new(
                     queryflux_routing::implementations::protocol_based::ProtocolBasedRouter {
@@ -1182,6 +1350,7 @@ async fn build_live_config(
                         clickhouse_http: clickhouse_http
                             .as_ref()
                             .map(|s| ClusterGroupName(s.clone())),
+                        flight_sql: flight_sql.as_ref().map(|s| ClusterGroupName(s.clone())),
                     },
                 ));
             }
@@ -1264,7 +1433,7 @@ async fn build_live_config(
         cluster_manager,
         adapters: cache.adapters.clone(),
         health_check_targets,
-        cluster_configs: clusters.clone(),
+        cluster_configs,
         group_members,
         group_order,
         group_translation_scripts,
@@ -1274,6 +1443,8 @@ async fn build_live_config(
 
 /// Load cluster/group configs + routing config from Postgres and build a fresh `LiveConfig`.
 /// Existing adapter instances are reused for clusters that haven't changed.
+///
+/// Cluster records are passed directly to `build_live_config` — no `to_core()` conversion.
 async fn reload_live_config(
     pg: &Arc<queryflux_persistence::postgres::PostgresStore>,
     cache: &mut AdapterReloadCache,
@@ -1288,16 +1459,6 @@ async fn reload_live_config(
         .iter()
         .map(|r| (r.name.clone(), r.id))
         .collect();
-    let clusters: std::collections::HashMap<String, queryflux_core::config::ClusterConfig> =
-        cluster_records
-            .into_iter()
-            .map(|r| {
-                let name = r.name.clone();
-                r.to_core()
-                    .map(|c| (name, c))
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-            })
-            .collect::<anyhow::Result<_>>()?;
 
     let group_records = pg
         .list_group_configs()
@@ -1315,7 +1476,7 @@ async fn reload_live_config(
         .map(|r| (r.name.clone(), r.to_core()))
         .collect();
 
-    // Load routing from DB if present; otherwise fall back to empty defaults.
+    // Load routing from DB if present; otherwise keep last-known routing (startup YAML or previous DB load).
     let (routing_fallback, routers_cfg) = match pg.load_routing_config().await {
         Ok(Some(loaded)) => {
             let mut routers = Vec::new();
@@ -1327,9 +1488,11 @@ async fn reload_live_config(
                     }
                 }
             }
+            cache.routing_fallback = loaded.routing_fallback.clone();
+            cache.routers_cfg.clone_from(&routers);
             (loaded.routing_fallback, routers)
         }
-        Ok(None) => (String::new(), Vec::new()),
+        Ok(None) => (cache.routing_fallback.clone(), cache.routers_cfg.clone()),
         Err(e) => {
             return Err(anyhow::anyhow!("reload: load_routing_config: {e}"));
         }
@@ -1344,7 +1507,7 @@ async fn reload_live_config(
         });
 
     build_live_config(
-        &clusters,
+        &cluster_records,
         &cluster_groups,
         &cluster_ids_by_name,
         &group_ids_by_name,
