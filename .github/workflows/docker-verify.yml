@@ -6,6 +6,10 @@ name: Docker — QueryFlux (verify)
 
 on:
   pull_request:
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '*.md'
 
 jobs:
   docker-verify:
