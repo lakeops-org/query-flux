@@ -5,7 +5,7 @@
 #
 # PyO3/sqlglot: builder + runtime both python:3.12.13-slim-trixie (bookworm has no python3.12 apt).
 # Rust: rustup 1.91.1 on top of that image.
-# DuckDB: DUCKDB_DOWNLOAD_LIB + DUCKDB_STATIC (mold/lld fail on -lduckdb dylib). .so may still be copied for loader path.
+# DuckDB: DUCKDB_DOWNLOAD_LIB downloads a prebuilt libduckdb; the linked .so is copied into the runtime image (see LD_LIBRARY_PATH).
 #
 # Build (context MUST be this repo root so Cargo.toml + Cargo.lock match):
 #   cd /path/to/queryflux && docker build -f docker/queryflux/Dockerfile -t queryflux:local .

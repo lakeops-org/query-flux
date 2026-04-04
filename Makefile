@@ -19,7 +19,7 @@ endif
 TPCH_SCALE ?= tiny
 export TPCH_SCALE
 
-.PHONY: dev stop logs build lint clippy check test benchmark test-e2e clean setup
+.PHONY: dev stop logs build lint clippy check test benchmark benchmark-build benchmark-run test-e2e clean setup
 
 ## Create virtualenv and install Python dependencies (sqlglot etc.)
 setup:
@@ -38,6 +38,7 @@ env:
 
 
 server:
+	@test -x .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	RUST_LOG=queryflux=info,queryflux_frontend=info \
@@ -72,11 +73,15 @@ test:
 
 ## Micro-benchmark: mock Trino + StarRocks backends vs QueryFlux (release build).
 ## Optional: QUERYFLUX_BENCH_WARMUP, QUERYFLUX_BENCH_ITERATIONS, QUERYFLUX_BENCH_TRINO_POLL.
-benchmark:
+benchmark: benchmark-build benchmark-run
+
+benchmark-build:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) build --release --bin queryflux
+
+benchmark-run:
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) run --release -p queryflux-bench
@@ -89,9 +94,11 @@ benchmark:
 ## Iceberg/Lakekeeper tables are created by the e2e crate (no TPC-H loader).
 test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
+	@set -e; \
+	trap '$(COMPOSE_TEST) down' EXIT; \
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
-	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
+	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel; \
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	TRINO_URL=http://localhost:18081 \
@@ -99,7 +106,6 @@ test-e2e:
 	LAKEKEEPER_URL=http://localhost:18181 \
 	MINIO_ENDPOINT=localhost:19000 \
 	$(CARGO) test -p queryflux-e2e-tests --manifest-path Cargo.toml -- --test-threads=1 --include-ignored --nocapture
-	$(COMPOSE_TEST) down
 
 ## Remove build artifacts and Docker volumes
 clean:

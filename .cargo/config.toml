@@ -7,7 +7,7 @@
 # `DUCKDB_DOWNLOAD_LIB=1` when `DUCKDB_LIB_DIR` is unset.
 
 [target.aarch64-apple-darwin]
-rustflags = ["-L", "/opt/homebrew/lib"]
+rustflags = ["-L", "native=/opt/homebrew/lib"]
 
 [target.x86_64-apple-darwin]
-rustflags = ["-L", "/usr/local/lib"]
+rustflags = ["-L", "native=/usr/local/lib"]
