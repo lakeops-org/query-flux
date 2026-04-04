@@ -120,64 +120,74 @@ jobs:
         run: make test
 
   e2e:
-     name: E2E tests (Docker)
-     needs: [fmt, clippy]
-     runs-on: ubuntu-latest
-     timeout-minutes: 90
-     steps:
-       - uses: actions/checkout@44c2b7a8a4ea60a981eaca3cf939b5f4305c123b # v4.1.5
+    name: E2E tests (Docker)
+    needs: [fmt, clippy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@44c2b7a8a4ea60a981eaca3cf939b5f4305c123b # v4.1.5
 
-       # StarRocks all-in-one + Trino + Lakekeeper stack needs many GB of layer space;
-       # default ubuntu-latest root FS often fills during `docker compose pull`.
-       - name: Free disk space
-         uses: jlumbroso/free-disk-space@v1.3.1
-         with:
-           tool-cache: false
-           android: true
-           dotnet: true
-           haskell: true
-           large-packages: true
-           swap-storage: true
+      # StarRocks all-in-one + Trino + Lakekeeper stack needs many GB of layer space;
+      # default ubuntu-latest root FS often fills during `docker compose pull`.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
 
-       - name: Install libduckdb
-         run: |
-           curl -fsSL "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/libduckdb-linux-amd64.zip" -o /tmp/duckdb.zip
-           unzip -o /tmp/duckdb.zip -d /tmp/duckdb
-           sudo cp /tmp/duckdb/libduckdb.so /usr/local/lib/
-           sudo cp /tmp/duckdb/duckdb.h /usr/local/include/
-           sudo cp /tmp/duckdb/duckdb.hpp /usr/local/include/ 2>/dev/null || true
-           sudo ldconfig
+      - name: Install libduckdb
+        run: |
+          curl -fsSL "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/libduckdb-linux-amd64.zip" -o /tmp/duckdb.zip
+          unzip -o /tmp/duckdb.zip -d /tmp/duckdb
+          sudo cp /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo cp /tmp/duckdb/duckdb.h /usr/local/include/
+          sudo cp /tmp/duckdb/duckdb.hpp /usr/local/include/ 2>/dev/null || true
+          sudo ldconfig
 
-       - uses: dtolnay/rust-toolchain@d8352f6b1d2e870bc5716e7a6d9b65c4cc244a1a
-         with:
-           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+      - uses: dtolnay/rust-toolchain@d8352f6b1d2e870bc5716e7a6d9b65c4cc244a1a
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
 
-       - uses: Swatinem/rust-cache@v2
-         with:
-           shared-key: queryflux
-           cache-on-failure: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: queryflux
+          cache-on-failure: true
 
-       - uses: actions/setup-python@v5
-         with:
-           python-version: "3.12"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-       - name: Python venv (sqlglot / PyO3)
-         run: |
-           python3 -m venv .venv
-           .venv/bin/pip install -r requirements.txt
-           echo "PYO3_PYTHON=${GITHUB_WORKSPACE}/.venv/bin/python3" >> "$GITHUB_ENV"
-           echo "PYTHONPATH=$(.venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
+      - name: Python venv (sqlglot / PyO3)
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+          echo "PYO3_PYTHON=${GITHUB_WORKSPACE}/.venv/bin/python3" >> "$GITHUB_ENV"
+          echo "PYTHONPATH=$(.venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
 
-       # Same as `make test-e2e` locally (compose up → e2e crate → compose down on success).
-       - name: E2E tests (make test-e2e)
-         run: make test-e2e
+      # Same stack as `make test-e2e`, but split so "Engine logs" / `compose down` still run if `cargo test` fails.
+      - name: Start e2e Docker stack (Trino + StarRocks + sentinel)
+        run: |
+          docker compose -f docker/docker-compose.test.yml --project-directory . up -d --wait --wait-timeout 300 trino starrocks sentinel
 
-       - name: Engine logs (debug on failure)
-         if: failure()
-         run: |
-           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 trino || true
-           docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 starrocks || true
+      - name: E2E tests (queryflux-e2e-tests)
+        env:
+          TRINO_URL: http://localhost:18081
+          STARROCKS_URL: mysql://root@localhost:9030
+          LAKEKEEPER_URL: http://localhost:18181
+          MINIO_ENDPOINT: localhost:19000
+        run: |
+          cargo test -p queryflux-e2e-tests --manifest-path Cargo.toml -- --test-threads=1 --include-ignored
 
-       - name: Stop e2e Docker stack
-         if: always()
-         run: docker compose -f docker/docker-compose.test.yml --project-directory . down
+      - name: Engine logs (debug on failure)
+        if: failure()
+        run: |
+          docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 trino || true
+          docker compose -f docker/docker-compose.test.yml --project-directory . logs --no-color --tail=200 starrocks || true
+
+      - name: Stop e2e Docker stack
+        if: always()
+        run: docker compose -f docker/docker-compose.test.yml --project-directory . down
