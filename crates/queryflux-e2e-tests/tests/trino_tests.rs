@@ -109,8 +109,9 @@ async fn trino_query_tags_are_recorded() {
         .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
 
+    let needle = "select 1 as tagged_result";
     let record = harness()
-        .wait_for_record(|rec| rec.sql_preview.contains("SELECT 1 AS tagged_result"))
+        .wait_for_record(|rec| rec.sql_preview.to_lowercase().contains(needle))
         .await
         .expect("query record with tags");
 
