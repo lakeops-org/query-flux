@@ -14,7 +14,7 @@ Open [http://localhost:3000](http://localhost:3000). Postgres-backed features (q
 
 ## Adding or changing a backend in the UI
 
-Use **Part B — QueryFlux Studio** in **[docs/adding-engine-support.md](../../docs/adding-engine-support.md)**. Short version:
+Use the **QueryFlux Studio** section in **[website/docs/architecture/adding-support/backend.md](../website/docs/architecture/adding-support/backend.md)**. Short version:
 
 1. Add **`lib/studio-engines/engines/<engine>.ts`** exporting a **`StudioEngineModule`** (descriptor + catalog metadata + optional validation and custom form id).
 2. Register it in **`lib/studio-engines/manifest.ts`**.

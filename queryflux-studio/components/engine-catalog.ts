@@ -95,15 +95,7 @@ const ENGINE_CATALOG_SLOTS = [
   },
 
   // ── Cloud Warehouse ───────────────────────────────────────────────────────
-  {
-    name: "Snowflake",
-    simpleIconSlug: "siSnowflake",
-    hex: "29B5E8",
-    category: "Cloud Warehouse",
-    description: "Cloud-native data warehouse built for the cloud",
-    engineKey: null,
-    supported: false,
-  },
+  { k: "studio", engineKey: "snowflake" },
   {
     name: "BigQuery",
     simpleIconSlug: null,

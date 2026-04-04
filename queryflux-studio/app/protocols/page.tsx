@@ -1,25 +1,43 @@
 import { getFrontendsStatus } from "@/lib/api";
 import type { ProtocolFrontendDto } from "@/lib/api-types";
+import { AlertCircle } from "lucide-react";
+import type { SimpleIcon } from "simple-icons";
 import {
-  AlertCircle,
-  Cylinder,
-  Globe2,
-  LayoutGrid,
-  Plug,
-  Plane,
-  Radio,
-  type LucideIcon,
-} from "lucide-react";
+  siApacheparquet,
+  siClickhouse,
+  siMysql,
+  siOpenapiinitiative,
+  siPostgresql,
+  siSnowflake,
+  siTrino,
+} from "simple-icons";
 
 export const revalidate = 10;
 
-const PROTOCOL_ICONS: Record<string, LucideIcon> = {
-  trino_http: Globe2,
-  mysql_wire: Plug,
-  postgres_wire: Cylinder,
-  clickhouse_http: LayoutGrid,
-  flight_sql: Plane,
+/** [Simple Icons](https://simpleicons.org/) per `protocol.id` from `GET /admin/frontends`. */
+const PROTOCOL_SIMPLE_ICONS: Record<string, SimpleIcon> = {
+  trino_http: siTrino,
+  mysql_wire: siMysql,
+  postgres_wire: siPostgresql,
+  clickhouse_http: siClickhouse,
+  flight_sql: siApacheparquet,
+  snowflake: siSnowflake,
 };
+
+function SimpleIconSvg({ icon, className }: { icon: SimpleIcon; className?: string }) {
+  return (
+    <svg
+      role="img"
+      viewBox="0 0 24 24"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden
+    >
+      <title>{icon.title}</title>
+      <path d={icon.path} fill="currentColor" />
+    </svg>
+  );
+}
 
 export default async function ProtocolsPage() {
   let status: Awaited<ReturnType<typeof getFrontendsStatus>> | null = null;
@@ -77,8 +95,8 @@ export default async function ProtocolsPage() {
 }
 
 function ProtocolCard({ protocol }: { protocol: ProtocolFrontendDto }) {
-  const Icon = PROTOCOL_ICONS[protocol.id] ?? Radio;
   const on = protocol.enabled;
+  const icon = PROTOCOL_SIMPLE_ICONS[protocol.id] ?? siOpenapiinitiative;
   return (
     <div
       className={`rounded-xl border bg-white p-5 shadow-xs transition-shadow ${
@@ -91,7 +109,7 @@ function ProtocolCard({ protocol }: { protocol: ProtocolFrontendDto }) {
             on ? "bg-indigo-100 text-indigo-600" : "bg-slate-100 text-slate-400"
           }`}
         >
-          <Icon className="h-6 w-6" strokeWidth={1.75} />
+          <SimpleIconSvg icon={icon} className="h-6 w-6" />
         </div>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">

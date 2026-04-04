@@ -95,6 +95,10 @@ impl ClusterState {
         self.running_queries.store(clamped, Ordering::Relaxed);
     }
 
+    pub fn set_queued_queries(&self, count: u64) {
+        self.queued_queries.store(count, Ordering::Relaxed);
+    }
+
     pub fn increment_running(&self) {
         self.running_queries.fetch_add(1, Ordering::Relaxed);
     }

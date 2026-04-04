@@ -93,6 +93,31 @@ impl TrinoAdapter {
         ))
     }
 
+    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
+    pub fn try_from_config_json(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        json: &serde_json::Value,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        use queryflux_core::engine_registry::{json_bool, json_str, parse_auth_from_config_json};
+
+        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
+        })?;
+        let tls_skip = json_bool(json, "tlsInsecureSkipVerify");
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+        })?;
+        Ok(Self::new(
+            cluster_name,
+            group_name,
+            endpoint,
+            tls_skip,
+            auth,
+        ))
+    }
+
     /// Apply cluster-level auth credentials to a request builder.
     fn apply_cluster_auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.auth {
@@ -865,5 +890,33 @@ impl TrinoAdapter {
                 },
             ],
         }
+    }
+}
+
+pub struct TrinoFactory;
+
+#[async_trait]
+impl crate::EngineAdapterFactory for TrinoFactory {
+    fn engine_key(&self) -> &'static str {
+        "trino"
+    }
+
+    fn descriptor(&self) -> EngineDescriptor {
+        TrinoAdapter::descriptor()
+    }
+
+    async fn build_from_config_json(
+        &self,
+        cluster_name: ClusterName,
+        group: ClusterGroupName,
+        json: &serde_json::Value,
+    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
+        Ok(Arc::new(TrinoAdapter::try_from_config_json(
+            cluster_name,
+            group,
+            json,
+            name.as_str(),
+        )?))
     }
 }

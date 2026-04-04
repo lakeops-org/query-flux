@@ -140,6 +140,29 @@ impl DuckDbHttpAdapter {
         })
     }
 
+    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
+    pub fn try_from_config_json(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        json: &serde_json::Value,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        use queryflux_core::engine_registry::{json_bool, json_str, parse_auth_from_config_json};
+
+        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
+        })?;
+        let tls_skip = json_bool(json, "tlsInsecureSkipVerify");
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+        })?;
+        Self::new(cluster_name, group_name, endpoint, tls_skip, auth).map_err(|e| {
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name_str}': failed to create DuckDB HTTP adapter ({e})"
+            ))
+        })
+    }
+
     /// Build from persisted / YAML [`ClusterConfig`].
     pub fn try_from_cluster_config(
         cluster_name: ClusterName,
@@ -544,5 +567,33 @@ impl DuckDbHttpAdapter {
                 },
             ],
         }
+    }
+}
+
+pub struct DuckDbHttpFactory;
+
+#[async_trait]
+impl crate::EngineAdapterFactory for DuckDbHttpFactory {
+    fn engine_key(&self) -> &'static str {
+        "duckDbHttp"
+    }
+
+    fn descriptor(&self) -> EngineDescriptor {
+        DuckDbHttpAdapter::descriptor()
+    }
+
+    async fn build_from_config_json(
+        &self,
+        cluster_name: ClusterName,
+        group: ClusterGroupName,
+        json: &serde_json::Value,
+    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
+        Ok(Arc::new(DuckDbHttpAdapter::try_from_config_json(
+            cluster_name,
+            group,
+            json,
+            name.as_str(),
+        )?))
     }
 }

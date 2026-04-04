@@ -67,6 +67,35 @@ impl DuckDbAdapter {
         })
     }
 
+    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
+    pub fn try_from_config_json(
+        cluster_name: ClusterName,
+        group_name: ClusterGroupName,
+        json: &serde_json::Value,
+        cluster_name_str: &str,
+    ) -> Result<Self> {
+        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
+
+        let database_path = json_str(json, "databasePath");
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
+        })?;
+        let motherduck_token = auth.and_then(|a| {
+            if let ClusterAuth::Bearer { token } = a {
+                Some(token)
+            } else {
+                None
+            }
+        });
+        Self::new_with_token(cluster_name, group_name, database_path, motherduck_token).map_err(
+            |e| {
+                QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name_str}': failed to open DuckDB ({e})"
+                ))
+            },
+        )
+    }
+
     /// Build from persisted / YAML [`ClusterConfig`] (embedded path + optional MotherDuck bearer).
     pub fn try_from_cluster_config(
         cluster_name: ClusterName,
@@ -398,5 +427,33 @@ impl DuckDbAdapter {
                 },
             ],
         }
+    }
+}
+
+pub struct DuckDbFactory;
+
+#[async_trait]
+impl crate::EngineAdapterFactory for DuckDbFactory {
+    fn engine_key(&self) -> &'static str {
+        "duckDb"
+    }
+
+    fn descriptor(&self) -> EngineDescriptor {
+        DuckDbAdapter::descriptor()
+    }
+
+    async fn build_from_config_json(
+        &self,
+        cluster_name: ClusterName,
+        group: ClusterGroupName,
+        json: &serde_json::Value,
+    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        let name = cluster_name.0.clone();
+        Ok(Arc::new(DuckDbAdapter::try_from_config_json(
+            cluster_name,
+            group,
+            json,
+            name.as_str(),
+        )?))
     }
 }

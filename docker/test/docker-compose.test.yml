@@ -1,12 +1,12 @@
 # Lean compose file for E2E tests.
 #
-# Engines: Trino, StarRocks.
+# Engines: Trino, StarRocks, Snowflake (fakesnow mock).
 # Iceberg stack: Postgres (Lakekeeper backend), MinIO, Lakekeeper.
 #
-# Usage:
-#   docker compose -f docker-compose.test.yml up -d --wait
+# Usage (repo root as project directory):
+#   docker compose -f docker/test/docker-compose.test.yml --project-directory . up -d --wait
 #   cargo test -p queryflux-e2e-tests -- --include-ignored
-#   docker compose -f docker-compose.test.yml down
+#   docker compose -f docker/test/docker-compose.test.yml --project-directory . down
 
 networks:
   test_net:
@@ -53,6 +53,25 @@ services:
       timeout: 25s
       retries: 60
       start_period: 180s
+    networks:
+      - test_net
+
+  # fakesnow: local Snowflake-compatible HTTP server (https://github.com/tekumara/fakesnow).
+  # Accepts any user/password/account. Used to e2e-test the SnowflakeAdapter.
+  fakesnow:
+    image: python:3.12-slim
+    volumes:
+      - ./docker/test/fakesnow-entrypoint.sh:/entrypoint.sh:ro
+      - ./docker/test/fakesnow-apply-patches.py:/fakesnow-apply-patches.py:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    ports:
+      - "18085:8085"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection(('localhost',8085),2); s.close()\""]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
     networks:
       - test_net
 
@@ -207,4 +226,3 @@ services:
       start_period: 0s
     networks:
       - test_net
-

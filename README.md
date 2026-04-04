@@ -189,8 +189,8 @@ queryflux/
 ├── config.example.yaml
 ├── docker/
 │   ├── docker-compose.yml          # Local dev stack (`make dev`)
-│   ├── docker-compose.test.yml     # E2E test stack
-│   ├── fixtures/                   # SQL init, test data
+│   ├── fixtures/                   # SQL init, test data (shared with examples)
+│   ├── test/                       # E2E stack: docker-compose.test.yml, fakesnow helpers
 │   ├── queryflux/                  # QueryFlux Dockerfile
 │   └── queryflux-studio/           # Studio Dockerfile
 ├── docs/                           # Architecture markdown

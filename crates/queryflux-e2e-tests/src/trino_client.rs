@@ -30,14 +30,19 @@ pub struct ColumnInfo {
 struct TrinoResponse {
     #[serde(rename = "nextUri")]
     next_uri: Option<String>,
+    /// Present on Trino pages; kept for JSON shape (poll loop uses `nextUri` only).
+    #[serde(default)]
+    #[allow(dead_code)]
     stats: Option<TrinoStats>,
     columns: Option<Vec<ColumnInfo>>,
     data: Option<Vec<Vec<Value>>>,
     error: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
 struct TrinoStats {
+    #[allow(dead_code)]
     state: String,
 }
 
@@ -113,10 +118,12 @@ impl TrinoClient {
                 });
             }
 
-            let state = page.stats.as_ref().map(|s| s.state.as_str()).unwrap_or("");
             let next = page.next_uri.take();
 
-            if next.is_none() || state == "FINISHED" || state == "FAILED" {
+            // Trino may include `stats.state: FINISHED` while `nextUri` is still set (one more poll
+            // may be required). Stop only when there is no next page — matches Trino clients and
+            // ensures QueryFlux sees a terminal GET so it can record_query.
+            if next.is_none() {
                 break;
             }
 

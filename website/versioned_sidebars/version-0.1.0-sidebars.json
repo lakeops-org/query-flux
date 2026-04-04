@@ -27,7 +27,29 @@
         "architecture/routing-and-clusters",
         "architecture/query-tags",
         "architecture/observability",
-        "architecture/adding-engine-support",
+        {
+          "type": "category",
+          "label": "Frontends",
+          "collapsed": false,
+          "items": [
+            "architecture/frontends/overview",
+            "architecture/frontends/trino-http",
+            "architecture/frontends/postgres-wire",
+            "architecture/frontends/mysql-wire",
+            "architecture/frontends/flight-sql",
+            "architecture/frontends/snowflake"
+          ]
+        },
+        {
+          "type": "category",
+          "label": "Extending QueryFlux",
+          "collapsed": false,
+          "items": [
+            "architecture/adding-support/overview",
+            "architecture/adding-support/backend",
+            "architecture/adding-support/frontend"
+          ]
+        },
         "architecture/auth-authz-design"
       ]
     }

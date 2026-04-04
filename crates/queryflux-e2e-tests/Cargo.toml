@@ -43,3 +43,7 @@ tracing-subscriber = { workspace = true }
 # Async trait
 async-trait = { workspace = true }
 
+# Snowflake wire client — same dependency as engine-adapters / fakesnow e2e
+snowflake-connector-rs = { workspace = true }
+url = { workspace = true }
+

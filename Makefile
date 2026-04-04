@@ -1,6 +1,18 @@
 CARGO        := $(HOME)/.cargo/bin/cargo
 COMPOSE      := docker compose -f docker/docker-compose.yml --project-directory .
-COMPOSE_TEST := docker compose -f docker/docker-compose.test.yml --project-directory .
+COMPOSE_TEST := docker compose -f docker/test/docker-compose.test.yml --project-directory .
+
+# site-packages for `.venv` (any Python 3.x); expanded when recipes run after `make setup`.
+PYTHONPATH_VENV = $(shell .venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')
+
+# DuckDB: on Linux (local dev, not CI), let libduckdb-sys download the prebuilt .so.
+# CI installs libduckdb system-wide instead (see .github/workflows/ci.yml).
+# On macOS use `brew install duckdb` (see .cargo/config.toml) or `export DUCKDB_DOWNLOAD_LIB=1`.
+ifeq ($(shell uname -s),Linux)
+  ifndef DUCKDB_LIB_DIR
+    export DUCKDB_DOWNLOAD_LIB := 1
+  endif
+endif
 
 # Trino `tpch` schema used when loading Iceberg tables (see docker/fixtures/init.sql + data-loader).
 # tiny = default fast tests; sf1 ≈ 1.5M orders (long load, heavy E2E).
@@ -27,9 +39,8 @@ env:
 
 server:
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	RUST_LOG=queryflux=info,queryflux_frontend=info \
-	DUCKDB_DOWNLOAD_LIB=1 \
 	$(CARGO) run --bin queryflux -- --config config.local.yaml
 ## Stop Docker services and any running QueryFlux process
 stop:
@@ -50,42 +61,44 @@ clippy:
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
 ## Run unit/integration tests (no external services needed).
+## Same command as CI `.github/workflows/ci.yml` (`make test`).
 ## PYO3_PYTHON + PYTHONPATH: PyO3 (routing + translation). The venv must include `sqlglot`
 ## (`pip install -r requirements.txt` via `make setup`) for `queryflux-translation` transform tests.
 test:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
-	$(CARGO) test --tests --workspace --exclude queryflux-e2e-tests
+	PYTHONPATH=$(PYTHONPATH_VENV) \
+	$(CARGO) test --tests --workspace --exclude queryflux-e2e-tests --exclude queryflux-bench
 
 ## Micro-benchmark: mock Trino + StarRocks backends vs QueryFlux (release build).
 ## Optional: QUERYFLUX_BENCH_WARMUP, QUERYFLUX_BENCH_ITERATIONS, QUERYFLUX_BENCH_TRINO_POLL.
 benchmark:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) build --release --bin queryflux
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) run --release -p queryflux-bench
 
-## Run E2E tests. Spins up Trino + StarRocks + Lakekeeper via Docker.
-## Requires reachable engines; see docker/docker-compose.test.yml.
+## Run E2E tests. Spins up Trino + StarRocks + fakesnow + Lakekeeper via Docker.
+## Same command as CI `.github/workflows/ci.yml` (`make test-e2e`).
+## Requires reachable engines; see docker/test/docker-compose.test.yml.
 ## `--test-threads=1`: StarRocks Iceberg is slow; default parallel libtest + `#[serial]` makes
 ## every test report libtest's 60s "slow test" spam while threads wait on the serial lock.
 ## Iceberg/Lakekeeper tables are created by the e2e crate (no TPC-H loader).
 test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
-	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
+	PYTHONPATH=$(PYTHONPATH_VENV) \
+	$(COMPOSE_TEST) up -d --wait trino starrocks fakesnow sentinel
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
-	PYTHONPATH=$(shell pwd)/.venv/lib/python3.13/site-packages \
+	PYTHONPATH=$(PYTHONPATH_VENV) \
 	TRINO_URL=http://localhost:18081 \
 	STARROCKS_URL=mysql://root@localhost:9030 \
+	FAKESNOW_URL=http://localhost:18085 \
 	LAKEKEEPER_URL=http://localhost:18181 \
 	MINIO_ENDPOINT=localhost:19000 \
-	DUCKDB_DOWNLOAD_LIB=1 \
 	$(CARGO) test -p queryflux-e2e-tests --manifest-path Cargo.toml -- --test-threads=1 --include-ignored --nocapture
 	$(COMPOSE_TEST) down
 

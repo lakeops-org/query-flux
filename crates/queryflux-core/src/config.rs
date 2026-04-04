@@ -292,6 +292,14 @@ pub struct QueryFluxConfig {
     pub query_history_retention_days: Option<u64>,
     #[serde(default)]
     pub metrics: MetricsConfig,
+    /// When `true`, refuse to start if the Snowflake HTTP frontend is enabled but
+    /// [`FrontendConfig::session_affinity_acknowledged`] is not set on that frontend.
+    ///
+    /// Use this in multi-replica deployments after configuring the load balancer for
+    /// **session affinity** (sticky routing) to one QueryFlux instance per Snowflake client token.
+    /// Default `false` keeps single-replica and dev setups unchanged.
+    #[serde(default)]
+    pub enforce_snowflake_http_session_affinity: bool,
 }
 
 impl QueryFluxConfig {
@@ -322,6 +330,8 @@ pub struct FrontendsConfig {
     pub clickhouse_http: Option<FrontendConfig>,
     #[serde(default)]
     pub flight_sql: Option<FrontendConfig>,
+    #[serde(default)]
+    pub snowflake_http: Option<FrontendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -330,6 +340,26 @@ pub struct FrontendConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub port: u16,
+    /// Operator assertion: the load balancer provides **session affinity** for this frontend
+    /// so a given client’s connections reach the same QueryFlux instance.
+    ///
+    /// **Snowflake HTTP wire protocol** (`snowflakeHttp`) keeps login sessions in process memory;
+    /// without sticky routing, requests after login may hit another replica and fail with
+    /// “session not found”. Other frontends ignore this flag.
+    ///
+    /// Set to `true` only after configuring affinity (e.g. consistent hash on `Authorization` /
+    /// Snowflake token, or cookie-based stickiness). Pair with
+    /// [`QueryFluxConfig::enforce_snowflake_http_session_affinity`] to fail fast if unset.
+    #[serde(default)]
+    pub session_affinity_acknowledged: bool,
+    /// **Snowflake HTTP wire only** — max session lifetime in seconds (from login).
+    /// Omitted → 86400 (24h). `0` = no max-age limit.
+    #[serde(default)]
+    pub snowflake_session_max_age_secs: Option<u64>,
+    /// **Snowflake HTTP wire only** — idle timeout in seconds since the last validated request
+    /// (heartbeat, token refresh, query). Omitted → 14400 (4h). `0` = no idle limit.
+    #[serde(default)]
+    pub snowflake_session_idle_timeout_secs: Option<u64>,
 }
 
 impl Default for FrontendConfig {
@@ -337,6 +367,9 @@ impl Default for FrontendConfig {
         Self {
             enabled: true,
             port: 8080,
+            session_affinity_acknowledged: false,
+            snowflake_session_max_age_secs: None,
+            snowflake_session_idle_timeout_secs: None,
         }
     }
 }
@@ -505,6 +538,8 @@ pub enum EngineConfig {
     ClickHouse,
     /// Amazon Athena — serverless SQL over S3 via the AWS SDK.
     Athena,
+    /// Snowflake — cloud-native data warehouse. Connects via the Snowflake REST API.
+    Snowflake,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -530,8 +565,21 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub workgroup: Option<String>,
     /// Default Athena catalog. Defaults to `"AwsDataCatalog"` when omitted.
+    /// For Snowflake, used as the default database name.
     #[serde(default)]
     pub catalog: Option<String>,
+    /// Snowflake account identifier (e.g. `xy12345.us-east-1`). Required when engine is `snowflake`.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// Default Snowflake virtual warehouse (e.g. `COMPUTE_WH`).
+    #[serde(default)]
+    pub warehouse: Option<String>,
+    /// Default Snowflake role (e.g. `ANALYST`).
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Default Snowflake schema (e.g. `PUBLIC`).
+    #[serde(default)]
+    pub schema: Option<String>,
     #[serde(default)]
     pub tls: Option<TlsConfig>,
     /// Type 1 credentials — service account used for health checks and (by default) query execution.
@@ -648,6 +696,12 @@ pub enum RouterConfig {
         mysql_wire: Option<String>,
         #[serde(default)]
         clickhouse_http: Option<String>,
+        #[serde(default)]
+        flight_sql: Option<String>,
+        #[serde(default)]
+        snowflake_http: Option<String>,
+        #[serde(default)]
+        snowflake_sql_api: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Header {

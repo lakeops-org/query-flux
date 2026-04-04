@@ -146,6 +146,9 @@ async fn protocol_router_trino_http() {
         postgres_wire: Some(group("pg-group")),
         mysql_wire: None,
         clickhouse_http: None,
+        flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let session = trino_session(&[]);
     let result = router
@@ -162,6 +165,9 @@ async fn protocol_router_postgres_wire() {
         postgres_wire: Some(group("pg-group")),
         mysql_wire: None,
         clickhouse_http: None,
+        flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -182,6 +188,9 @@ async fn protocol_router_unconfigured() {
         postgres_wire: None, // not configured
         mysql_wire: None,
         clickhouse_http: None,
+        flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -202,6 +211,9 @@ async fn protocol_router_mysql_wire() {
         postgres_wire: None,
         mysql_wire: Some(group("mysql-group")),
         clickhouse_http: None,
+        flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -222,6 +234,9 @@ async fn protocol_router_clickhouse_http() {
         postgres_wire: None,
         mysql_wire: None,
         clickhouse_http: Some(group("ch-group")),
+        flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -236,12 +251,15 @@ async fn protocol_router_clickhouse_http() {
 }
 
 #[tokio::test]
-async fn protocol_router_flight_sql_not_routed() {
+async fn protocol_router_flight_sql() {
     let router = ProtocolBasedRouter {
         trino_http: Some(group("trino-group")),
         postgres_wire: Some(group("pg-group")),
         mysql_wire: Some(group("mysql-group")),
         clickhouse_http: Some(group("ch-group")),
+        flight_sql: Some(group("sf-analytics")),
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -252,7 +270,53 @@ async fn protocol_router_flight_sql_not_routed() {
         )
         .await
         .unwrap();
-    assert_eq!(result, None);
+    assert_eq!(result, Some(group("sf-analytics")));
+}
+
+#[tokio::test]
+async fn protocol_router_snowflake_http() {
+    let router = ProtocolBasedRouter {
+        trino_http: None,
+        postgres_wire: None,
+        mysql_wire: None,
+        clickhouse_http: None,
+        flight_sql: None,
+        snowflake_http: Some(group("sf-group")),
+        snowflake_sql_api: None,
+    };
+    let result = router
+        .route(
+            "SELECT 1",
+            &trino_session(&[]),
+            &FrontendProtocol::SnowflakeHttp,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("sf-group")));
+}
+
+#[tokio::test]
+async fn protocol_router_snowflake_sql_api() {
+    let router = ProtocolBasedRouter {
+        trino_http: None,
+        postgres_wire: None,
+        mysql_wire: None,
+        clickhouse_http: None,
+        flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: Some(group("sf-api-group")),
+    };
+    let result = router
+        .route(
+            "SELECT 1",
+            &trino_session(&[]),
+            &FrontendProtocol::SnowflakeSqlApi,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("sf-api-group")));
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,6 +1107,9 @@ async fn chain_protocol_based_then_header_fallback() {
                 postgres_wire: Some(group("pg-from-protocol")),
                 mysql_wire: None,
                 clickhouse_http: None,
+                flight_sql: None,
+                snowflake_http: None,
+                snowflake_sql_api: None,
             }),
             Box::new(HeaderRouter::new(
                 "x-tenant".to_string(),

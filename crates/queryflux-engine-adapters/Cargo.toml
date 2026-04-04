@@ -13,7 +13,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
 tracing = { workspace = true }
-duckdb = { version = "1.85.1"}
+duckdb = { version = "1.85.1" }
 mysql_async = { workspace = true }
 arrow = { workspace = true }
 futures = { workspace = true }
@@ -23,3 +23,5 @@ aws-sdk-sts = "1"
 aws-config = { version = "1", default-features = false, features = ["rustls"] }
 aws-credential-types = "1"
 aws-types = "1"
+snowflake-connector-rs = { workspace = true }
+url = "2"
