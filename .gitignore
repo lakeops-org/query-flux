@@ -12,3 +12,7 @@ config.yaml
 .claude/
 snowflake-client/
 examples/node-starrocks-via-queryflux/
+
+# Local config and notes (never commit or push)
+config.local.yaml
+PERFORMANCE_FINDINGS.md
