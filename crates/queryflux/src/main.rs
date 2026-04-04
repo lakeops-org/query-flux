@@ -141,10 +141,18 @@ async fn main() -> Result<()> {
         if !config.clusters.is_empty() {
             info!("Applying cluster definitions from YAML to Postgres");
             for (name, cfg) in &config.clusters {
-                if let Some(upsert) = UpsertClusterConfig::from_core(cfg) {
-                    pg.upsert_cluster_config(name, &upsert)
-                        .await
-                        .with_context(|| format!("Upsert cluster '{name}' from YAML"))?;
+                match UpsertClusterConfig::from_core(cfg) {
+                    Ok(Some(upsert)) => {
+                        pg.upsert_cluster_config(name, &upsert)
+                            .await
+                            .with_context(|| format!("Upsert cluster '{name}' from YAML"))?;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        return Err(anyhow::Error::from(e).context(format!(
+                            "cluster '{name}': serializing queryAuth for Postgres seed"
+                        )));
+                    }
                 }
             }
         }
@@ -170,44 +178,49 @@ async fn main() -> Result<()> {
         // Build minimal ClusterConfig values for validation, group resolution, and
         // `BackendIdentityResolver` (`queryAuth`). Adapters are still built from the
         // raw JSONB via `build_adapter_from_record`.
-        config.clusters = db_cluster_records
-            .iter()
-            .filter_map(|r| {
-                let engine =
-                    queryflux_core::engine_registry::parse_engine_key(&r.engine_key).ok()?;
-                Some((
-                    r.name.clone(),
-                    queryflux_core::config::ClusterConfig {
-                        engine: Some(engine),
-                        enabled: r.enabled,
-                        max_running_queries: r.max_running_queries.map(|v| v as u64),
-                        endpoint: queryflux_core::engine_registry::json_str(&r.config, "endpoint"),
-                        database_path: None,
-                        region: None,
-                        s3_output_location: None,
-                        workgroup: None,
-                        catalog: None,
-                        tls: None,
-                        auth: match queryflux_core::engine_registry::parse_auth_from_config_json(
-                            &r.config,
-                        ) {
-                            Ok(a) => a,
-                            Err(e) => {
-                                tracing::warn!(
-                                    cluster = %r.name,
-                                    "invalid auth in cluster config JSON: {e}"
-                                );
-                                None
-                            }
-                        },
-                        query_auth:
-                            queryflux_core::engine_registry::parse_query_auth_from_config_json(
-                                &r.config,
-                            ),
-                    },
-                ))
-            })
-            .collect();
+        let mut clusters: HashMap<String, queryflux_core::config::ClusterConfig> = HashMap::new();
+        for r in &db_cluster_records {
+            let engine = match queryflux_core::engine_registry::parse_engine_key(&r.engine_key) {
+                Ok(e) => e,
+                Err(err) => {
+                    tracing::warn!(cluster = %r.name, "skipping cluster: {err}");
+                    continue;
+                }
+            };
+            let query_auth =
+                match queryflux_core::engine_registry::parse_query_auth_from_config_json(&r.config)
+                {
+                    Ok(qa) => qa,
+                    Err(e) => {
+                        return Err(e).with_context(|| {
+                            format!("cluster '{}': invalid queryAuth in JSONB", r.name)
+                        });
+                    }
+                };
+            let auth = match queryflux_core::engine_registry::parse_auth_from_config_json(&r.config)
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!(
+                        cluster = %r.name,
+                        "invalid auth in cluster config JSON: {e}"
+                    );
+                    None
+                }
+            };
+            clusters.insert(
+                r.name.clone(),
+                queryflux_core::engine_registry::cluster_config_from_persisted_json(
+                    engine,
+                    r.enabled,
+                    r.max_running_queries.map(|v| v as u64),
+                    &r.config,
+                    auth,
+                    query_auth,
+                ),
+            );
+        }
+        config.clusters = clusters;
         startup_cluster_records = Some(db_cluster_records);
 
         let group_records = pg
@@ -1113,7 +1126,8 @@ async fn build_live_config(
         strategy::strategy_from_config,
     };
     use queryflux_core::engine_registry::{
-        json_str, parse_auth_from_config_json, parse_engine_key, parse_query_auth_from_config_json,
+        cluster_config_from_persisted_json, json_str, parse_auth_from_config_json,
+        parse_engine_key, parse_query_auth_from_config_json,
     };
     use queryflux_core::tags::QueryTags;
 
@@ -1126,6 +1140,8 @@ async fn build_live_config(
         .map(|r| (r.name.as_str(), r))
         .collect();
 
+    let prev_config_json = cache.config_json.clone();
+
     // Build adapters — reuse when serialized cluster config is unchanged.
     for record in cluster_records {
         let cluster_name_str = &record.name;
@@ -1137,8 +1153,7 @@ async fn build_live_config(
         let cfg_json = serde_json::to_string(&(record.engine_key.as_str(), &record.config))
             .unwrap_or_default();
         let reuse = cache.adapters.contains_key(cluster_name_str.as_str())
-            && cache
-                .config_json
+            && prev_config_json
                 .get(cluster_name_str.as_str())
                 .map(String::as_str)
                 == Some(cfg_json.as_str());
@@ -1225,8 +1240,7 @@ async fn build_live_config(
             // but copy health and queue counters from the previous generation.
             let cfg_json = serde_json::to_string(&(record.engine_key.as_str(), &record.config))
                 .unwrap_or_default();
-            let config_unchanged = cache
-                .config_json
+            let config_unchanged = prev_config_json
                 .get(member_name.as_str())
                 .map(String::as_str)
                 == Some(cfg_json.as_str());
@@ -1266,38 +1280,41 @@ async fn build_live_config(
     let cluster_manager = Arc::new(SimpleClusterGroupManager::new(group_states));
 
     // Build minimal ClusterConfig values for BackendIdentityResolver (`queryAuth` from JSONB).
-    let cluster_configs: HashMap<String, queryflux_core::config::ClusterConfig> = cluster_records
-        .iter()
-        .filter_map(|r| {
-            let engine = parse_engine_key(&r.engine_key).ok()?;
-            Some((
-                r.name.clone(),
-                queryflux_core::config::ClusterConfig {
-                    engine: Some(engine),
-                    enabled: r.enabled,
-                    max_running_queries: r.max_running_queries.map(|v| v as u64),
-                    endpoint: json_str(&r.config, "endpoint"),
-                    database_path: None,
-                    region: None,
-                    s3_output_location: None,
-                    workgroup: None,
-                    catalog: None,
-                    tls: None,
-                    auth: match parse_auth_from_config_json(&r.config) {
-                        Ok(a) => a,
-                        Err(e) => {
-                            tracing::warn!(
-                                cluster = %r.name,
-                                "reload: invalid auth in cluster config JSON: {e}"
-                            );
-                            None
-                        }
-                    },
-                    query_auth: parse_query_auth_from_config_json(&r.config),
-                },
-            ))
-        })
-        .collect();
+    let mut cluster_configs: HashMap<String, queryflux_core::config::ClusterConfig> =
+        HashMap::new();
+    for r in cluster_records {
+        let engine = match parse_engine_key(&r.engine_key) {
+            Ok(e) => e,
+            Err(err) => {
+                tracing::warn!(cluster = %r.name, "reload: {err}");
+                continue;
+            }
+        };
+        let query_auth = parse_query_auth_from_config_json(&r.config).map_err(|e| {
+            anyhow::anyhow!("cluster '{}': invalid queryAuth in JSONB: {e}", r.name)
+        })?;
+        let auth = match parse_auth_from_config_json(&r.config) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(
+                    cluster = %r.name,
+                    "reload: invalid auth in cluster config JSON: {e}"
+                );
+                None
+            }
+        };
+        cluster_configs.insert(
+            r.name.clone(),
+            cluster_config_from_persisted_json(
+                engine,
+                r.enabled,
+                r.max_running_queries.map(|v| v as u64),
+                &r.config,
+                auth,
+                query_auth,
+            ),
+        );
+    }
 
     // Build router chain.
     let fallback = ClusterGroupName(routing_fallback.to_string());

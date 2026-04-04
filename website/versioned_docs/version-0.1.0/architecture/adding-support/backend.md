@@ -70,7 +70,7 @@ Do **not** add adapter construction logic in **`main.rs`** beyond what already e
 
 ### Step 5 — Persistence
 
-You normally **do not** edit `queryflux-persistence` for new JSON keys. You **do** extend **`parse_engine_key`** (and thus **`engine_key`**) in core so the `engine_key` column is recognized. **`UpsertClusterConfig::from_core`** already sets the column from **`engine_key(&EngineConfig)`**.
+You normally **do not** edit `queryflux-persistence` for engine-specific JSON keys that live only inside the `cluster_configs.config` JSONB blob. If you add new **top-level** **`ClusterConfig`** fields (in `queryflux-core`) that YAML seeding must persist, extend **`UpsertClusterConfig::from_core`** so first-run Postgres seeding writes them into that JSON. You **do** extend **`parse_engine_key`** (and thus **`engine_key`**) in core so the `engine_key` column is recognized; **`UpsertClusterConfig::from_core`** sets the column from **`engine_key(&EngineConfig)`**.
 
 ### Step 6 — Frontends and tests
 

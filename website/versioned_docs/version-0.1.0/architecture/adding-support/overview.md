@@ -25,7 +25,7 @@ Adding **PostgreSQL wire** as a client entrypoint is **not** the same as adding 
 
 ## Related reading
 
-- [Frontends](../frontends/overview.md) — Trino HTTP, Postgres wire, MySQL wire, Flight SQL, Snowflake  
+- [Frontends](../frontends/overview.md) — Trino HTTP, Postgres wire, MySQL wire, Flight SQL  
 - [system-map.md](../system-map.md) — End-to-end flow  
 - [query-translation.md](../query-translation.md) — Dialects and sqlglot  
 - [routing-and-clusters.md](../routing-and-clusters.md) — Routers and groups  

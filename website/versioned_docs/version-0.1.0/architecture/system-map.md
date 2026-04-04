@@ -4,7 +4,7 @@ description: End-to-end query lifecycle, major crates, and component status (hig
 
 # QueryFlux — Architecture Overview
 
-QueryFlux is a universal SQL query proxy and router. It accepts queries from clients over multiple protocols (Trino HTTP, PostgreSQL wire, MySQL wire, Arrow Flight SQL, Snowflake HTTP), routes them to the appropriate backend engine, optionally translates the SQL dialect, and streams results back in the client's native format.
+QueryFlux is a universal SQL query proxy and router. It accepts queries from clients over multiple protocols (Trino HTTP, PostgreSQL wire, MySQL wire, Arrow Flight SQL, and others), routes them to the appropriate backend engine, optionally translates the SQL dialect, and streams results back in the client's native format.
 
 **More documentation:** the [architecture documentation overview](./overview.md) indexes deeper topics — [motivation-and-goals.md](motivation-and-goals.md) (why the project exists), [query-translation.md](query-translation.md) (sqlglot and dialects), [routing-and-clusters.md](routing-and-clusters.md) (routers, groups, load balancing), [observability.md](observability.md) (Prometheus, Grafana, Studio, Admin API), [adding-support/overview.md](adding-support/overview.md) (Extending QueryFlux — backend, frontend).
 
@@ -163,7 +163,7 @@ pub trait RouterTrait: Send + Sync {
 | PostgreSQL wire | **Done** | 5432 |
 | MySQL wire | **Done** | 3306 |
 | Arrow Flight SQL | **Done** (query execution) | — |
-| Snowflake HTTP wire + SQL API | **Done** | configurable |
+| Snowflake HTTP wire + SQL API | Planned | — |
 | Admin / Prometheus metrics | **Done** | 9000 |
 | ClickHouse HTTP | Planned | 8123 |
 
@@ -252,7 +252,7 @@ queryflux:
     trinoHttp:    { enabled: true,  port: 8080 }
     postgresWire: { enabled: false, port: 5432 }
     mysqlWire:    { enabled: false, port: 3306 }
-    snowflakeHttp: { enabled: false, port: 8445 }
+    flightSql:    { enabled: false, port: 50051 }
   persistence:
     inMemory: {}     # or: postgres: { databaseUrl: "postgres://..." }
   adminApi:
@@ -360,7 +360,7 @@ curl -s -X POST http://localhost:8080/v1/statement \
 | P1 | PostgreSQL wire frontend | **Done** |
 | P1 | MySQL wire frontend + StarRocks backend | **Done** |
 | P1 | Arrow Flight SQL frontend | **Done** |
-| P1 | Snowflake HTTP wire + SQL API frontend | **Done** |
+| P1 | Snowflake HTTP wire + SQL API frontend | Planned |
 | P1 | QueryFlux Studio — management UI | **Done** |
 | P1 | Athena backend | **Done** |
 | P1 | Authentication / authorization (`queryflux-auth`) | **Done** |

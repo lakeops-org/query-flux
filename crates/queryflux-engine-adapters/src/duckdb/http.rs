@@ -156,6 +156,14 @@ impl DuckDbHttpAdapter {
         let auth = parse_auth_from_config_json(json).map_err(|e| {
             QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
         })?;
+        if let Some(ref a) = auth {
+            use queryflux_core::config::ClusterAuth;
+            if !matches!(a, ClusterAuth::Basic { .. } | ClusterAuth::Bearer { .. }) {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name_str}': DuckDB HTTP supports only basic or bearer auth"
+                )));
+            }
+        }
         Self::new(cluster_name, group_name, endpoint, tls_skip, auth).map_err(|e| {
             QueryFluxError::Engine(format!(
                 "cluster '{cluster_name_str}': failed to create DuckDB HTTP adapter ({e})"

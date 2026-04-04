@@ -4,7 +4,7 @@ description: PostgreSQL wire protocol frontend — startup, simple query, sessio
 
 # PostgreSQL wire
 
-The PostgreSQL wire frontend lets standard Postgres clients (`psql`, JDBC, Python `psycopg2`, Go `pgx`, etc.) connect to QueryFlux over the PostgreSQL v3 wire protocol. Queries are executed synchronously — the TCP connection stays open while the result streams back as standard Postgres wire messages.
+The PostgreSQL wire frontend lets Postgres clients that work in **simple-query mode** (`psql`, many JDBC/Python drivers in autocommit/simple mode, etc.) connect to QueryFlux over the PostgreSQL v3 wire protocol. Queries are executed synchronously — the TCP connection stays open while the result streams back as standard Postgres wire messages.
 
 ## Configuration
 
@@ -81,4 +81,4 @@ print(cur.fetchone())
 ## Related
 
 - [Frontends overview](overview.md) — shared dispatch and session model
-- [Routing and clusters](/docs/architecture/routing-and-clusters) — `protocolBased` router with `postgresWire`
+- [Routing and clusters](../routing-and-clusters.md) — `protocolBased` router with `postgresWire`

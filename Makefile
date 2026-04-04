@@ -3,14 +3,14 @@ COMPOSE      := docker compose -f docker/docker-compose.yml --project-directory 
 COMPOSE_TEST := docker compose -f docker/docker-compose.test.yml --project-directory .
 
 # site-packages for `.venv` — works for any Python 3.x (CI uses 3.12, dev may use 3.13).
-PYTHONPATH_VENV = $(shell .venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null)
+PYTHONPATH_VENV = $(shell test -x .venv/bin/python3 && .venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')
 
 # Trino `tpch` schema used when loading Iceberg tables (see docker/fixtures/init.sql + data-loader).
 # tiny = default fast tests; sf1 ≈ 1.5M orders (long load, heavy E2E).
 TPCH_SCALE ?= tiny
 export TPCH_SCALE
 
-.PHONY: dev stop logs build lint clippy check test benchmark test-e2e clean setup
+.PHONY: dev stop logs build lint clippy check test benchmark benchmark-build benchmark-run test-e2e clean setup
 
 ## Create virtualenv and install Python dependencies (sqlglot etc.)
 setup:
@@ -29,6 +29,7 @@ env:
 
 
 server:
+	@test -x .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	RUST_LOG=queryflux=info,queryflux_frontend=info \
@@ -59,15 +60,19 @@ test:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
-	$(CARGO) test --tests --workspace --exclude queryflux-e2e-tests
+	$(CARGO) test --tests --workspace --exclude queryflux-e2e-tests --exclude queryflux-bench
 
 ## Micro-benchmark: mock Trino + StarRocks backends vs QueryFlux (release build).
 ## Optional: QUERYFLUX_BENCH_WARMUP, QUERYFLUX_BENCH_ITERATIONS, QUERYFLUX_BENCH_TRINO_POLL.
-benchmark:
+benchmark: benchmark-build benchmark-run
+
+benchmark-build:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) build --release --bin queryflux
+
+benchmark-run:
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	$(CARGO) run --release -p queryflux-bench
@@ -79,9 +84,11 @@ benchmark:
 ## Iceberg/Lakekeeper tables are created by the e2e crate (no TPC-H loader).
 test-e2e:
 	@test -f .venv/bin/python3 || (echo "Run 'make setup' first" && exit 1)
+	@set -e; \
+	trap '$(COMPOSE_TEST) down' EXIT; \
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
-	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel
+	$(COMPOSE_TEST) up -d --wait trino starrocks sentinel; \
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	TRINO_URL=http://localhost:18081 \
@@ -90,7 +97,6 @@ test-e2e:
 	MINIO_ENDPOINT=localhost:19000 \
 	DUCKDB_DOWNLOAD_LIB=1 \
 	$(CARGO) test -p queryflux-e2e-tests --manifest-path Cargo.toml -- --test-threads=1 --include-ignored --nocapture
-	$(COMPOSE_TEST) down
 
 ## Remove build artifacts and Docker volumes
 clean:

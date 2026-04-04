@@ -42,7 +42,6 @@ See the diagram in **[Frontends overview](../frontends/overview.md#shared-archit
 | PostgreSQL wire | [`postgres_wire/`](https://github.com/lakeops-org/queryflux/tree/main/crates/queryflux-frontend/src/postgres_wire) | Binary framing, startup/auth, simple sync execution |
 | MySQL wire | [`mysql_wire/`](https://github.com/lakeops-org/queryflux/tree/main/crates/queryflux-frontend/src/mysql_wire) | Similar to Postgres wire, different packet format |
 | Flight SQL | [`flight_sql/`](https://github.com/lakeops-org/queryflux/tree/main/crates/queryflux-frontend/src/flight_sql) | gRPC / Arrow Flight |
-| Snowflake HTTP | [`snowflake/`](https://github.com/lakeops-org/queryflux/tree/main/crates/queryflux-frontend/src/snowflake) | JSON REST, multiple routes on one Axum app |
 
 All listeners implement **`FrontendListenerTrait`** (`async fn listen`) in [`queryflux-frontend/src/lib.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-frontend/src/lib.rs).
 
@@ -71,7 +70,7 @@ Every **`IncomingQuery`** carries **`SessionContext`** + **`FrontendProtocol`**.
 In **`crates/queryflux-core/src/config.rs`**:
 
 1. Add a field on **`FrontendsConfig`** for your listener (usually **`Option<FrontendConfig>`** unless it is always on). Use serde **`camelCase`** for the YAML key (e.g. `myProtocol`).
-2. **`FrontendConfig`** already carries **`port`**, **`bind_address`**, optional **TLS**, etc. Extend it only if every frontend needs a new knob; prefer protocol-specific structs only when necessary.
+2. **`FrontendConfig`** currently exposes **`enabled`** and **`port`** only. Add fields there only when a knob should apply uniformly to every frontend; otherwise keep protocol-specific options beside the listener implementation.
 
 ### Step 4 — Listener crate (`queryflux-frontend`)
 

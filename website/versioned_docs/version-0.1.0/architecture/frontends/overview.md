@@ -15,7 +15,6 @@ A **frontend** is the entry point for client traffic into QueryFlux. Each fronte
 | [PostgreSQL wire](postgres-wire.md) | `postgresWire` | 5432 | PostgreSQL v3 wire | Postgres | **Done** |
 | [MySQL wire](mysql-wire.md) | `mysqlWire` | 3306 | MySQL wire | MySQL | **Done** |
 | [Arrow Flight SQL](flight-sql.md) | `flightSql` | 50051 | gRPC (Arrow Flight) | Generic | **Done** |
-| [Snowflake](snowflake.md) | `snowflakeHttp` | 8445 | HTTP REST (JSON) | Snowflake | **Done** |
 | ClickHouse HTTP | `clickhouseHttp` | 8123 | HTTP | ClickHouse | Planned |
 
 ## Shared architecture
@@ -62,9 +61,8 @@ Each frontend builds a protocol-specific `SessionContext` that travels with the 
 | `PostgresWire` | `user`, `database`, `session_params` |
 | `MySqlWire` | `user`, `schema`, `session_vars` |
 | `ClickHouseHttp` | `headers`, `query_params` |
-| `FlightSql` | `headers` (from gRPC metadata) |
 
-Snowflake frontends build a `MySqlWire` session context internally (user from session, schema from database hint).
+Flight SQL uses internal session metadata compatible with dispatch; see the [Flight SQL frontend](flight-sql.md).
 
 ### Authentication
 
@@ -80,8 +78,7 @@ routers:
     trinoHttp: trino-default
     postgresWire: trino-default
     mysqlWire: starrocks-group
-    snowflakeHttp: trino-default
-    snowflakeSqlApi: analytics-group
+    flightSql: flight-analytics
 ```
 
 ### SQL dialect and translation
@@ -107,9 +104,6 @@ queryflux:
     flightSql:
       enabled: true
       port: 50051
-    snowflakeHttp:
-      enabled: true
-      port: 8445
 ```
 
 Omitting a frontend block or setting `enabled: false` disables that listener entirely.

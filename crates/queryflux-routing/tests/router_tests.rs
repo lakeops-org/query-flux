@@ -249,6 +249,7 @@ async fn protocol_router_flight_sql() {
         clickhouse_http: Some(group("ch-group")),
         flight_sql: Some(group("sf-analytics")),
     };
+    // `ProtocolBasedRouter` routes on frontend protocol only (session is ignored).
     let result = router
         .route(
             "SELECT 1",

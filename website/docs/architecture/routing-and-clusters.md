@@ -34,7 +34,7 @@ Configured under `routers:` in YAML (`queryflux_core::config::RouterConfig`). Wi
 
 | `type` | Behavior |
 |--------|----------|
-| `protocolBased` | Maps the active frontend (`trinoHttp`, `postgresWire`, `mysqlWire`, `flightSql`, `clickhouseHttp`, `snowflakeHttp`, `snowflakeSqlApi`) to a group name. |
+| `protocolBased` | Maps the active frontend (`trinoHttp`, `postgresWire`, `mysqlWire`, `flightSql`, `clickhouseHttp`) to a group name. |
 | `header` | Matches a header value to a group (useful for Trino HTTP and similar). |
 | `queryRegex` | Ordered rules: first regex match on the SQL text wins. |
 | `tags` | Routes based on query tags attached to the session. Each rule specifies one or more tag key/value conditions (AND logic); first matching rule wins. See [Tags router](#tags-router-tags) below. |

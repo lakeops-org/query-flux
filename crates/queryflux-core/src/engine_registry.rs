@@ -10,7 +10,7 @@
 
 use serde::Serialize;
 
-use crate::config::{ClusterAuth, ClusterConfig, EngineConfig, QueryAuthConfig};
+use crate::config::{ClusterAuth, ClusterConfig, EngineConfig, QueryAuthConfig, TlsConfig};
 use crate::query::EngineType;
 
 // ---------------------------------------------------------------------------
@@ -291,10 +291,54 @@ pub fn parse_auth_from_config_json(
 ///
 /// Same JSON shape as YAML `queryAuth` on [`ClusterConfig`] (written on upsert from YAML
 /// and preserved in Postgres `cluster_configs.config`).
-pub fn parse_query_auth_from_config_json(json: &serde_json::Value) -> Option<QueryAuthConfig> {
-    json.get("queryAuth")
-        .filter(|v| !v.is_null())
-        .and_then(|v| serde_json::from_value::<QueryAuthConfig>(v.clone()).ok())
+///
+/// Returns [`Ok(None)`] when the field is omitted or null. A present but malformed payload
+/// yields [`Err`].
+pub fn parse_query_auth_from_config_json(
+    json: &serde_json::Value,
+) -> Result<Option<QueryAuthConfig>, serde_json::Error> {
+    match json.get("queryAuth") {
+        None => Ok(None),
+        Some(v) if v.is_null() => Ok(None),
+        Some(v) => Ok(Some(serde_json::from_value::<QueryAuthConfig>(v.clone())?)),
+    }
+}
+
+/// Build a [`ClusterConfig`] from a persisted `cluster_configs.config` JSON blob plus parsed auth.
+///
+/// Field keys match `UpsertClusterConfig::from_core` / Studio camelCase JSON.
+pub fn cluster_config_from_persisted_json(
+    engine: EngineConfig,
+    enabled: bool,
+    max_running_queries: Option<u64>,
+    config: &serde_json::Value,
+    auth: Option<ClusterAuth>,
+    query_auth: Option<QueryAuthConfig>,
+) -> ClusterConfig {
+    let tls = if json_bool(config, "tlsInsecureSkipVerify") {
+        Some(TlsConfig {
+            insecure_skip_verify: true,
+        })
+    } else {
+        config
+            .get("tls")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value::<TlsConfig>(v.clone()).ok())
+    };
+    ClusterConfig {
+        engine: Some(engine),
+        enabled,
+        max_running_queries,
+        endpoint: json_str(config, "endpoint"),
+        database_path: json_str(config, "databasePath"),
+        region: json_str(config, "region"),
+        s3_output_location: json_str(config, "s3OutputLocation"),
+        workgroup: json_str(config, "workgroup"),
+        catalog: json_str(config, "catalog"),
+        tls,
+        auth,
+        query_auth,
+    }
 }
 
 /// Extract an optional string field from a config JSON blob.
@@ -358,13 +402,19 @@ mod query_auth_parse_tests {
     #[test]
     fn parse_query_auth_impersonate() {
         let blob = serde_json::json!({ "queryAuth": { "type": "impersonate" } });
-        let parsed = parse_query_auth_from_config_json(&blob).unwrap();
+        let parsed = parse_query_auth_from_config_json(&blob).unwrap().unwrap();
         assert!(matches!(parsed, QueryAuthConfig::Impersonate));
     }
 
     #[test]
     fn parse_query_auth_omitted_is_none() {
         let blob = serde_json::json!({ "endpoint": "http://t:8080" });
-        assert!(parse_query_auth_from_config_json(&blob).is_none());
+        assert!(parse_query_auth_from_config_json(&blob).unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_query_auth_invalid_is_err() {
+        let blob = serde_json::json!({ "queryAuth": { "type": "notAConfiguredQueryAuth" } });
+        assert!(parse_query_auth_from_config_json(&blob).is_err());
     }
 }

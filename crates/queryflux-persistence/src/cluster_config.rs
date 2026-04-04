@@ -115,8 +115,13 @@ use queryflux_core::config::{ClusterAuth, ClusterConfig, ClusterGroupConfig};
 use queryflux_core::engine_registry::engine_key;
 
 impl UpsertClusterConfig {
-    pub fn from_core(cfg: &ClusterConfig) -> Option<Self> {
-        let engine = cfg.engine.as_ref()?;
+    /// Serializes `ClusterConfig` into the JSONB shape stored in Postgres.
+    ///
+    /// Returns `Ok(None)` when `engine` is missing. Fails if `queryAuth` cannot be encoded.
+    pub fn from_core(cfg: &ClusterConfig) -> Result<Option<Self>, serde_json::Error> {
+        let Some(engine) = cfg.engine.as_ref() else {
+            return Ok(None);
+        };
         let engine_key = engine_key(engine);
 
         let mut config = serde_json::Map::new();
@@ -189,17 +194,15 @@ impl UpsertClusterConfig {
         }
 
         if let Some(qa) = &cfg.query_auth {
-            if let Ok(v) = serde_json::to_value(qa) {
-                config.insert("queryAuth".into(), v);
-            }
+            config.insert("queryAuth".into(), serde_json::to_value(qa)?);
         }
 
-        Some(Self {
+        Ok(Some(Self {
             engine_key: engine_key.to_owned(),
             enabled: cfg.enabled,
             max_running_queries: cfg.max_running_queries.map(|v| v as i64),
             config: serde_json::Value::Object(config),
-        })
+        }))
     }
 }
 
