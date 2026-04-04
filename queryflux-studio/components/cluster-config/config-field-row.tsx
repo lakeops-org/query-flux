@@ -53,7 +53,17 @@ export function ConfigFieldRow({
           <option value="">—</option>
           {supportedAuth.map((a) => (
             <option key={a} value={a}>
-              {a === "basic" ? "Username & password" : a === "bearer" ? "Bearer token" : a}
+              {a === "basic"
+                ? "Username & password"
+                : a === "bearer"
+                  ? "Bearer token"
+                  : a === "keyPair"
+                    ? "Key pair"
+                    : a === "accessKey"
+                      ? "AWS access key"
+                      : a === "roleArn"
+                        ? "IAM role (STS)"
+                        : a}
             </option>
           ))}
         </select>

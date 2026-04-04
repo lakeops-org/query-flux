@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(grep -E \"README|\\\\.md$\")",
+      "Bash(grep -rn \"^version\" /Users/amitgilad/amit/lakesphere/queryflux/crates/*/Cargo.toml)",
+      "Bash(grep -r \"adbc\\\\|ADBC\" /Users/amitgilad/amit/lakesphere/queryflux --include=*.rs --include=*.toml --include=*.yaml)",
+      "WebFetch(domain:select.dev)",
+      "WebFetch(domain:trino.io)",
+      "WebFetch(domain:docs.databricks.com)",
+      "Bash(grep -r indexmap /Users/amitgilad/amit/lakesphere/queryflux/Cargo.toml /Users/amitgilad/amit/lakesphere/queryflux/crates/*/Cargo.toml)",
+      "Bash(cargo build:*)",
+      "Bash(grep -v \"^$\")",
+      "Bash(cargo test:*)",
+      "Bash(find /Users/amitgilad/amit/lakesphere/queryflux -name *.sql -o -name migration* -type f)",
+      "Bash(git -C /Users/amitgilad/amit/lakesphere/queryflux diff crates/queryflux-persistence/src/postgres/mod.rs)",
+      "Bash(curl -s http://localhost:9000/admin/queries?limit=1)",
+      "Bash(python3 -m json.tool)",
+      "Bash(grep -r \"queryTags\\\\|query_tags\" /Users/amitgilad/amit/lakesphere/queryflux/queryflux-studio --include=*.ts --include=*.tsx)",
+      "Bash(npx tsc:*)",
+      "Read(//Users/amitgilad/.cargo/registry/src/**)",
+      "Read(//dev/**)",
+      "Read(//private/tmp/snf_check/snowflake-connector-rs-0.9.0/src/**)"
+    ],
+    "additionalDirectories": [
+      "/Users/amitgilad/amit/lakesphere/queryflux/crates/queryflux-auth"
+    ]
+  }
+}

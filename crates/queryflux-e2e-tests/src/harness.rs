@@ -179,7 +179,7 @@ impl TestHarness {
 
         if group_states.is_empty() {
             return Err(anyhow!(
-                "No backends reachable. Start docker compose (see docker/docker-compose.test.yml): \
+                "No backends reachable. Start docker compose (see docker/test/docker-compose.test.yml): \
                  Trino :18081 and/or StarRocks :19030."
             ));
         }
@@ -232,7 +232,8 @@ impl TestHarness {
             identity_resolver: Arc::new(BackendIdentityResolver::new()),
         });
 
-        let router: Router = TrinoHttpFrontend::new(state, port).router();
+        let trino_fe = TrinoHttpFrontend::new(state, port);
+        let router: Router = trino_fe.router();
         let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -332,3 +333,4 @@ async fn is_lakekeeper_ready(url: &str) -> bool {
     let port = parsed.port().unwrap_or(8181);
     port_is_open(host, port).await
 }
+

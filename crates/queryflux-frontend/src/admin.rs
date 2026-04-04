@@ -169,7 +169,7 @@ impl Default for SecurityConfigDto {
 /// One entry protocol / client surface (Trino HTTP, MySQL wire, …).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ProtocolFrontendDto {
-    /// Stable id: `trino_http`, `mysql_wire`, …
+    /// Stable id: `trino_http`, `mysql_wire`, `flight_sql`, …
     pub id: String,
     pub label: String,
     pub short_description: String,

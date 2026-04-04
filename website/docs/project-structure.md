@@ -29,7 +29,7 @@ queryflux/
 │   └── README.md
 ├── docker/
 │   ├── docker-compose.yml        # Stack used by `make dev`
-│   ├── docker-compose.test.yml   # E2E / integration test stack
+│   ├── test/                     # E2E stack (`docker-compose.test.yml`, fakesnow)
 │   ├── fixtures/                 # SQL init, TPCH helpers, test data seeds
 │   ├── queryflux/                # QueryFlux container build
 │   └── queryflux-studio/         # Studio container build

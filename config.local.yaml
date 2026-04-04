@@ -1,0 +1,81 @@
+queryflux:
+  externalAddress: http://localhost:8080
+  frontends:
+    trinoHttp:
+      enabled: true
+      port: 8080
+    postgresWire:
+      enabled: false
+      port: 5432
+    mysqlWire:
+      enabled: true
+      port: 3306
+    # Form 1: Snowflake wire protocol (JDBC / ODBC / Python SDK)
+    snowflakeHttp:
+      enabled: true
+      port: 8445
+    # Form 2: Snowflake SQL REST API v2
+    snowflakeSqlApi:
+      enabled: true
+      port: 8446
+  persistence:
+    type: postgres
+    url: postgres://queryflux:queryflux@localhost:5433/queryflux
+  adminApi:
+    port: 9000
+  configReloadIntervalSecs: 30
+
+# Optional when persistence.type is postgres: clusters, clusterGroups, routers, and
+# routingFallback can be omitted — define them in QueryFlux Studio (stored in DB).
+
+# clusters:
+#   trino-1:
+#     engine: trino
+#     endpoint: http://localhost:8081
+#     enabled: true
+#   trino-2:
+#     engine: trino
+#     endpoint: http://localhost:8081
+#     enabled: true
+#   duckdb-1:
+#     engine: duckDb
+#     enabled: true
+#   sr-1:
+#     engine: starRocks
+#     endpoint: mysql://localhost:9030
+#     auth:
+#       type: basic
+#       username: root
+#       password: ""
+#     enabled: true
+
+# clusterGroups:
+#   trino-default:
+#     enabled: true
+#     maxRunningQueries: 10
+#     members: [ sr-1]
+#     strategy:
+#       type: roundRobin
+#   duckdb-local:
+#     enabled: true
+#     maxRunningQueries: 4
+#     members: [duckdb-1]
+#   starrocks-default:
+#     enabled: true
+#     maxRunningQueries: 50
+#     members: [sr-1]
+
+translation:
+  errorOnUnsupported: false
+
+# routers:
+#   - type: protocolBased
+#     trinoHttp: trino-default
+#     postgresWire: trino-default
+#     mysqlWire: starrocks-default
+#   - type: header
+#     headerName: x-target-engine
+#     headerValueToGroup:
+#       starrocks: starrocks-default
+
+# routingFallback: starrocks-default

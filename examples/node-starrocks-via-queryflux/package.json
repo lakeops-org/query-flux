@@ -1,0 +1,16 @@
+{
+  "name": "node-starrocks-via-queryflux",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Connect to QueryFlux MySQL wire (StarRocks-backed) from Node.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "mysql2": "^3.14.0"
+  }
+}

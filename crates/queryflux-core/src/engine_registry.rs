@@ -10,7 +10,7 @@
 
 use serde::Serialize;
 
-use crate::config::{ClusterAuth, ClusterConfig, EngineConfig};
+use crate::config::{ClusterAuth, ClusterConfig, EngineConfig, QueryAuthConfig};
 use crate::query::EngineType;
 
 // ---------------------------------------------------------------------------
@@ -238,6 +238,76 @@ pub fn validate_cluster_config(
 }
 
 // ---------------------------------------------------------------------------
+// Config JSON helpers
+// ---------------------------------------------------------------------------
+
+/// Extract a `ClusterAuth` from the flat DB JSON format used by persistence.
+///
+/// The JSON blob stores auth as flat keys: `authType`, `authUsername`,
+/// `authPassword`, `authToken`. This is the canonical format produced by
+/// `UpsertClusterConfig::from_core()` and stored in the `config` JSONB column.
+///
+/// - Missing / empty `authType` → `Ok(None)`.
+/// - Known `authType` with missing required fields → `Err` (so callers fail fast instead of
+///   building adapters with empty credentials).
+pub fn parse_auth_from_config_json(
+    json: &serde_json::Value,
+) -> Result<Option<ClusterAuth>, String> {
+    let s =
+        |key: &str| -> Option<String> { json.get(key).and_then(|v| v.as_str()).map(String::from) };
+    let require = |key: &str| -> Result<String, String> {
+        s(key)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("missing or empty '{key}' for this authType"))
+    };
+    match s("authType").as_deref() {
+        None | Some("") => Ok(None),
+        Some("basic") => Ok(Some(ClusterAuth::Basic {
+            username: require("authUsername")?,
+            password: require("authPassword")?,
+        })),
+        Some("bearer") => Ok(Some(ClusterAuth::Bearer {
+            token: require("authToken")?,
+        })),
+        Some("keyPair") => Ok(Some(ClusterAuth::KeyPair {
+            username: require("authUsername")?,
+            private_key_pem: require("authPassword")?,
+            private_key_passphrase: s("authToken"),
+        })),
+        Some("accessKey") => Ok(Some(ClusterAuth::AccessKey {
+            access_key_id: require("authUsername")?,
+            secret_access_key: require("authPassword")?,
+            session_token: s("authToken"),
+        })),
+        Some("roleArn") => Ok(Some(ClusterAuth::RoleArn {
+            role_arn: require("authUsername")?,
+            external_id: s("authToken"),
+        })),
+        Some(other) => Err(format!("unsupported authType: '{other}'")),
+    }
+}
+
+/// Extract per-query auth (`queryAuth` / Type 2) from the cluster `config` JSONB blob.
+///
+/// Same JSON shape as YAML `queryAuth` on [`ClusterConfig`] (written on upsert from YAML
+/// and preserved in Postgres `cluster_configs.config`).
+pub fn parse_query_auth_from_config_json(json: &serde_json::Value) -> Option<QueryAuthConfig> {
+    json.get("queryAuth")
+        .filter(|v| !v.is_null())
+        .and_then(|v| serde_json::from_value::<QueryAuthConfig>(v.clone()).ok())
+}
+
+/// Extract an optional string field from a config JSON blob.
+pub fn json_str(json: &serde_json::Value, key: &str) -> Option<String> {
+    json.get(key).and_then(|v| v.as_str()).map(String::from)
+}
+
+/// Extract a boolean field from a config JSON blob (defaults to `false`).
+pub fn json_bool(json: &serde_json::Value, key: &str) -> bool {
+    json.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -277,5 +347,24 @@ impl From<&EngineConfig> for EngineType {
             EngineConfig::ClickHouse => EngineType::ClickHouse,
             EngineConfig::Athena => EngineType::Athena,
         }
+    }
+}
+
+#[cfg(test)]
+mod query_auth_parse_tests {
+    use super::*;
+    use crate::config::QueryAuthConfig;
+
+    #[test]
+    fn parse_query_auth_impersonate() {
+        let blob = serde_json::json!({ "queryAuth": { "type": "impersonate" } });
+        let parsed = parse_query_auth_from_config_json(&blob).unwrap();
+        assert!(matches!(parsed, QueryAuthConfig::Impersonate));
+    }
+
+    #[test]
+    fn parse_query_auth_omitted_is_none() {
+        let blob = serde_json::json!({ "endpoint": "http://t:8080" });
+        assert!(parse_query_auth_from_config_json(&blob).is_none());
     }
 }
