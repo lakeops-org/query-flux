@@ -67,7 +67,7 @@ queryflux:
 
 Environment variables `QUERYFLUX_ADMIN_USER` and `QUERYFLUX_ADMIN_PASSWORD` override the YAML fields and follow the same bootstrap semantics.
 
-See **[Studio & Admin Auth](/docs/studio)** for the full credential priority rules and password-change instructions.
+See **[Studio & Admin Auth](./studio)** for the full credential priority rules and password-change instructions.
 
 ---
 
