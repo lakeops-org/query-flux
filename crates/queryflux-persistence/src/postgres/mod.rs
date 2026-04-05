@@ -754,118 +754,43 @@ impl ScriptLibraryStore for PostgresStore {
 #[async_trait]
 impl ProxySettingsStore for PostgresStore {
     async fn get_proxy_setting(&self, key: &str) -> Result<Option<serde_json::Value>> {
-        match key {
-            "security_config" => {
-                let row: Option<(serde_json::Value,)> = sqlx::query_as(
-                    r#"SELECT config FROM security_settings WHERE singleton = TRUE"#,
-                )
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| QueryFluxError::Persistence(format!("get_proxy_setting: {e}")))?;
-                Ok(row.map(|(v,)| v))
-            }
-            // Nested under the same `security_settings.config` JSON blob as Studio security config.
-            "admin_credentials" => {
-                let row: Option<(serde_json::Value,)> = sqlx::query_as(
-                    r#"SELECT config FROM security_settings WHERE singleton = TRUE"#,
-                )
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| QueryFluxError::Persistence(format!("get_proxy_setting: {e}")))?;
-                let Some((config,)) = row else {
-                    return Ok(None);
-                };
-                if let serde_json::Value::Object(ref map) = config {
-                    Ok(map.get("admin_credentials").cloned())
-                } else {
-                    Ok(None)
-                }
-            }
-            _ => Ok(None),
+        if key != "security_config" {
+            return Ok(None);
         }
+        let row: Option<(serde_json::Value,)> =
+            sqlx::query_as(r#"SELECT config FROM security_settings WHERE singleton = TRUE"#)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("get_proxy_setting: {e}")))?;
+        Ok(row.map(|(v,)| v))
     }
 
     async fn set_proxy_setting(&self, key: &str, value: serde_json::Value) -> Result<()> {
-        match key {
-            "security_config" => {
-                sqlx::query(
-                    r#"INSERT INTO security_settings (singleton, config) VALUES (TRUE, $1)
-                       ON CONFLICT (singleton) DO UPDATE SET config = EXCLUDED.config, updated_at = now()"#,
-                )
-                .bind(&value)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| QueryFluxError::Persistence(format!("set_proxy_setting: {e}")))?;
-                Ok(())
-            }
-            "admin_credentials" => {
-                let row: Option<(serde_json::Value,)> = sqlx::query_as(
-                    r#"SELECT config FROM security_settings WHERE singleton = TRUE"#,
-                )
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| QueryFluxError::Persistence(format!("set_proxy_setting: {e}")))?;
-                let mut config = row.map(|(v,)| v).unwrap_or_else(|| serde_json::json!({}));
-                if !config.is_object() {
-                    config = serde_json::json!({});
-                }
-                if let serde_json::Value::Object(ref mut map) = config {
-                    map.insert("admin_credentials".to_string(), value);
-                }
-                sqlx::query(
-                    r#"INSERT INTO security_settings (singleton, config) VALUES (TRUE, $1)
-                       ON CONFLICT (singleton) DO UPDATE SET config = EXCLUDED.config, updated_at = now()"#,
-                )
-                .bind(&config)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| QueryFluxError::Persistence(format!("set_proxy_setting: {e}")))?;
-                Ok(())
-            }
-            _ => Ok(()),
+        if key != "security_config" {
+            return Ok(());
         }
+        sqlx::query(
+            r#"INSERT INTO security_settings (singleton, config) VALUES (TRUE, $1)
+               ON CONFLICT (singleton) DO UPDATE SET config = EXCLUDED.config, updated_at = now()"#,
+        )
+        .bind(&value)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("set_proxy_setting: {e}")))?;
+        Ok(())
     }
 
     async fn delete_proxy_setting(&self, key: &str) -> Result<()> {
-        match key {
-            "security_config" => {
-                sqlx::query(
-                    r#"UPDATE security_settings SET config = '{}'::jsonb, updated_at = now() WHERE singleton = TRUE"#,
-                )
-                .execute(&self.pool)
-                .await
-                .map_err(|e| {
-                    QueryFluxError::Persistence(format!("delete_proxy_setting: {e}"))
-                })?;
-                Ok(())
-            }
-            "admin_credentials" => {
-                let row: Option<(serde_json::Value,)> = sqlx::query_as(
-                    r#"SELECT config FROM security_settings WHERE singleton = TRUE"#,
-                )
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| QueryFluxError::Persistence(format!("delete_proxy_setting: {e}")))?;
-                let Some((mut config,)) = row else {
-                    return Ok(());
-                };
-                if let serde_json::Value::Object(ref mut map) = config {
-                    map.remove("admin_credentials");
-                }
-                sqlx::query(
-                    r#"INSERT INTO security_settings (singleton, config) VALUES (TRUE, $1)
-                       ON CONFLICT (singleton) DO UPDATE SET config = EXCLUDED.config, updated_at = now()"#,
-                )
-                .bind(&config)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| {
-                    QueryFluxError::Persistence(format!("delete_proxy_setting: {e}"))
-                })?;
-                Ok(())
-            }
-            _ => Ok(()),
+        if key != "security_config" {
+            return Ok(());
         }
+        sqlx::query(
+            r#"UPDATE security_settings SET config = '{}'::jsonb, updated_at = now() WHERE singleton = TRUE"#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("delete_proxy_setting: {e}")))?;
+        Ok(())
     }
 }
 

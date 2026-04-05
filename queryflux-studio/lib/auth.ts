@@ -1,74 +1,77 @@
-const COOKIE_NAME = "qf_auth";
+import { basicAuthorizationHeader } from "./admin-session-codec";
+
 const isBrowser = typeof document !== "undefined";
 
-/** Notifies listeners (e.g. `useSyncExternalStore` in ClientShell) that cookie auth changed. */
+/** Notifies listeners (e.g. ClientShell) that auth state changed. */
 function notifyAuthChanged(): void {
   if (!isBrowser) return;
   window.dispatchEvent(new Event("qf:auth-change"));
 }
 
-/** Encode username + password as base64(utf8(user:pass)) — stored in the cookie. */
-function encodePair(username: string, password: string): string {
-  const bytes = new TextEncoder().encode(`${username}:${password}`);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
+/**
+ * Server validates credentials and sets an HttpOnly session cookie.
+ * Client JS never receives or stores the password.
+ */
+export async function saveCredentials(
+  username: string,
+  password: string,
+): Promise<void> {
+  const res = await fetch("/api/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username, password }),
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (res.status === 401) {
+    throw new Error("Unauthorized");
   }
-  return btoa(binary);
-}
-
-/** Encode username + password as a Basic auth header value. */
-export function encodeBasicAuth(username: string, password: string): string {
-  return "Basic " + encodePair(username, password);
-}
-
-/** Persist credentials as a browser cookie (readable by the Next.js server via next/headers). */
-export function saveCredentials(username: string, password: string): void {
-  if (!isBrowser) return;
-  const value = encodeURIComponent(encodePair(username, password));
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = `${COOKIE_NAME}=${value}; SameSite=Strict; path=/; max-age=86400${secure}`;
+  if (!res.ok) {
+    throw new Error(`session: ${res.status}`);
+  }
   notifyAuthChanged();
 }
 
-/** Clear stored credentials. */
-export function clearCredentials(): void {
-  if (!isBrowser) return;
-  document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
+/** Clear HttpOnly session via logout endpoint. */
+export async function clearCredentials(): Promise<void> {
+  await fetch("/api/session", {
+    method: "DELETE",
+    credentials: "include",
+    cache: "no-store",
+  });
   notifyAuthChanged();
 }
 
-/** Read stored credentials from the cookie, or null if not logged in / on server. */
-export function loadCredentials(): { username: string; password: string } | null {
-  if (!isBrowser) return null;
-  const raw = readCookieClient();
-  if (!raw) return null;
-  try {
-    const binary = atob(raw);
-    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-    const decoded = new TextDecoder().decode(bytes);
-    const idx = decoded.indexOf(":");
-    if (idx === -1) return null;
-    return { username: decoded.slice(0, idx), password: decoded.slice(idx + 1) };
-  } catch {
-    return null;
+/** Whether an HttpOnly admin session exists (no password exposed). */
+export async function fetchSessionStatus(): Promise<{
+  authenticated: boolean;
+  username?: string;
+}> {
+  const res = await fetch("/api/session", {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    return { authenticated: false };
   }
+  return (await res.json()) as {
+    authenticated: boolean;
+    username?: string;
+  };
 }
 
 /**
- * Return `Authorization: Basic ...` header value from the cookie.
- * Client-side only — returns null on the server (use next/headers there).
+ * Build Basic auth for one-off requests (e.g. probing before session exists).
+ * Prefer `saveCredentials` + cookie-backed proxy for normal use.
  */
-export function getAuthHeader(): string | null {
-  if (!isBrowser) return null;
-  const raw = readCookieClient();
-  return raw ? `Basic ${raw}` : null;
+export function encodeBasicAuth(username: string, password: string): string {
+  return basicAuthorizationHeader(username, password);
 }
 
-function readCookieClient(): string | null {
-  const match = document.cookie.match(
-    new RegExp(`(?:^|; )${COOKIE_NAME}=([^;]*)`)
-  );
-  if (!match) return null;
-  return decodeURIComponent(match[1]);
+/**
+ * Browser API calls use `credentials: 'include'` and the admin proxy reads the HttpOnly cookie.
+ * Do not send Authorization from client-side JS for session-backed requests.
+ */
+export function getAuthHeader(): string | null {
+  return null;
 }

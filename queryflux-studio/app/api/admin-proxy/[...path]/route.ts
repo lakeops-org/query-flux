@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  SESSION_COOKIE_NAME,
+  basicAuthFromCookieValue,
+} from "@/lib/admin-session-codec";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +17,12 @@ async function forward(req: NextRequest, pathSegments: string[]) {
   const headers = new Headers();
   const contentType = req.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
-  // Forward the Basic auth credential from the browser to the admin API.
-  const authorization = req.headers.get("authorization");
-  if (authorization) headers.set("authorization", authorization);
+  // HttpOnly session cookie (set by POST /api/session) — never expose credentials to client JS.
+  const sessionToken = req.cookies.get(SESSION_COOKIE_NAME)?.value;
+  if (sessionToken) {
+    const auth = basicAuthFromCookieValue(sessionToken);
+    if (auth) headers.set("authorization", auth);
+  }
 
   const init: RequestInit = {
     method: req.method,

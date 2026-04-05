@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
-      <body className="h-full flex bg-slate-50 text-slate-900 antialiased">
+      <body className="h-full flex min-h-0 bg-slate-50 text-slate-900 antialiased">
         <ClientShell>{children}</ClientShell>
       </body>
     </html>

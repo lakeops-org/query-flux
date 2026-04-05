@@ -163,11 +163,9 @@ pub trait ScriptLibraryStore: Send + Sync {
 // ProxySettingsStore — persisted security (auth / authz) overrides
 // ---------------------------------------------------------------------------
 
-/// Key-value-style API for security overrides; Postgres stores `security_config` and
-/// nests `admin_credentials` in the same `security_settings.config` JSON row.
+/// Key-value-style API for security overrides; Postgres backs `security_config` only.
 ///
-/// Keys: `"security_config"` (full blob), `"admin_credentials"` (merged into that blob on Postgres).
-/// Routing lives in [`RoutingConfigStore`] / `routing_rules`.
+/// Keys: `"security_config"` only. Routing lives in [`RoutingConfigStore`] / `routing_rules`.
 ///
 /// When Postgres persistence is configured, QueryFlux reads `security_config` at startup
 /// to override the YAML config — same pattern as cluster/group configs.

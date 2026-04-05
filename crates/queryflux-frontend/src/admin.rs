@@ -1300,15 +1300,7 @@ async fn put_security_config_handler(
         )
             .into_response();
     };
-    let mut value = serde_json::to_value(&body).unwrap_or(serde_json::Value::Null);
-    // Preserve admin API credential blob nested in the same JSON row (see `admin_credentials` in PostgresStore).
-    if let Ok(Some(existing)) = store.get_proxy_setting("security_config").await {
-        if let Some(admin) = existing.get("admin_credentials") {
-            if let serde_json::Value::Object(ref mut m) = value {
-                m.insert("admin_credentials".to_string(), admin.clone());
-            }
-        }
-    }
+    let value = serde_json::to_value(&body).unwrap_or(serde_json::Value::Null);
     match store.set_proxy_setting("security_config", value).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

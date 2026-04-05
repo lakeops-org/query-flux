@@ -2,9 +2,14 @@
 
 import React, { FormEvent, useState } from "react";
 import { Zap } from "lucide-react";
-import { encodeBasicAuth, saveCredentials } from "@/lib/auth";
+import { saveCredentials } from "@/lib/auth";
 
-export function LoginDialog() {
+interface LoginDialogProps {
+  /** Called after credentials are successfully validated. */
+  onSuccess: () => void;
+}
+
+export function LoginDialog({ onSuccess }: LoginDialogProps) {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -16,25 +21,15 @@ export function LoginDialog() {
     setLoading(true);
 
     try {
-      // Probe the health endpoint — but with auth header — to validate credentials.
-      // We use /admin/auth/status (a protected endpoint) as the validation call.
-      const res = await fetch("/api/admin-proxy/admin/auth/status", {
-        headers: { authorization: encodeBasicAuth(username, password) },
-        cache: "no-store",
-      });
-
-      if (res.status === 401) {
+      await saveCredentials(username, password);
+      onSuccess();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "Unauthorized") {
         setError("Invalid username or password.");
-        return;
+      } else {
+        setError("Could not reach QueryFlux. Check that the server is running.");
       }
-      if (!res.ok) {
-        setError(`Unexpected error (${res.status}). Is QueryFlux running?`);
-        return;
-      }
-
-      saveCredentials(username, password);
-    } catch {
-      setError("Could not reach QueryFlux. Check that the server is running.");
     } finally {
       setLoading(false);
     }
@@ -87,13 +82,15 @@ export function LoginDialog() {
           </div>
 
           {error && (
-            <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+            <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+              {error}
+            </p>
           )}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-60"
+            className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold transition-colors"
           >
             {loading ? "Signing in…" : "Sign in"}
           </button>
