@@ -81,3 +81,6 @@ mysql_async = { version = "0.36.1", default-features = false, features = ["defau
 
 # OpenAPI documentation
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono"] }
+
+# Password hashing
+bcrypt = "0.16"

@@ -7,18 +7,93 @@ import type {
   QueryHistoryRecord,
   QueryListParams,
 } from "./api-types";
+import {
+  SESSION_COOKIE_NAME,
+  basicAuthFromCookieValue,
+} from "./admin-session-codec";
 import { normalizeClusterGroupRecord } from "./group-config-helpers";
 
-/** Server: direct admin API. Browser: same-origin proxy (see `app/api/admin-proxy/`). */
-function adminApiOrigin(): string {
+const ADMIN_DIRECT = process.env.ADMIN_API_URL ?? "http://localhost:9000";
+
+/**
+ * Low-level fetch to the admin API.
+ * - Browser: same-origin `/api/admin-proxy` + `credentials: 'include'` (HttpOnly session).
+ * - Server: prefer looping back through `/api/admin-proxy` with the incoming `Cookie` header so
+ *   auth matches the browser path. Fallback: direct `ADMIN_API_URL` + Authorization from session.
+ */
+async function adminFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const p = path.startsWith("/") ? path : `/${path}`;
+
   if (typeof window !== "undefined") {
-    return "/api/admin-proxy";
+    return fetch(`/api/admin-proxy${p}`, {
+      ...init,
+      credentials: "include",
+      cache: "no-store",
+    });
   }
-  return process.env.ADMIN_API_URL ?? "http://localhost:9000";
+
+  try {
+    const { cookies, headers } = await import("next/headers");
+    const cookieStore = await cookies();
+    const h = await headers();
+    const host = h.get("x-forwarded-host") ?? h.get("host");
+    const proto = h.get("x-forwarded-proto") ?? "http";
+    const cookieStr = cookieStore
+      .getAll()
+      .map((c) => `${c.name}=${encodeURIComponent(c.value)}`)
+      .join("; ");
+    if (host) {
+      const url = `${proto}://${host}/api/admin-proxy${p}`;
+      const merged = new Headers(init.headers);
+      if (cookieStr) merged.set("cookie", cookieStr);
+      return fetch(url, { ...init, headers: merged, cache: "no-store" });
+    }
+  } catch {
+    // fall through to direct admin
+  }
+
+  const hdrs = await serverDirectAuthHeaders();
+  const merged = new Headers(init.headers);
+  for (const [k, v] of Object.entries(hdrs)) merged.set(k, v);
+  return fetch(`${ADMIN_DIRECT}${p}`, { ...init, headers: merged, cache: "no-store" });
+}
+
+/** When loopback proxy is unavailable, attach Authorization from the session cookie. */
+async function serverDirectAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  try {
+    const { cookies } = await import("next/headers");
+    const cookieStore = await cookies();
+    const session = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+    if (session) {
+      const auth = basicAuthFromCookieValue(session);
+      if (auth) headers["authorization"] = auth;
+    }
+  } catch {
+    // ignore
+  }
+  return headers;
+}
+
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("Unauthorized");
+    this.name = "UnauthorizedError";
+  }
+}
+
+function dispatchUnauthorized() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("qf:unauthorized"));
+  }
 }
 
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${adminApiOrigin()}${path}`, { cache: "no-store" });
+  const res = await adminFetch(path, { method: "GET" });
+  if (res.status === 401) {
+    dispatchUnauthorized();
+    throw new UnauthorizedError();
+  }
   if (!res.ok) {
     throw new Error(`Admin API ${path} → ${res.status}: ${await res.text()}`);
   }
@@ -26,12 +101,15 @@ async function apiFetch<T>(path: string): Promise<T> {
 }
 
 async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminApiOrigin()}${path}`, {
+  const res = await adminFetch(path, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-    cache: "no-store",
   });
+  if (res.status === 401) {
+    dispatchUnauthorized();
+    throw new UnauthorizedError();
+  }
   if (!res.ok) {
     throw new Error(`Admin API PATCH ${path} → ${res.status}: ${await res.text()}`);
   }
@@ -39,12 +117,15 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function apiPut<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminApiOrigin()}${path}`, {
+  const res = await adminFetch(path, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-    cache: "no-store",
   });
+  if (res.status === 401) {
+    dispatchUnauthorized();
+    throw new UnauthorizedError();
+  }
   if (!res.ok) {
     throw new Error(`Admin API PUT ${path} → ${res.status}: ${await res.text()}`);
   }
@@ -52,16 +133,45 @@ async function apiPut<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminApiOrigin()}${path}`, {
+  const res = await adminFetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-    cache: "no-store",
   });
+  if (res.status === 401) {
+    dispatchUnauthorized();
+    throw new UnauthorizedError();
+  }
   if (!res.ok) {
     throw new Error(`Admin API POST ${path} → ${res.status}: ${await res.text()}`);
   }
   return res.json() as Promise<T>;
+}
+
+async function apiPutNoContent(path: string, body: unknown): Promise<void> {
+  const res = await adminFetch(path, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    dispatchUnauthorized();
+    throw new UnauthorizedError();
+  }
+  if (!res.ok) {
+    throw new Error(`Admin API PUT ${path} → ${res.status}: ${await res.text()}`);
+  }
+}
+
+async function apiDelete(path: string): Promise<void> {
+  const res = await adminFetch(path, { method: "DELETE" });
+  if (res.status === 401) {
+    dispatchUnauthorized();
+    throw new UnauthorizedError();
+  }
+  if (!res.ok && res.status !== 204) {
+    throw new Error(`Admin API DELETE ${path} → ${res.status}: ${await res.text()}`);
+  }
 }
 
 export async function getClusters(): Promise<ClusterStateDto[]> {
@@ -130,13 +240,7 @@ export async function renameClusterConfig(
 }
 
 export async function deleteClusterConfig(name: string): Promise<void> {
-  const res = await fetch(
-    `${adminApiOrigin()}/admin/config/clusters/${encodeURIComponent(name)}`,
-    { method: "DELETE", cache: "no-store" },
-  );
-  if (!res.ok && res.status !== 204) {
-    throw new Error(`DELETE cluster config ${name} → ${res.status}: ${await res.text()}`);
-  }
+  return apiDelete(`/admin/config/clusters/${encodeURIComponent(name)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,13 +280,7 @@ export async function renameGroupConfig(
 }
 
 export async function deleteGroupConfig(name: string): Promise<void> {
-  const res = await fetch(
-    `${adminApiOrigin()}/admin/config/groups/${encodeURIComponent(name)}`,
-    { method: "DELETE", cache: "no-store" },
-  );
-  if (!res.ok && res.status !== 204) {
-    throw new Error(`DELETE group config ${name} → ${res.status}: ${await res.text()}`);
-  }
+  return apiDelete(`/admin/config/groups/${encodeURIComponent(name)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -208,13 +306,7 @@ export async function updateUserScript(
 }
 
 export async function deleteUserScript(id: number): Promise<void> {
-  const res = await fetch(`${adminApiOrigin()}/admin/config/scripts/${id}`, {
-    method: "DELETE",
-    cache: "no-store",
-  });
-  if (!res.ok && res.status !== 204) {
-    throw new Error(`DELETE script ${id} → ${res.status}: ${await res.text()}`);
-  }
+  return apiDelete(`/admin/config/scripts/${id}`);
 }
 
 export async function updateCluster(
@@ -241,23 +333,26 @@ export async function getRoutingConfig(): Promise<import("./api-types").RoutingC
 }
 
 export async function putSecurityConfig(body: import("./api-types").UpsertSecurityConfig): Promise<void> {
-  const res = await fetch(`${adminApiOrigin()}/admin/config/security`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`PUT security config → ${res.status}: ${await res.text()}`);
+  return apiPutNoContent("/admin/config/security", body);
 }
 
 export async function putRoutingConfig(body: import("./api-types").UpsertRoutingConfig): Promise<void> {
-  const res = await fetch(`${adminApiOrigin()}/admin/config/routing`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`PUT routing config → ${res.status}: ${await res.text()}`);
+  return apiPutNoContent("/admin/config/routing", body);
+}
+
+// ---------------------------------------------------------------------------
+// Auth management
+// ---------------------------------------------------------------------------
+
+export async function getAuthStatus(): Promise<{ db_override: boolean }> {
+  return apiFetch("/admin/auth/status");
+}
+
+export async function changePassword(
+  current_password: string,
+  new_password: string,
+): Promise<void> {
+  await apiPost("/admin/auth/change-password", { current_password, new_password });
 }
 
 // Re-export types so pages can import from one place

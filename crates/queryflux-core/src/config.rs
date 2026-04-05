@@ -66,6 +66,9 @@ pub struct ProxyConfig {
     /// Gateway-level authorization. Defaults to allow-all.
     #[serde(default)]
     pub authorization: AuthorizationConfig,
+    /// Admin REST API (port 9000) configuration.
+    #[serde(default)]
+    pub admin_api: AdminApiConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -442,15 +445,34 @@ pub enum PersistenceConfig {
 pub struct AdminApiConfig {
     #[serde(default = "default_admin_port")]
     pub port: u16,
+    /// Bootstrap admin username. Overridden by `QUERYFLUX_ADMIN_USER` env var.
+    #[serde(default = "default_admin_username")]
+    pub username: String,
+    /// Bootstrap admin password (plain text). Overridden by `QUERYFLUX_ADMIN_PASSWORD` env var.
+    /// Ignored once the password has been changed via the web UI (DB hash takes precedence).
+    #[serde(default = "default_admin_password")]
+    pub password: String,
 }
 
 fn default_admin_port() -> u16 {
     9000
 }
 
+fn default_admin_username() -> String {
+    "admin".to_string()
+}
+
+fn default_admin_password() -> String {
+    "admin".to_string()
+}
+
 impl Default for AdminApiConfig {
     fn default() -> Self {
-        Self { port: 9000 }
+        Self {
+            port: 9000,
+            username: default_admin_username(),
+            password: default_admin_password(),
+        }
     }
 }
 

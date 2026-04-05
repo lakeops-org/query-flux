@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { putSecurityConfig } from "@/lib/api";
+import { getAuthStatus, putSecurityConfig } from "@/lib/api";
 import type { SecurityConfigDto, UpsertSecurityConfig, GroupAuthzDto } from "@/lib/api-types";
 import { Field, SectionHeader, TextInput, SaveBar } from "@/components/studio-settings";
 import {
@@ -312,6 +312,16 @@ export function SecurityEditor({ initialSecurity }: Props) {
   const [securitySaving, setSecuritySaving] = useState(false);
   const [securityMsg, setSecurityMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
+  // ── Admin password status (read-only; password changes are not available in Studio) ──
+
+  const [dbOverride, setDbOverride] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getAuthStatus()
+      .then((s) => setDbOverride(s.db_override))
+      .catch(() => setDbOverride(null));
+  }, []);
+
   const saveSecurityConfig = async () => {
     setSecuritySaving(true);
     setSecurityMsg(null);
@@ -335,6 +345,7 @@ export function SecurityEditor({ initialSecurity }: Props) {
 
   return (
     <div className="p-8 max-w-5xl space-y-8">
+
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Security</h1>
@@ -346,9 +357,23 @@ export function SecurityEditor({ initialSecurity }: Props) {
         </p>
       </div>
 
+      {/* ── Admin API Password ───────────────────────────────────────────── */}
+      <section className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+        <SectionHeader icon={<Key size={15} />} title="Admin API Password" />
+        <div className="p-6">
+          <p className="text-xs text-slate-600">
+            {dbOverride === true
+              ? "A password is stored in the database for the admin API (not managed from Studio)."
+              : dbOverride === false
+                ? "Bootstrap credentials from YAML or environment may be in use. Configure the admin password on the server."
+                : "Status unavailable."}
+          </p>
+        </div>
+      </section>
+
       {/* ── Authentication ───────────────────────────────────────────────── */}
       <section className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <SectionHeader icon={<Key size={15} />} title="Authentication" />
+        <SectionHeader icon={<Shield size={15} />} title="Authentication" />
         <div className="p-6 space-y-5">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Provider">

@@ -49,8 +49,28 @@ Trino / DuckDB / StarRocks / ClickHouse
 - Query queuing with per-cluster capacity limits
 - In-memory (single-instance) or PostgreSQL-backed state
 - Prometheus metrics + Grafana dashboards
-- Admin REST API with OpenAPI spec
+- Admin REST API with OpenAPI spec + Basic auth
 - QueryFlux Studio — web management UI (cluster monitoring, query history, config management)
+
+## QueryFlux Studio
+
+Studio is the web management UI, served on port `3000`. It connects to the Admin REST API on port `9000`.
+
+**Default login:** username `admin`, password `admin`.
+
+> **Security:** Change the default password immediately after first login. Go to **Security → Change password** in Studio. The new password is stored as a bcrypt hash in Postgres and the default credentials are no longer used.
+
+You can also set bootstrap credentials via YAML or environment variables:
+
+```yaml
+queryflux:
+  adminApi:
+    port: 9000
+    username: admin       # override with QUERYFLUX_ADMIN_USER
+    password: admin       # override with QUERYFLUX_ADMIN_PASSWORD
+```
+
+Once the password has been changed through the UI, YAML/env credentials are ignored and the database record takes precedence. See the [Studio docs](website/docs/studio.md) for the full reference.
 
 ## Benchmark (proxy overhead)
 
