@@ -42,7 +42,9 @@ pub struct TrinoConfig {
 
 impl crate::EngineConfigParseable for TrinoConfig {
     fn from_json(json: &serde_json::Value, cluster_name: &str) -> Result<Self> {
-        use queryflux_core::engine_registry::{json_bool, json_str, parse_auth_from_config_json};
+        use queryflux_core::engine_registry::{
+            json_str, json_tls_insecure_skip_verify, parse_auth_from_config_json,
+        };
         let endpoint = json_str(json, "endpoint").ok_or_else(|| {
             QueryFluxError::Engine(format!("cluster '{cluster_name}': missing endpoint"))
         })?;
@@ -58,7 +60,7 @@ impl crate::EngineConfigParseable for TrinoConfig {
         }
         Ok(Self {
             endpoint,
-            tls_skip_verify: json_bool(json, "tlsInsecureSkipVerify"),
+            tls_skip_verify: json_tls_insecure_skip_verify(json),
             auth,
         })
     }

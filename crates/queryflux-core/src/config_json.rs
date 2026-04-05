@@ -82,13 +82,43 @@ pub fn json_bool(json: &serde_json::Value, key: &str) -> bool {
     json.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
+/// Skip TLS certificate verification for HTTP clients (Trino, DuckDB HTTP, …).
+///
+/// Reads nested `tls.insecureSkipVerify` first (matches Studio / [`crate::config::TlsConfig`] JSON).
+/// If that key is absent under `tls`, falls back to legacy top-level `tlsInsecureSkipVerify`.
+pub fn json_tls_insecure_skip_verify(json: &serde_json::Value) -> bool {
+    if let Some(tls) = json.get("tls") {
+        if let Some(v) = tls.get("insecureSkipVerify") {
+            return v.as_bool().unwrap_or(false);
+        }
+    }
+    json_bool(json, "tlsInsecureSkipVerify")
+}
+
+/// Positive integer `poolSize` from JSON (Studio / persisted config), or `None` if missing/invalid.
+pub fn json_pool_size(config: &serde_json::Value) -> Option<usize> {
+    config.get("poolSize").and_then(json_positive_usize)
+}
+
+fn json_positive_usize(v: &serde_json::Value) -> Option<usize> {
+    if let Some(u) = v.as_u64() {
+        return (u >= 1).then_some(u as usize);
+    }
+    if let Some(i) = v.as_i64() {
+        return (i >= 1).then_some(i as usize);
+    }
+    let f = v.as_f64()?;
+    (f.fract() == 0.0 && f >= 1.0).then_some(f as usize)
+}
+
 /// Build a [`ClusterConfig`] from a persisted `cluster_configs.config` JSON blob plus parsed auth.
 ///
 /// Produces a minimal `ClusterConfig` containing only the fields consumed by:
 /// - Pass 2 group resolution in `main.rs` (`engine`, `enabled`, `max_running_queries`, `endpoint`)
 /// - [`BackendIdentityResolver`] (`auth`, `query_auth`)
+/// - StarRocks: `poolSize` → [`ClusterConfig::pool_size`] for YAML-compat / `from_cluster_config` builds
 ///
-/// Engine-specific fields (`databasePath`, `region`, `s3OutputLocation`, `workgroup`, `catalog`,
+/// Other engine-specific fields (`databasePath`, `region`, `s3OutputLocation`, `workgroup`, `catalog`,
 /// `tls`) are **not** extracted here — each adapter reads those directly from JSON via its own
 /// [`EngineConfigParseable::from_json`] implementation.
 pub fn cluster_config_from_persisted_json(
@@ -103,6 +133,7 @@ pub fn cluster_config_from_persisted_json(
         engine: Some(engine),
         enabled,
         max_running_queries,
+        pool_size: json_pool_size(config),
         endpoint: json_str(config, "endpoint"),
         database_path: None,
         region: None,
@@ -177,5 +208,34 @@ mod query_auth_parse_tests {
     fn parse_query_auth_invalid_is_err() {
         let blob = serde_json::json!({ "queryAuth": { "type": "notAConfiguredQueryAuth" } });
         assert!(parse_query_auth_from_config_json(&blob).is_err());
+    }
+}
+
+#[cfg(test)]
+mod tls_insecure_skip_verify_tests {
+    use super::*;
+
+    #[test]
+    fn nested_tls_wins_over_legacy() {
+        let json = serde_json::json!({
+            "tlsInsecureSkipVerify": true,
+            "tls": { "insecureSkipVerify": false }
+        });
+        assert!(!json_tls_insecure_skip_verify(&json));
+    }
+
+    #[test]
+    fn legacy_top_level_when_nested_absent() {
+        let json = serde_json::json!({ "tlsInsecureSkipVerify": true });
+        assert!(json_tls_insecure_skip_verify(&json));
+    }
+
+    #[test]
+    fn empty_tls_object_falls_back_to_legacy() {
+        let json = serde_json::json!({
+            "tls": {},
+            "tlsInsecureSkipVerify": true
+        });
+        assert!(json_tls_insecure_skip_verify(&json));
     }
 }

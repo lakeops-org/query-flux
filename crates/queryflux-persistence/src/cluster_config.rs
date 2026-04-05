@@ -152,6 +152,9 @@ impl UpsertClusterConfig {
         if let Some(v) = &cfg.catalog {
             config.insert("catalog".into(), v.clone().into());
         }
+        if let Some(n) = cfg.pool_size {
+            config.insert("poolSize".into(), serde_json::json!(n));
+        }
 
         match &cfg.auth {
             Some(ClusterAuth::Basic { username, password }) => {

@@ -36,13 +36,15 @@ pub struct DuckDbHttpConfig {
 impl crate::EngineConfigParseable for DuckDbHttpConfig {
     fn from_json(json: &serde_json::Value, cluster_name: &str) -> crate::Result<Self> {
         use queryflux_core::config::ClusterAuth;
-        use queryflux_core::engine_registry::{json_bool, json_str, parse_auth_from_config_json};
+        use queryflux_core::engine_registry::{
+            json_str, json_tls_insecure_skip_verify, parse_auth_from_config_json,
+        };
         let endpoint = json_str(json, "endpoint").ok_or_else(|| {
             queryflux_core::error::QueryFluxError::Engine(format!(
                 "cluster '{cluster_name}': missing endpoint"
             ))
         })?;
-        let tls_skip_verify = json_bool(json, "tlsInsecureSkipVerify");
+        let tls_skip_verify = json_tls_insecure_skip_verify(json);
         let auth = parse_auth_from_config_json(json).map_err(|e| {
             queryflux_core::error::QueryFluxError::Engine(format!(
                 "cluster '{cluster_name}': invalid auth ({e})"

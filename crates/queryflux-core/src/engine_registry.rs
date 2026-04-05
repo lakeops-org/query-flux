@@ -15,8 +15,8 @@ use crate::query::EngineType;
 
 // Re-export JSON parsing helpers from config_json so existing call sites keep working.
 pub use crate::config_json::{
-    cluster_config_from_persisted_json, json_bool, json_str, parse_auth_from_config_json,
-    parse_query_auth_from_config_json,
+    cluster_config_from_persisted_json, json_bool, json_pool_size, json_str,
+    json_tls_insecure_skip_verify, parse_auth_from_config_json, parse_query_auth_from_config_json,
 };
 
 // ---------------------------------------------------------------------------

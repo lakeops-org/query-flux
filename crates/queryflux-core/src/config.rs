@@ -517,6 +517,9 @@ pub struct ClusterConfig {
     /// `maxRunningQueries` is used at runtime.
     #[serde(default)]
     pub max_running_queries: Option<u64>,
+    /// StarRocks MySQL connection pool size for QueryFlux (`poolSize` in JSON/YAML). Other engines ignore this.
+    #[serde(default)]
+    pub pool_size: Option<usize>,
     /// HTTP(S) endpoint for Trino / ClickHouse / StarRocks FE.
     pub endpoint: Option<String>,
     /// Local file path for DuckDB.

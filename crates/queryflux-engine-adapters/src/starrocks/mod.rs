@@ -29,7 +29,7 @@ use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
 
-/// Default MySQL connection pool size for StarRocks (YAML / cluster API without `poolSize` in JSON).
+/// Default MySQL connection pool size for StarRocks when [`ClusterConfig::pool_size`] / JSON `poolSize` is omitted.
 /// Independent of `max_running_queries`: not all load goes through QueryFlux.
 const DEFAULT_STARROCKS_POOL_SIZE: usize = 8;
 
@@ -113,7 +113,7 @@ impl crate::EngineConfigParseable for StarRocksConfig {
         Ok(Self {
             endpoint,
             auth: cfg.auth.clone(),
-            pool_size: DEFAULT_STARROCKS_POOL_SIZE,
+            pool_size: cfg.pool_size.unwrap_or(DEFAULT_STARROCKS_POOL_SIZE).max(1),
         })
     }
 }
@@ -708,7 +708,7 @@ impl StarRocksAdapter {
                 ConfigField {
                     key: "poolSize",
                     label: "Connection pool size",
-                    description: "Max concurrent MySQL connections QueryFlux opens to StarRocks. Defaults to 8 when poolSize is omitted in JSON/Studio. Typed cluster/YAML paths without this field also use 8; pool size is not derived from max_running_queries.",
+                    description: "Max concurrent MySQL connections QueryFlux opens to StarRocks. Defaults to 8 when poolSize is omitted in JSON or in typed cluster/YAML config; set poolSize to override. Not derived from max_running_queries.",
                     field_type: FieldType::Number,
                     required: false,
                     example: Some("8"),
