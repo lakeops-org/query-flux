@@ -36,6 +36,16 @@ function jsonScalarToString(v: unknown): string {
   return "";
 }
 
+/** Positive integer only; rejects floats, NaN, and non-integer `number` values. */
+export function parsePositiveIntString(s: string | undefined): number | undefined {
+  if (s === undefined) return undefined;
+  const t = s.trim();
+  if (t === "") return undefined;
+  const n = Number(t);
+  if (!Number.isInteger(n) || n < 1) return undefined;
+  return n;
+}
+
 /** DB / API `config` object → flat keys expected by cluster-config components. */
 export function persistedClusterConfigToFlat(
   config: Record<string, unknown>,
@@ -95,10 +105,8 @@ export function flatToPersistedConfig(flat: Record<string, string>): Record<stri
   if (flat.warehouse?.trim()) cfg.warehouse = flat.warehouse.trim();
   if (flat.role?.trim()) cfg.role = flat.role.trim();
   if (flat.schema?.trim()) cfg.schema = flat.schema.trim();
-  if (flat.poolSize?.trim()) {
-    const n = Number.parseInt(flat.poolSize.trim(), 10);
-    if (!Number.isNaN(n) && n >= 1) cfg.poolSize = n;
-  }
+  const poolN = parsePositiveIntString(flat.poolSize);
+  if (poolN !== undefined) cfg.poolSize = poolN;
   return cfg;
 }
 
@@ -153,8 +161,8 @@ export function mergeClusterConfigFromFlat(
   if (flat.poolSize !== undefined) {
     const t = flat.poolSize.trim();
     if (t) {
-      const n = Number.parseInt(t, 10);
-      if (!Number.isNaN(n) && n >= 1) out.poolSize = n;
+      const n = parsePositiveIntString(flat.poolSize);
+      if (n !== undefined) out.poolSize = n;
       else delete out.poolSize;
     } else delete out.poolSize;
   }
@@ -193,10 +201,8 @@ export function buildValidateShape(flat: Record<string, string>): Record<string,
   if (flat.warehouse) o.warehouse = flat.warehouse;
   if (flat.role) o.role = flat.role;
   if (flat.schema) o.schema = flat.schema;
-  if (flat.poolSize?.trim()) {
-    const n = Number.parseInt(flat.poolSize.trim(), 10);
-    if (!Number.isNaN(n) && n >= 1) o.poolSize = n;
-  }
+  const poolN = parsePositiveIntString(flat.poolSize);
+  if (poolN !== undefined) o.poolSize = poolN;
   const auth: Record<string, string> = {};
   if (flat["auth.type"]) auth.type = flat["auth.type"];
   if (flat["auth.username"]) auth.username = flat["auth.username"];

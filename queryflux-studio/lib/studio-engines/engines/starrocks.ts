@@ -7,8 +7,8 @@ function validateStarRocksClusterFlat(flat: FlatClusterForm): string[] {
   }
   const ps = flat.poolSize?.trim();
   if (ps) {
-    const n = Number.parseInt(ps, 10);
-    if (Number.isNaN(n) || n < 1) {
+    const n = Number(ps);
+    if (!Number.isInteger(n) || n < 1) {
       return ["StarRocks: connection pool size must be a positive integer."];
     }
   }
@@ -64,7 +64,7 @@ export const starRocksStudioEngine: StudioEngineModule = {
         key: "poolSize",
         label: "Connection pool size",
         description:
-          "Number of persistent MySQL connections to keep open. Defaults to 8 when omitted.",
+          "Max concurrent MySQL connections for QueryFlux (default 8). Separate from max running queries on the engine.",
         fieldType: "number",
         required: false,
         example: "8",
