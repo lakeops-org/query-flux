@@ -102,13 +102,16 @@ pub fn json_pool_size(config: &serde_json::Value) -> Option<usize> {
 
 fn json_positive_usize(v: &serde_json::Value) -> Option<usize> {
     if let Some(u) = v.as_u64() {
-        return (u >= 1).then_some(u as usize);
+        return (u >= 1).then(|| usize::try_from(u).ok()).flatten();
     }
     if let Some(i) = v.as_i64() {
-        return (i >= 1).then_some(i as usize);
+        return (i >= 1).then(|| usize::try_from(i).ok()).flatten();
     }
     let f = v.as_f64()?;
-    (f.fract() == 0.0 && f >= 1.0).then_some(f as usize)
+    if f.fract() != 0.0 || f < 1.0 || f > usize::MAX as f64 {
+        return None;
+    }
+    usize::try_from(f as u64).ok()
 }
 
 /// Build a [`ClusterConfig`] from a persisted `cluster_configs.config` JSON blob plus parsed auth.
