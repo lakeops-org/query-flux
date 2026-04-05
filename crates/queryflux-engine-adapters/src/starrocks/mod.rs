@@ -708,7 +708,7 @@ impl StarRocksAdapter {
                 ConfigField {
                     key: "poolSize",
                     label: "Connection pool size",
-                    description: "Max concurrent MySQL connections for QueryFlux (default 8). Independent of max running queries on the engine.",
+                    description: "Max concurrent MySQL connections QueryFlux opens to StarRocks. Defaults to 8 when poolSize is omitted in JSON/Studio. Typed cluster/YAML paths without this field also use 8; pool size is not derived from max_running_queries.",
                     field_type: FieldType::Number,
                     required: false,
                     example: Some("8"),
