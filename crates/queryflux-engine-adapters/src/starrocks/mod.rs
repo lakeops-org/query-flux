@@ -9,7 +9,10 @@ use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use futures::stream;
-use mysql_async::{consts::ColumnType, prelude::Queryable, Conn, Opts, OptsBuilder, Row, Value};
+use mysql_async::{
+    consts::ColumnType, prelude::Queryable, Conn, Opts, OptsBuilder, Pool, PoolConstraints,
+    PoolOpts, Row, Value,
+};
 use queryflux_core::{
     catalog::TableSchema,
     config::{ClusterAuth, ClusterConfig},
@@ -26,6 +29,95 @@ use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
 
+/// Default MySQL connection pool size for StarRocks when [`ClusterConfig::pool_size`] / JSON `poolSize` is omitted.
+/// Independent of `max_running_queries`: not all load goes through QueryFlux.
+const DEFAULT_STARROCKS_POOL_SIZE: usize = 8;
+
+fn parse_pool_size_from_json(json: &serde_json::Value, cluster_name: &str) -> crate::Result<usize> {
+    match json.get("poolSize") {
+        None => Ok(DEFAULT_STARROCKS_POOL_SIZE),
+        Some(v) => {
+            let n = parse_positive_json_integer(v).ok_or_else(|| {
+                QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': poolSize must be a positive integer"
+                ))
+            })?;
+            usize::try_from(n).map_err(|_| {
+                QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': poolSize is too large for this platform"
+                ))
+            })
+        }
+    }
+}
+
+fn parse_positive_json_integer(v: &serde_json::Value) -> Option<u64> {
+    if let Some(u) = v.as_u64() {
+        return (u >= 1).then_some(u);
+    }
+    if let Some(i) = v.as_i64() {
+        return (i >= 1).then_some(i as u64);
+    }
+    let f = v.as_f64()?;
+    (f.fract() == 0.0 && f >= 1.0).then_some(f as u64)
+}
+
+/// Parsed and validated configuration for a StarRocks cluster.
+pub struct StarRocksConfig {
+    pub endpoint: String,
+    pub auth: Option<ClusterAuth>,
+    pub pool_size: usize,
+}
+
+impl crate::EngineConfigParseable for StarRocksConfig {
+    fn from_json(json: &serde_json::Value, cluster_name: &str) -> crate::Result<Self> {
+        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
+        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': missing endpoint"
+            ))
+        })?;
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': invalid auth ({e})"
+            ))
+        })?;
+        if let Some(ref a) = auth {
+            if !matches!(a, ClusterAuth::Basic { .. }) {
+                return Err(queryflux_core::error::QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': StarRocks only supports basic auth (MySQL username/password)"
+                )));
+            }
+        }
+        let pool_size = parse_pool_size_from_json(json, cluster_name)?;
+        Ok(Self {
+            endpoint,
+            auth,
+            pool_size,
+        })
+    }
+
+    fn from_cluster_config(cfg: &ClusterConfig, cluster_name: &str) -> crate::Result<Self> {
+        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': missing endpoint"
+            ))
+        })?;
+        if let Some(ref a) = cfg.auth {
+            if !matches!(a, ClusterAuth::Basic { .. }) {
+                return Err(queryflux_core::error::QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': StarRocks only supports basic auth (MySQL username/password)"
+                )));
+            }
+        }
+        Ok(Self {
+            endpoint,
+            auth: cfg.auth.clone(),
+            pool_size: cfg.pool_size.unwrap_or(DEFAULT_STARROCKS_POOL_SIZE).max(1),
+        })
+    }
+}
+
 /// StarRocks adapter — connects over the MySQL wire protocol to a StarRocks FE node.
 ///
 /// StarRocks is synchronous: `submit_query` executes the full query and returns
@@ -35,111 +127,106 @@ use queryflux_core::engine_registry::{
 ///   `mysql://root:password@sr-fe-host:9030`
 ///
 /// Alternatively, omit credentials from the URL and supply them via `auth: basic`.
+///
+/// The query pool uses lazy connections: `mysql_async` opens connections on demand up to
+/// the configured max; setting min == max only caps the upper bound, not eager opens.
 pub struct StarRocksAdapter {
     pub cluster_name: ClusterName,
     pub group_name: ClusterGroupName,
-    opts: Opts,
+    pool: Pool,
+    /// Dedicated 1×1 pool for `health_check` so probes do not compete with query traffic.
+    control_pool: Pool,
     endpoint: String,
 }
 
 impl StarRocksAdapter {
-    /// When `auth` is [`Some`](Option::Some), it must be [`ClusterAuth::Basic`]; other variants error.
     pub fn new(
         cluster_name: ClusterName,
         group_name: ClusterGroupName,
-        endpoint: String,
-        auth: Option<ClusterAuth>,
+        config: StarRocksConfig,
     ) -> Result<Self> {
-        if let Some(ref a) = auth {
-            let unsupported = match a {
-                ClusterAuth::Basic { .. } => None,
-                ClusterAuth::Bearer { .. } => Some("bearer"),
-                ClusterAuth::KeyPair { .. } => Some("keyPair"),
-                ClusterAuth::AccessKey { .. } => Some("accessKey"),
-                ClusterAuth::RoleArn { .. } => Some("roleArn"),
-            };
-            if let Some(kind) = unsupported {
-                return Err(QueryFluxError::Engine(format!(
-                    "cluster '{}': StarRocks only supports ClusterAuth::basic (MySQL username/password); unsupported auth type '{kind}'",
+        let make_builder = || -> Result<OptsBuilder> {
+            // Always disable Unix socket preference — StarRocks doesn't support the
+            // `@@socket` system variable that mysql_async queries when prefer_socket=true.
+            let base_opts = Opts::from_url(&config.endpoint).map_err(|e| {
+                QueryFluxError::Engine(format!(
+                    "cluster '{}': StarRocks invalid endpoint URL: {e}",
                     cluster_name.0
-                )));
+                ))
+            })?;
+            let mut b = OptsBuilder::from_opts(base_opts).prefer_socket(false);
+            if let Some(ClusterAuth::Basic { username, password }) = &config.auth {
+                b = b.user(Some(username.clone())).pass(Some(password.clone()));
             }
-        }
+            Ok(b)
+        };
 
-        let base_opts = Opts::from_url(&endpoint).map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{}': StarRocks invalid endpoint URL: {e}",
-                cluster_name.0
-            ))
-        })?;
+        let pool_opts_for = |size: usize| -> Result<PoolOpts> {
+            let size = size.max(1);
+            let constraints = PoolConstraints::new(size, size).ok_or_else(|| {
+                QueryFluxError::Engine(format!(
+                    "cluster '{}': invalid StarRocks pool size",
+                    cluster_name.0
+                ))
+            })?;
+            Ok(PoolOpts::default()
+                .with_constraints(constraints)
+                .with_abs_conn_ttl(Some(Duration::from_secs(1800))))
+        };
 
-        // Always disable Unix socket preference — StarRocks doesn't support the
-        // `@@socket` system variable that mysql_async queries when prefer_socket=true.
-        let mut builder = OptsBuilder::from_opts(base_opts).prefer_socket(false);
+        let main_builder = make_builder()?;
+        let main_opts = Opts::from(
+            main_builder
+                .clone()
+                .pool_opts(pool_opts_for(config.pool_size)?),
+        );
+        let pool = Pool::new(main_opts);
 
-        // Override credentials from the explicit auth block if provided.
-        if let Some(ClusterAuth::Basic { username, password }) = auth {
-            builder = builder.user(Some(username)).pass(Some(password));
-        }
-
-        let opts = Opts::from(builder);
+        let control_opts = Opts::from(make_builder()?.pool_opts(pool_opts_for(1)?));
+        let control_pool = Pool::new(control_opts);
 
         Ok(Self {
             cluster_name,
             group_name,
-            opts,
-            endpoint,
+            pool,
+            control_pool,
+            endpoint: config.endpoint,
         })
-    }
-
-    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
-    pub fn try_from_config_json(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        json: &serde_json::Value,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
-
-        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
-        })?;
-        let auth = parse_auth_from_config_json(json).map_err(|e| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
-        })?;
-        Self::new(cluster_name, group_name, endpoint, auth)
-    }
-
-    /// Build from persisted / YAML [`ClusterConfig`].
-    pub fn try_from_cluster_config(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        cfg: &ClusterConfig,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
-        })?;
-        Self::new(cluster_name, group_name, endpoint, cfg.auth.clone())
     }
 
     /// Execute a DDL/setup statement that returns no rows (CREATE EXTERNAL CATALOG, etc.).
     pub async fn execute_ddl(&self, sql: &str) -> Result<()> {
-        let mut conn = self.connect().await?;
+        let mut conn = self.acquire_conn().await?;
         conn.query_drop(sql)
             .await
             .map_err(|e| QueryFluxError::Engine(format!("StarRocks DDL failed: {e}")))
     }
 
-    async fn connect(&self) -> Result<Conn> {
-        tokio::time::timeout(Duration::from_secs(10), Conn::new(self.opts.clone()))
+    /// Check out a connection from the pool, with a 10-second timeout.
+    async fn acquire_conn(&self) -> Result<Conn> {
+        tokio::time::timeout(Duration::from_secs(10), self.pool.get_conn())
             .await
-            .map_err(|_| QueryFluxError::Engine("StarRocks connect timed out (10s)".to_string()))?
-            .map_err(|e| QueryFluxError::Engine(format!("StarRocks connect failed: {e}")))
+            .map_err(|_| {
+                QueryFluxError::Engine("StarRocks pool checkout timed out (10s)".to_string())
+            })?
+            .map_err(|e| QueryFluxError::Engine(format!("StarRocks pool get_conn failed: {e}")))
+    }
+
+    async fn acquire_control_conn(&self) -> Result<Conn> {
+        tokio::time::timeout(Duration::from_secs(10), self.control_pool.get_conn())
+            .await
+            .map_err(|_| {
+                QueryFluxError::Engine(
+                    "StarRocks control pool checkout timed out (10s)".to_string(),
+                )
+            })?
+            .map_err(|e| {
+                QueryFluxError::Engine(format!("StarRocks control pool get_conn failed: {e}"))
+            })
     }
 
     async fn run_query(&self, sql: &str) -> Result<Vec<Row>> {
-        let mut conn = self.connect().await?;
+        let mut conn = self.acquire_conn().await?;
         conn.query::<Row, _>(sql)
             .await
             .map_err(|e| QueryFluxError::Engine(format!("StarRocks query failed: {e}")))
@@ -189,17 +276,43 @@ impl EngineAdapterTrait for StarRocksAdapter {
     }
 
     async fn health_check(&self) -> bool {
-        match self.run_query("SELECT 1").await {
-            Ok(_) => true,
+        use mysql_async::prelude::Queryable;
+        match self.acquire_control_conn().await {
+            Ok(mut conn) => match conn.ping().await {
+                Ok(_) => true,
+                Err(e) => {
+                    tracing::warn!(
+                        cluster = %self.cluster_name,
+                        error = %e,
+                        "StarRocks health check ping failed"
+                    );
+                    false
+                }
+            },
             Err(e) => {
                 tracing::warn!(
                     cluster = %self.cluster_name,
                     error = %e,
-                    "StarRocks health check error"
+                    "StarRocks health check: pool checkout failed"
                 );
                 false
             }
         }
+    }
+
+    async fn fetch_running_query_count(&self) -> Option<u64> {
+        // Query the FE's processlist for all actively executing queries — not just the ones
+        // routed through QueryFlux. This gives a true picture of StarRocks load and prevents
+        // the reconciler from overcorrecting when the engine is busy with external traffic.
+        let rows = self
+            .run_query(
+                "SELECT COUNT(*) FROM information_schema.processlist WHERE COMMAND = 'Query'",
+            )
+            .await
+            .ok()?;
+        rows.into_iter()
+            .next()
+            .and_then(|mut row| row.take::<u64, usize>(0))
     }
 
     fn engine_type(&self) -> EngineType {
@@ -221,7 +334,7 @@ impl EngineAdapterTrait for StarRocksAdapter {
         _credentials: &queryflux_auth::QueryCredentials,
         tags: &QueryTags,
     ) -> Result<crate::ArrowStream> {
-        let mut conn = self.connect().await?;
+        let mut conn = self.acquire_conn().await?;
 
         if let Some(db) = session.database() {
             let use_sql = format!("USE `{}`", db.replace('`', "``"));
@@ -592,6 +705,14 @@ impl StarRocksAdapter {
                     required: false,
                     example: None,
                 },
+                ConfigField {
+                    key: "poolSize",
+                    label: "Connection pool size",
+                    description: "Max concurrent MySQL connections QueryFlux opens to StarRocks. Defaults to 8 when poolSize is omitted in JSON or in typed cluster/YAML config; set poolSize to override. Not derived from max_running_queries.",
+                    field_type: FieldType::Number,
+                    required: false,
+                    example: Some("8"),
+                },
             ],
         }
     }
@@ -615,12 +736,13 @@ impl crate::EngineAdapterFactory for StarRocksFactory {
         group: ClusterGroupName,
         json: &serde_json::Value,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
-        Ok(Arc::new(StarRocksAdapter::try_from_config_json(
+        let config = StarRocksConfig::from_json(json, &name)?;
+        Ok(Arc::new(StarRocksAdapter::new(
             cluster_name,
             group,
-            json,
-            name.as_str(),
+            config,
         )?))
     }
 }

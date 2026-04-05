@@ -8,12 +8,14 @@ use queryflux_core::config::{ClusterConfig, EngineConfig};
 use queryflux_core::engine_registry::EngineDescriptor;
 use queryflux_core::error::QueryFluxError;
 use queryflux_core::query::{ClusterGroupName, ClusterName};
-use queryflux_engine_adapters::athena::{AthenaAdapter, AthenaFactory};
-use queryflux_engine_adapters::duckdb::http::{DuckDbHttpAdapter, DuckDbHttpFactory};
-use queryflux_engine_adapters::duckdb::{DuckDbAdapter, DuckDbFactory};
-use queryflux_engine_adapters::starrocks::{StarRocksAdapter, StarRocksFactory};
-use queryflux_engine_adapters::trino::{TrinoAdapter, TrinoFactory};
-use queryflux_engine_adapters::{EngineAdapterFactory, EngineAdapterTrait};
+use queryflux_engine_adapters::athena::{AthenaAdapter, AthenaConfig, AthenaFactory};
+use queryflux_engine_adapters::duckdb::http::{
+    DuckDbHttpAdapter, DuckDbHttpConfig, DuckDbHttpFactory,
+};
+use queryflux_engine_adapters::duckdb::{DuckDbAdapter, DuckDbConfig, DuckDbFactory};
+use queryflux_engine_adapters::starrocks::{StarRocksAdapter, StarRocksConfig, StarRocksFactory};
+use queryflux_engine_adapters::trino::{TrinoAdapter, TrinoConfig, TrinoFactory};
+use queryflux_engine_adapters::{EngineAdapterFactory, EngineAdapterTrait, EngineConfigParseable};
 
 /// All registered engine adapter factories.
 ///
@@ -74,52 +76,43 @@ pub async fn build_adapter(
     ))?;
 
     let adapter: Arc<dyn EngineAdapterTrait> = match engine {
-        EngineConfig::Trino => Arc::new(
-            TrinoAdapter::try_from_cluster_config(
-                cluster_name,
-                placeholder_group,
-                cluster_cfg,
-                cluster_name_str,
+        EngineConfig::Trino => {
+            let config = TrinoConfig::from_cluster_config(cluster_cfg, cluster_name_str)
+                .map_err(map_qf_err)?;
+            Arc::new(TrinoAdapter::new(cluster_name, placeholder_group, config))
+        }
+        EngineConfig::DuckDb => {
+            let config = DuckDbConfig::from_cluster_config(cluster_cfg, cluster_name_str)
+                .map_err(map_qf_err)?;
+            Arc::new(
+                DuckDbAdapter::new(cluster_name, placeholder_group, config).map_err(map_qf_err)?,
             )
-            .map_err(map_qf_err)?,
-        ),
-        EngineConfig::DuckDb => Arc::new(
-            DuckDbAdapter::try_from_cluster_config(
-                cluster_name,
-                placeholder_group,
-                cluster_cfg,
-                cluster_name_str,
+        }
+        EngineConfig::DuckDbHttp => {
+            let config = DuckDbHttpConfig::from_cluster_config(cluster_cfg, cluster_name_str)
+                .map_err(map_qf_err)?;
+            Arc::new(
+                DuckDbHttpAdapter::new(cluster_name, placeholder_group, config)
+                    .map_err(map_qf_err)?,
             )
-            .map_err(map_qf_err)?,
-        ),
-        EngineConfig::DuckDbHttp => Arc::new(
-            DuckDbHttpAdapter::try_from_cluster_config(
-                cluster_name,
-                placeholder_group,
-                cluster_cfg,
-                cluster_name_str,
+        }
+        EngineConfig::StarRocks => {
+            let config = StarRocksConfig::from_cluster_config(cluster_cfg, cluster_name_str)
+                .map_err(map_qf_err)?;
+            Arc::new(
+                StarRocksAdapter::new(cluster_name, placeholder_group, config)
+                    .map_err(map_qf_err)?,
             )
-            .map_err(map_qf_err)?,
-        ),
-        EngineConfig::StarRocks => Arc::new(
-            StarRocksAdapter::try_from_cluster_config(
-                cluster_name,
-                placeholder_group,
-                cluster_cfg,
-                cluster_name_str,
+        }
+        EngineConfig::Athena => {
+            let config = AthenaConfig::from_cluster_config(cluster_cfg, cluster_name_str)
+                .map_err(map_qf_err)?;
+            Arc::new(
+                AthenaAdapter::new(cluster_name, placeholder_group, config)
+                    .await
+                    .map_err(map_qf_err)?,
             )
-            .map_err(map_qf_err)?,
-        ),
-        EngineConfig::Athena => Arc::new(
-            AthenaAdapter::try_from_cluster_config(
-                cluster_name,
-                placeholder_group,
-                cluster_cfg,
-                cluster_name_str,
-            )
-            .await
-            .map_err(map_qf_err)?,
-        ),
+        }
         EngineConfig::ClickHouse => {
             anyhow::bail!("Engine ClickHouse not yet implemented")
         }

@@ -79,6 +79,28 @@ export function StarRocksClusterConfig({
             autoComplete="new-password"
           />
         </div>
+        <div>
+          <label
+            htmlFor="sr-pool"
+            className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5"
+          >
+            Connection pool size
+          </label>
+          <input
+            id="sr-pool"
+            type="number"
+            min={1}
+            step={1}
+            value={flat.poolSize ?? ""}
+            onChange={(e) => onPatch({ poolSize: e.target.value })}
+            placeholder="8"
+            className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            autoComplete="off"
+          />
+          <p className="text-[10px] text-slate-400 mt-1">
+            Persistent MySQL connections to the FE. Leave empty to use the default (8).
+          </p>
+        </div>
       </div>
     </div>
   );

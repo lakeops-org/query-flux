@@ -106,9 +106,11 @@ impl TestHarness {
             let adapter = Arc::new(TrinoAdapter::new(
                 cluster.clone(),
                 group.clone(),
-                trino_url,
-                false,
-                None,
+                queryflux_engine_adapters::trino::TrinoConfig {
+                    endpoint: trino_url,
+                    tls_skip_verify: false,
+                    auth: None,
+                },
             )) as Arc<dyn EngineAdapterTrait>;
 
             group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
@@ -137,8 +139,16 @@ impl TestHarness {
                 true,
             ));
             let adapter = Arc::new(
-                StarRocksAdapter::new(cluster.clone(), group.clone(), sr_url, None)
-                    .map_err(|e| anyhow!("StarRocks adapter: {e}"))?,
+                StarRocksAdapter::new(
+                    cluster.clone(),
+                    group.clone(),
+                    queryflux_engine_adapters::starrocks::StarRocksConfig {
+                        endpoint: sr_url,
+                        auth: None,
+                        pool_size: 2,
+                    },
+                )
+                .map_err(|e| anyhow!("StarRocks adapter: {e}"))?,
             );
 
             group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));

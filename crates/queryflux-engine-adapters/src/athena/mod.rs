@@ -25,6 +25,85 @@ use tracing::warn;
 
 use crate::EngineAdapterTrait;
 
+/// Parsed and validated configuration for an Athena cluster.
+pub struct AthenaConfig {
+    pub region: String,
+    pub s3_output_location: String,
+    pub workgroup: Option<String>,
+    pub catalog: Option<String>,
+    pub auth: Option<ClusterAuth>,
+}
+
+impl crate::EngineConfigParseable for AthenaConfig {
+    fn from_json(json: &serde_json::Value, cluster_name: &str) -> crate::Result<Self> {
+        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
+        let region = json_str(json, "region").ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': missing 'region' for Athena"
+            ))
+        })?;
+        let s3_output_location = json_str(json, "s3OutputLocation").ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': missing 's3OutputLocation' for Athena"
+            ))
+        })?;
+        let raw_auth = parse_auth_from_config_json(json).map_err(|e| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': invalid auth ({e})"
+            ))
+        })?;
+        let auth = match raw_auth {
+            Some(a @ ClusterAuth::AccessKey { .. }) | Some(a @ ClusterAuth::RoleArn { .. }) => {
+                Some(a)
+            }
+            Some(_) => {
+                return Err(queryflux_core::error::QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': Athena only supports accessKey or roleArn auth"
+                )));
+            }
+            None => None,
+        };
+        Ok(Self {
+            region,
+            s3_output_location,
+            workgroup: json_str(json, "workgroup"),
+            catalog: json_str(json, "catalog"),
+            auth,
+        })
+    }
+
+    fn from_cluster_config(cfg: &ClusterConfig, cluster_name: &str) -> crate::Result<Self> {
+        let region = cfg.region.clone().ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': missing 'region' for Athena"
+            ))
+        })?;
+        let s3_output_location = cfg.s3_output_location.clone().ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': missing 's3OutputLocation' for Athena"
+            ))
+        })?;
+        let auth = match cfg.auth.clone() {
+            Some(a @ ClusterAuth::AccessKey { .. }) | Some(a @ ClusterAuth::RoleArn { .. }) => {
+                Some(a)
+            }
+            Some(_) => {
+                return Err(queryflux_core::error::QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': Athena only supports accessKey or roleArn auth"
+                )));
+            }
+            None => None,
+        };
+        Ok(Self {
+            region,
+            s3_output_location,
+            workgroup: cfg.workgroup.clone(),
+            catalog: cfg.catalog.clone(),
+            auth,
+        })
+    }
+}
+
 /// Walk the `std::error::Error` source chain and join all messages with ": ".
 /// AWS SDK errors expose the real Athena message (e.g. "InvalidRequestException:
 /// Query string is null or empty") only via the source chain; `Display` on the
@@ -72,19 +151,15 @@ impl AthenaAdapter {
     pub async fn new(
         cluster_name: ClusterName,
         group_name: ClusterGroupName,
-        region: String,
-        s3_output_location: String,
-        workgroup: Option<String>,
-        catalog: Option<String>,
-        auth: Option<ClusterAuth>,
+        config: AthenaConfig,
     ) -> Result<Self> {
         use aws_config::BehaviorVersion;
         use aws_credential_types::Credentials;
         use aws_types::region::Region;
 
-        let aws_region = Region::new(region.clone());
+        let aws_region = Region::new(config.region.clone());
 
-        let sdk_config = match auth {
+        let sdk_config = match config.auth {
             Some(ClusterAuth::AccessKey {
                 access_key_id,
                 secret_access_key,
@@ -162,94 +237,12 @@ impl AthenaAdapter {
             cluster_name,
             group_name,
             client,
-            region,
-            s3_output_location,
-            workgroup: workgroup.unwrap_or_else(|| "primary".to_string()),
-            catalog: catalog.unwrap_or_else(|| "AwsDataCatalog".to_string()),
-        })
-    }
-
-    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
-    pub async fn try_from_config_json(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        json: &serde_json::Value,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
-
-        let region = json_str(json, "region").ok_or_else(|| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': missing 'region' for Athena"
-            ))
-        })?;
-        let s3_output = json_str(json, "s3OutputLocation").ok_or_else(|| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': missing 's3OutputLocation' for Athena"
-            ))
-        })?;
-        let auth = parse_auth_from_config_json(json).map_err(|e| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
-        })?;
-        let auth = match auth {
-            Some(a @ ClusterAuth::AccessKey { .. }) | Some(a @ ClusterAuth::RoleArn { .. }) => {
-                Some(a)
-            }
-            Some(_) => {
-                return Err(QueryFluxError::Engine(format!(
-                    "cluster '{cluster_name_str}': Athena only supports accessKey or roleArn auth"
-                )));
-            }
-            None => None,
-        };
-        Self::new(
-            cluster_name,
-            group_name,
-            region,
-            s3_output,
-            json_str(json, "workgroup"),
-            json_str(json, "catalog"),
-            auth,
-        )
-        .await
-        .map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to create Athena adapter ({e})"
-            ))
-        })
-    }
-
-    /// Build from persisted / YAML [`ClusterConfig`].
-    pub async fn try_from_cluster_config(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        cfg: &ClusterConfig,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        let region = cfg.region.clone().ok_or_else(|| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': missing 'region' for Athena"
-            ))
-        })?;
-        let s3_output = cfg.s3_output_location.clone().ok_or_else(|| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': missing 's3OutputLocation' for Athena"
-            ))
-        })?;
-        Self::new(
-            cluster_name,
-            group_name,
-            region,
-            s3_output,
-            cfg.workgroup.clone(),
-            cfg.catalog.clone(),
-            cfg.auth.clone(),
-        )
-        .await
-        .map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to create Athena adapter ({e})"
-            ))
+            region: config.region,
+            s3_output_location: config.s3_output_location,
+            workgroup: config.workgroup.unwrap_or_else(|| "primary".to_string()),
+            catalog: config
+                .catalog
+                .unwrap_or_else(|| "AwsDataCatalog".to_string()),
         })
     }
 
@@ -798,9 +791,11 @@ impl crate::EngineAdapterFactory for AthenaFactory {
         group: ClusterGroupName,
         json: &serde_json::Value,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
+        let config = AthenaConfig::from_json(json, &name)?;
         Ok(Arc::new(
-            AthenaAdapter::try_from_config_json(cluster_name, group, json, name.as_str()).await?,
+            AthenaAdapter::new(cluster_name, group, config).await?,
         ))
     }
 }

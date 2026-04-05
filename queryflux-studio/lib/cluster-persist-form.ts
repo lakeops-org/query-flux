@@ -26,6 +26,7 @@ export const MANAGED_CONFIG_JSON_KEYS = new Set([
   "warehouse",
   "role",
   "schema",
+  "poolSize",
 ]);
 
 function jsonScalarToString(v: unknown): string {
@@ -33,6 +34,16 @@ function jsonScalarToString(v: unknown): string {
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return "";
+}
+
+/** Positive integer only; rejects floats, NaN, and non-integer `number` values. */
+export function parsePositiveIntString(s: string | undefined): number | undefined {
+  if (s === undefined) return undefined;
+  const t = s.trim();
+  if (t === "") return undefined;
+  const n = Number(t);
+  if (!Number.isInteger(n) || n < 1) return undefined;
+  return n;
 }
 
 /** DB / API `config` object → flat keys expected by cluster-config components. */
@@ -61,6 +72,8 @@ export function persistedClusterConfigToFlat(
 
   flat["tls.insecureSkipVerify"] =
     config.tlsInsecureSkipVerify === true ? "true" : "false";
+
+  flat.poolSize = jsonScalarToString(config.poolSize);
 
   if (descriptor) {
     for (const f of descriptor.configFields) {
@@ -92,6 +105,8 @@ export function flatToPersistedConfig(flat: Record<string, string>): Record<stri
   if (flat.warehouse?.trim()) cfg.warehouse = flat.warehouse.trim();
   if (flat.role?.trim()) cfg.role = flat.role.trim();
   if (flat.schema?.trim()) cfg.schema = flat.schema.trim();
+  const poolN = parsePositiveIntString(flat.poolSize);
+  if (poolN !== undefined) cfg.poolSize = poolN;
   return cfg;
 }
 
@@ -143,6 +158,15 @@ export function mergeClusterConfigFromFlat(
   setOrDel("role", flat.role, "role");
   setOrDel("schema", flat.schema, "schema");
 
+  if (flat.poolSize !== undefined) {
+    const t = flat.poolSize.trim();
+    if (t) {
+      const n = parsePositiveIntString(flat.poolSize);
+      if (n !== undefined) out.poolSize = n;
+      else delete out.poolSize;
+    } else delete out.poolSize;
+  }
+
   return out;
 }
 
@@ -177,6 +201,8 @@ export function buildValidateShape(flat: Record<string, string>): Record<string,
   if (flat.warehouse) o.warehouse = flat.warehouse;
   if (flat.role) o.role = flat.role;
   if (flat.schema) o.schema = flat.schema;
+  const poolN = parsePositiveIntString(flat.poolSize);
+  if (poolN !== undefined) o.poolSize = poolN;
   const auth: Record<string, string> = {};
   if (flat["auth.type"]) auth.type = flat["auth.type"];
   if (flat["auth.username"]) auth.username = flat["auth.username"];

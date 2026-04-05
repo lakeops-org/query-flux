@@ -517,6 +517,9 @@ pub struct ClusterConfig {
     /// `maxRunningQueries` is used at runtime.
     #[serde(default)]
     pub max_running_queries: Option<u64>,
+    /// StarRocks MySQL connection pool size for QueryFlux (`poolSize` in JSON/YAML). Other engines ignore this.
+    #[serde(default)]
+    pub pool_size: Option<usize>,
     /// HTTP(S) endpoint for Trino / ClickHouse / StarRocks FE.
     pub endpoint: Option<String>,
     /// Local file path for DuckDB.
@@ -546,6 +549,7 @@ pub struct ClusterConfig {
 /// Authentication credentials for a backend cluster (Type 1 — service account).
 ///
 /// - `basic`: HTTP Basic auth (Trino, ClickHouse) or MySQL username+password (StarRocks).
+///   Password may be empty for backends that allow it (e.g. Trino with no auth).
 /// - `bearer`: HTTP Bearer token (Trino with JWT / OAuth2).
 /// - `keyPair`: RSA key-pair (Snowflake, Databricks — future adapters).
 /// - `accessKey`: AWS static access key (Athena and other AWS backends).

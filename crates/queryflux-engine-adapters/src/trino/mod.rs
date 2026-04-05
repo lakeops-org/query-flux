@@ -33,6 +33,62 @@ use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
 
+/// Parsed and validated configuration for a Trino cluster.
+pub struct TrinoConfig {
+    pub endpoint: String,
+    pub tls_skip_verify: bool,
+    pub auth: Option<ClusterAuth>,
+}
+
+impl crate::EngineConfigParseable for TrinoConfig {
+    fn from_json(json: &serde_json::Value, cluster_name: &str) -> Result<Self> {
+        use queryflux_core::engine_registry::{
+            json_str, json_tls_insecure_skip_verify, parse_auth_from_config_json,
+        };
+        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name}': missing endpoint"))
+        })?;
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name}': invalid auth ({e})"))
+        })?;
+        if let Some(ref a) = auth {
+            if !matches!(a, ClusterAuth::Basic { .. } | ClusterAuth::Bearer { .. }) {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': Trino supports only basic or bearer auth"
+                )));
+            }
+        }
+        Ok(Self {
+            endpoint,
+            tls_skip_verify: json_tls_insecure_skip_verify(json),
+            auth,
+        })
+    }
+
+    fn from_cluster_config(cfg: &ClusterConfig, cluster_name: &str) -> Result<Self> {
+        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
+            QueryFluxError::Engine(format!("cluster '{cluster_name}': missing endpoint"))
+        })?;
+        let auth = cfg.auth.clone();
+        if let Some(ref a) = auth {
+            if !matches!(a, ClusterAuth::Basic { .. } | ClusterAuth::Bearer { .. }) {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': Trino supports only basic or bearer auth"
+                )));
+            }
+        }
+        Ok(Self {
+            endpoint,
+            tls_skip_verify: cfg
+                .tls
+                .as_ref()
+                .map(|t| t.insecure_skip_verify)
+                .unwrap_or(false),
+            auth,
+        })
+    }
+}
+
 /// Trino HTTP adapter.
 ///
 /// For Trino→Trino transparent forwarding, `submit_query` and `poll_query` return
@@ -50,72 +106,21 @@ impl TrinoAdapter {
     pub fn new(
         cluster_name: ClusterName,
         group_name: ClusterGroupName,
-        endpoint: String,
-        tls_skip_verify: bool,
-        auth: Option<ClusterAuth>,
+        config: TrinoConfig,
     ) -> Self {
         let http_client = Client::builder()
             .timeout(Duration::from_secs(30))
-            .danger_accept_invalid_certs(tls_skip_verify)
+            .danger_accept_invalid_certs(config.tls_skip_verify)
             .build()
             .expect("Failed to build HTTP client");
 
         Self {
             cluster_name,
             group_name,
-            endpoint,
+            endpoint: config.endpoint,
             http_client,
-            auth,
+            auth: config.auth,
         }
-    }
-
-    /// Build from persisted / YAML [`ClusterConfig`] (Trino-specific field usage).
-    pub fn try_from_cluster_config(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        cfg: &ClusterConfig,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
-        })?;
-        let tls_skip = cfg
-            .tls
-            .as_ref()
-            .map(|t| t.insecure_skip_verify)
-            .unwrap_or(false);
-        Ok(Self::new(
-            cluster_name,
-            group_name,
-            endpoint,
-            tls_skip,
-            cfg.auth.clone(),
-        ))
-    }
-
-    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
-    pub fn try_from_config_json(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        json: &serde_json::Value,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        use queryflux_core::engine_registry::{json_bool, json_str, parse_auth_from_config_json};
-
-        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
-        })?;
-        let tls_skip = json_bool(json, "tlsInsecureSkipVerify");
-        let auth = parse_auth_from_config_json(json).map_err(|e| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
-        })?;
-        Ok(Self::new(
-            cluster_name,
-            group_name,
-            endpoint,
-            tls_skip,
-            auth,
-        ))
     }
 
     /// Apply cluster-level auth credentials to a request builder.
@@ -920,12 +925,9 @@ impl crate::EngineAdapterFactory for TrinoFactory {
         group: ClusterGroupName,
         json: &serde_json::Value,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
-        Ok(Arc::new(TrinoAdapter::try_from_config_json(
-            cluster_name,
-            group,
-            json,
-            name.as_str(),
-        )?))
+        let config = TrinoConfig::from_json(json, &name)?;
+        Ok(Arc::new(TrinoAdapter::new(cluster_name, group, config)))
     }
 }
