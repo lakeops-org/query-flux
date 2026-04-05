@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import Link from "next/link";
 import {
   FileCode,
@@ -14,7 +14,8 @@ import {
   Zap,
 } from "lucide-react";
 import { LoginDialog } from "@/components/login-dialog";
-import { clearCredentials, loadCredentials } from "@/lib/auth";
+import { clearCredentials } from "@/lib/auth";
+import { useStudioAuth } from "@/lib/use-studio-auth";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -28,38 +29,27 @@ const nav = [
 ];
 
 export function ClientShell({ children }: { children: React.ReactNode }) {
-  const [authenticated, setAuthenticated] = useState(false);
-  const [checked, setChecked] = useState(false);
+  const { ready, authenticated } = useStudioAuth();
 
-  // On mount, check if we already have stored credentials.
-  useEffect(() => {
-    setAuthenticated(!!loadCredentials());
-    setChecked(true);
-  }, []);
-
-  const handleLoginSuccess = useCallback(() => setAuthenticated(true), []);
-
-  const handleLogout = useCallback(() => {
+  const handleLogout = () => {
     clearCredentials();
-    setAuthenticated(false);
-  }, []);
+  };
 
   // If any API call fires a qf:unauthorized event, force re-login.
   useEffect(() => {
     function onUnauthorized() {
       clearCredentials();
-      setAuthenticated(false);
     }
     window.addEventListener("qf:unauthorized", onUnauthorized);
     return () => window.removeEventListener("qf:unauthorized", onUnauthorized);
   }, []);
 
-  // Suppress the flash-of-login-screen on first load.
-  if (!checked) return null;
+  // Avoid layout flash until client has read the session cookie (matches SSR snapshot `0`).
+  if (!ready) return null;
 
   return (
     <>
-      {!authenticated && <LoginDialog onSuccess={handleLoginSuccess} />}
+      {!authenticated && <LoginDialog />}
 
       {/* Sidebar */}
       <aside className="w-60 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col shadow-sm">

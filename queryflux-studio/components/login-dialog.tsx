@@ -4,12 +4,7 @@ import React, { FormEvent, useState } from "react";
 import { Zap } from "lucide-react";
 import { encodeBasicAuth, saveCredentials } from "@/lib/auth";
 
-interface LoginDialogProps {
-  /** Called after credentials are successfully validated. */
-  onSuccess: () => void;
-}
-
-export function LoginDialog({ onSuccess }: LoginDialogProps) {
+export function LoginDialog() {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +33,6 @@ export function LoginDialog({ onSuccess }: LoginDialogProps) {
       }
 
       saveCredentials(username, password);
-      onSuccess();
     } catch {
       setError("Could not reach QueryFlux. Check that the server is running.");
     } finally {

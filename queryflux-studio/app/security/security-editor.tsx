@@ -5,9 +5,7 @@ import Link from "next/link";
 import { getAuthStatus, putSecurityConfig } from "@/lib/api";
 import type { SecurityConfigDto, UpsertSecurityConfig, GroupAuthzDto } from "@/lib/api-types";
 import { Field, SectionHeader, TextInput, SaveBar } from "@/components/studio-settings";
-import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import {
-  AlertTriangle,
   ArrowRight,
   CheckCircle2,
   Key,
@@ -314,10 +312,9 @@ export function SecurityEditor({ initialSecurity }: Props) {
   const [securitySaving, setSecuritySaving] = useState(false);
   const [securityMsg, setSecurityMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
-  // ── Admin password state ─────────────────────────────────────────────────
+  // ── Admin password status (read-only; password changes are not available in Studio) ──
 
   const [dbOverride, setDbOverride] = useState<boolean | null>(null);
-  const [showChangePassword, setShowChangePassword] = useState(false);
 
   useEffect(() => {
     getAuthStatus()
@@ -348,35 +345,6 @@ export function SecurityEditor({ initialSecurity }: Props) {
 
   return (
     <div className="p-8 max-w-5xl space-y-8">
-      {showChangePassword && (
-        <ChangePasswordDialog
-          onClose={() => setShowChangePassword(false)}
-          onChanged={() => setDbOverride(true)}
-        />
-      )}
-
-      {/* Default-password warning banner */}
-      {dbOverride === false && (
-        <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
-          <AlertTriangle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-amber-800">
-              Default admin password is in use
-            </p>
-            <p className="text-xs text-amber-700 mt-0.5">
-              After your first login, we strongly recommend changing the default admin password.
-              Once changed, the password will be stored in the database and environment variables
-              will no longer be used for authentication.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowChangePassword(true)}
-            className="flex-shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors border border-amber-300"
-          >
-            Change now
-          </button>
-        </div>
-      )}
 
       {/* Header */}
       <div>
@@ -392,25 +360,14 @@ export function SecurityEditor({ initialSecurity }: Props) {
       {/* ── Admin API Password ───────────────────────────────────────────── */}
       <section className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <SectionHeader icon={<Key size={15} />} title="Admin API Password" />
-        <div className="p-6 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-xs text-slate-600">
-              {dbOverride
-                ? "Password has been set via the web interface and is stored securely in the database."
-                : "Using bootstrap credentials from YAML config or environment variables."}
-            </p>
-            {!dbOverride && (
-              <p className="text-xs text-amber-600 mt-1 font-medium">
-                Change the default password to store it in the database.
-              </p>
-            )}
-          </div>
-          <button
-            onClick={() => setShowChangePassword(true)}
-            className="flex-shrink-0 px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors border border-indigo-200"
-          >
-            Change Password
-          </button>
+        <div className="p-6">
+          <p className="text-xs text-slate-600">
+            {dbOverride === true
+              ? "A password is stored in the database for the admin API (not managed from Studio)."
+              : dbOverride === false
+                ? "Bootstrap credentials from YAML or environment may be in use. Configure the admin password on the server."
+                : "Status unavailable."}
+          </p>
         </div>
       </section>
 

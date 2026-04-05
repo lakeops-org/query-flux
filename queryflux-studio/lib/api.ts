@@ -321,13 +321,6 @@ export async function getAuthStatus(): Promise<{ db_override: boolean }> {
   return apiFetch("/admin/auth/status");
 }
 
-export async function changePassword(
-  current_password: string,
-  new_password: string,
-): Promise<void> {
-  await apiPost("/admin/auth/change-password", { current_password, new_password });
-}
-
 // Re-export types so pages can import from one place
 export type {
   ClusterConfigRecord,

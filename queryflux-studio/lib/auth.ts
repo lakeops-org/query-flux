@@ -1,6 +1,12 @@
 const COOKIE_NAME = "qf_auth";
 const isBrowser = typeof document !== "undefined";
 
+/** Notifies listeners (e.g. `useSyncExternalStore` in ClientShell) that cookie auth changed. */
+function notifyAuthChanged(): void {
+  if (!isBrowser) return;
+  window.dispatchEvent(new Event("qf:auth-change"));
+}
+
 /** Encode username + password as base64(user:pass) — the raw value stored in the cookie. */
 function encodePair(username: string, password: string): string {
   return btoa(`${username}:${password}`);
@@ -16,12 +22,14 @@ export function saveCredentials(username: string, password: string): void {
   if (!isBrowser) return;
   const value = encodeURIComponent(encodePair(username, password));
   document.cookie = `${COOKIE_NAME}=${value}; SameSite=Strict; path=/; max-age=86400`;
+  notifyAuthChanged();
 }
 
 /** Clear stored credentials. */
 export function clearCredentials(): void {
   if (!isBrowser) return;
   document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
+  notifyAuthChanged();
 }
 
 /** Read stored credentials from the cookie, or null if not logged in / on server. */
