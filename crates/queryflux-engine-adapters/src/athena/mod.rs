@@ -83,12 +83,23 @@ impl crate::EngineConfigParseable for AthenaConfig {
                 "cluster '{cluster_name}': missing 's3OutputLocation' for Athena"
             ))
         })?;
+        let auth = match cfg.auth.clone() {
+            Some(a @ ClusterAuth::AccessKey { .. }) | Some(a @ ClusterAuth::RoleArn { .. }) => {
+                Some(a)
+            }
+            Some(_) => {
+                return Err(queryflux_core::error::QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': Athena only supports accessKey or roleArn auth"
+                )));
+            }
+            None => None,
+        };
         Ok(Self {
             region,
             s3_output_location,
             workgroup: cfg.workgroup.clone(),
             catalog: cfg.catalog.clone(),
-            auth: cfg.auth.clone(),
+            auth,
         })
     }
 }

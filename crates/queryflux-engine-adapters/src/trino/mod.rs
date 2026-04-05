@@ -49,6 +49,13 @@ impl crate::EngineConfigParseable for TrinoConfig {
         let auth = parse_auth_from_config_json(json).map_err(|e| {
             QueryFluxError::Engine(format!("cluster '{cluster_name}': invalid auth ({e})"))
         })?;
+        if let Some(ref a) = auth {
+            if !matches!(a, ClusterAuth::Basic { .. } | ClusterAuth::Bearer { .. }) {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': Trino supports only basic or bearer auth"
+                )));
+            }
+        }
         Ok(Self {
             endpoint,
             tls_skip_verify: json_bool(json, "tlsInsecureSkipVerify"),
@@ -60,6 +67,14 @@ impl crate::EngineConfigParseable for TrinoConfig {
         let endpoint = cfg.endpoint.clone().ok_or_else(|| {
             QueryFluxError::Engine(format!("cluster '{cluster_name}': missing endpoint"))
         })?;
+        let auth = cfg.auth.clone();
+        if let Some(ref a) = auth {
+            if !matches!(a, ClusterAuth::Basic { .. } | ClusterAuth::Bearer { .. }) {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': Trino supports only basic or bearer auth"
+                )));
+            }
+        }
         Ok(Self {
             endpoint,
             tls_skip_verify: cfg
@@ -67,7 +82,7 @@ impl crate::EngineConfigParseable for TrinoConfig {
                 .as_ref()
                 .map(|t| t.insecure_skip_verify)
                 .unwrap_or(false),
-            auth: cfg.auth.clone(),
+            auth,
         })
     }
 }

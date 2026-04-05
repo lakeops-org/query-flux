@@ -37,27 +37,31 @@ impl crate::EngineConfigParseable for DuckDbConfig {
                 "cluster '{cluster_name}': invalid auth ({e})"
             ))
         })?;
-        let motherduck_token = auth.and_then(|a| {
-            if let ClusterAuth::Bearer { token } = a {
-                Some(token)
-            } else {
-                None
+        let motherduck_token = match auth {
+            None => None,
+            Some(ClusterAuth::Bearer { token }) => Some(token),
+            Some(_) => {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': DuckDB supports only bearer auth (Motherduck token)"
+                )));
             }
-        });
+        };
         Ok(Self {
             database_path,
             motherduck_token,
         })
     }
 
-    fn from_cluster_config(cfg: &ClusterConfig, _cluster_name: &str) -> crate::Result<Self> {
-        let motherduck_token = cfg.auth.as_ref().and_then(|a| {
-            if let ClusterAuth::Bearer { token } = a {
-                Some(token.clone())
-            } else {
-                None
+    fn from_cluster_config(cfg: &ClusterConfig, cluster_name: &str) -> crate::Result<Self> {
+        let motherduck_token = match cfg.auth.clone() {
+            None => None,
+            Some(ClusterAuth::Bearer { token }) => Some(token),
+            Some(_) => {
+                return Err(QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': DuckDB supports only bearer auth (Motherduck token)"
+                )));
             }
-        });
+        };
         Ok(Self {
             database_path: cfg.database_path.clone(),
             motherduck_token,

@@ -73,10 +73,19 @@ impl crate::EngineConfigParseable for DuckDbHttpConfig {
             .as_ref()
             .map(|t| t.insecure_skip_verify)
             .unwrap_or(false);
+        use queryflux_core::config::ClusterAuth;
+        let auth = cfg.auth.clone();
+        if let Some(ref a) = auth {
+            if !matches!(a, ClusterAuth::Basic { .. } | ClusterAuth::Bearer { .. }) {
+                return Err(queryflux_core::error::QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': DuckDB HTTP supports only basic or bearer auth"
+                )));
+            }
+        }
         Ok(Self {
             endpoint,
             tls_skip_verify,
-            auth: cfg.auth.clone(),
+            auth,
         })
     }
 }
