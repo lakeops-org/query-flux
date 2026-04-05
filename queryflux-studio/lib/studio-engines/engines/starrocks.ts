@@ -5,6 +5,13 @@ function validateStarRocksClusterFlat(flat: FlatClusterForm): string[] {
   if (!flat["auth.username"]?.trim() || !flat["auth.password"]) {
     return ["StarRocks: username and password are required."];
   }
+  const ps = flat.poolSize?.trim();
+  if (ps) {
+    const n = Number.parseInt(ps, 10);
+    if (Number.isNaN(n) || n < 1) {
+      return ["StarRocks: connection pool size must be a positive integer."];
+    }
+  }
   return [];
 }
 
@@ -52,6 +59,15 @@ export const starRocksStudioEngine: StudioEngineModule = {
         description: "MySQL password.",
         fieldType: "secret",
         required: false,
+      },
+      {
+        key: "poolSize",
+        label: "Connection pool size",
+        description:
+          "Number of persistent MySQL connections to keep open. Defaults to 8 when omitted.",
+        fieldType: "number",
+        required: false,
+        example: "8",
       },
     ],
   },

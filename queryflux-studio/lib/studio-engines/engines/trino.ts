@@ -7,8 +7,8 @@ function validateTrinoClusterFlat(flat: FlatClusterForm): string[] {
     return ["Trino: choose an authentication method."];
   }
   if (at === "basic") {
-    if (!flat["auth.username"]?.trim() || !flat["auth.password"]) {
-      return ["Trino: username and password are required for basic authentication."];
+    if (!flat["auth.username"]?.trim()) {
+      return ["Trino: username is required for basic authentication (password may be empty)."];
     }
   }
   if (at === "bearer") {
@@ -60,7 +60,8 @@ export const trinoStudioEngine: StudioEngineModule = {
       {
         key: "auth.password",
         label: "Password",
-        description: "Basic auth password.",
+        description:
+          "Basic auth password. Leave empty if Trino has no password (e.g. dev / no authentication).",
         fieldType: "secret",
         required: false,
       },

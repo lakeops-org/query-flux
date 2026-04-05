@@ -546,6 +546,7 @@ pub struct ClusterConfig {
 /// Authentication credentials for a backend cluster (Type 1 — service account).
 ///
 /// - `basic`: HTTP Basic auth (Trino, ClickHouse) or MySQL username+password (StarRocks).
+///   Password may be empty for backends that allow it (e.g. Trino with no auth).
 /// - `bearer`: HTTP Bearer token (Trino with JWT / OAuth2).
 /// - `keyPair`: RSA key-pair (Snowflake, Databricks — future adapters).
 /// - `accessKey`: AWS static access key (Athena and other AWS backends).

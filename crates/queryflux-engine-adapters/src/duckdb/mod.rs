@@ -22,6 +22,49 @@ use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
 
+/// Parsed and validated configuration for a DuckDB cluster.
+pub struct DuckDbConfig {
+    pub database_path: Option<String>,
+    pub motherduck_token: Option<String>,
+}
+
+impl crate::EngineConfigParseable for DuckDbConfig {
+    fn from_json(json: &serde_json::Value, cluster_name: &str) -> crate::Result<Self> {
+        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
+        let database_path = json_str(json, "databasePath");
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': invalid auth ({e})"
+            ))
+        })?;
+        let motherduck_token = auth.and_then(|a| {
+            if let ClusterAuth::Bearer { token } = a {
+                Some(token)
+            } else {
+                None
+            }
+        });
+        Ok(Self {
+            database_path,
+            motherduck_token,
+        })
+    }
+
+    fn from_cluster_config(cfg: &ClusterConfig, _cluster_name: &str) -> crate::Result<Self> {
+        let motherduck_token = cfg.auth.as_ref().and_then(|a| {
+            if let ClusterAuth::Bearer { token } = a {
+                Some(token.clone())
+            } else {
+                None
+            }
+        });
+        Ok(Self {
+            database_path: cfg.database_path.clone(),
+            motherduck_token,
+        })
+    }
+}
+
 /// DuckDB embedded engine adapter.
 ///
 /// DuckDB is Arrow-native and runs in-process. All query execution goes through
@@ -38,22 +81,9 @@ impl DuckDbAdapter {
     pub fn new(
         cluster_name: ClusterName,
         group_name: ClusterGroupName,
-        database_path: Option<String>,
+        config: DuckDbConfig,
     ) -> Result<Self> {
-        Self::new_with_token(cluster_name, group_name, database_path, None)
-    }
-
-    /// Create a new DuckDB adapter, optionally injecting a MotherDuck token.
-    ///
-    /// When `database_path` starts with `"md:"` and `motherduck_token` is provided,
-    /// the token is appended to the connection string as a query parameter.
-    pub fn new_with_token(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        database_path: Option<String>,
-        motherduck_token: Option<String>,
-    ) -> Result<Self> {
-        let resolved_path = build_connection_string(database_path, motherduck_token);
+        let resolved_path = build_connection_string(config.database_path, config.motherduck_token);
         let conn = match resolved_path.as_deref() {
             Some(path) => Connection::open(path),
             None => Connection::open_in_memory(),
@@ -64,62 +94,6 @@ impl DuckDbAdapter {
             cluster_name,
             group_name,
             conn: Arc::new(Mutex::new(conn)),
-        })
-    }
-
-    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
-    pub fn try_from_config_json(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        json: &serde_json::Value,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        use queryflux_core::engine_registry::{json_str, parse_auth_from_config_json};
-
-        let database_path = json_str(json, "databasePath");
-        let auth = parse_auth_from_config_json(json).map_err(|e| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
-        })?;
-        let motherduck_token = auth.and_then(|a| {
-            if let ClusterAuth::Bearer { token } = a {
-                Some(token)
-            } else {
-                None
-            }
-        });
-        Self::new_with_token(cluster_name, group_name, database_path, motherduck_token).map_err(
-            |e| {
-                QueryFluxError::Engine(format!(
-                    "cluster '{cluster_name_str}': failed to open DuckDB ({e})"
-                ))
-            },
-        )
-    }
-
-    /// Build from persisted / YAML [`ClusterConfig`] (embedded path + optional MotherDuck bearer).
-    pub fn try_from_cluster_config(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        cfg: &ClusterConfig,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        let motherduck_token = cfg.auth.as_ref().and_then(|a| {
-            if let ClusterAuth::Bearer { token } = a {
-                Some(token.clone())
-            } else {
-                None
-            }
-        });
-        Self::new_with_token(
-            cluster_name,
-            group_name,
-            cfg.database_path.clone(),
-            motherduck_token,
-        )
-        .map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to open DuckDB ({e})"
-            ))
         })
     }
 }
@@ -448,12 +422,9 @@ impl crate::EngineAdapterFactory for DuckDbFactory {
         group: ClusterGroupName,
         json: &serde_json::Value,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
-        Ok(Arc::new(DuckDbAdapter::try_from_config_json(
-            cluster_name,
-            group,
-            json,
-            name.as_str(),
-        )?))
+        let config = DuckDbConfig::from_json(json, &name)?;
+        Ok(Arc::new(DuckDbAdapter::new(cluster_name, group, config)?))
     }
 }

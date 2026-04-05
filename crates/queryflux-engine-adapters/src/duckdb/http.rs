@@ -26,6 +26,61 @@ use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
 
+/// Parsed and validated configuration for a DuckDB HTTP cluster.
+pub struct DuckDbHttpConfig {
+    pub endpoint: String,
+    pub tls_skip_verify: bool,
+    pub auth: Option<queryflux_core::config::ClusterAuth>,
+}
+
+impl crate::EngineConfigParseable for DuckDbHttpConfig {
+    fn from_json(json: &serde_json::Value, cluster_name: &str) -> crate::Result<Self> {
+        use queryflux_core::config::ClusterAuth;
+        use queryflux_core::engine_registry::{json_bool, json_str, parse_auth_from_config_json};
+        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': missing endpoint"
+            ))
+        })?;
+        let tls_skip_verify = json_bool(json, "tlsInsecureSkipVerify");
+        let auth = parse_auth_from_config_json(json).map_err(|e| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': invalid auth ({e})"
+            ))
+        })?;
+        if let Some(ref a) = auth {
+            if !matches!(a, ClusterAuth::Basic { .. } | ClusterAuth::Bearer { .. }) {
+                return Err(queryflux_core::error::QueryFluxError::Engine(format!(
+                    "cluster '{cluster_name}': DuckDB HTTP supports only basic or bearer auth"
+                )));
+            }
+        }
+        Ok(Self {
+            endpoint,
+            tls_skip_verify,
+            auth,
+        })
+    }
+
+    fn from_cluster_config(cfg: &ClusterConfig, cluster_name: &str) -> crate::Result<Self> {
+        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
+            queryflux_core::error::QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': missing endpoint"
+            ))
+        })?;
+        let tls_skip_verify = cfg
+            .tls
+            .as_ref()
+            .map(|t| t.insecure_skip_verify)
+            .unwrap_or(false);
+        Ok(Self {
+            endpoint,
+            tls_skip_verify,
+            auth: cfg.auth.clone(),
+        })
+    }
+}
+
 /// DuckDB remote HTTP server adapter.
 ///
 /// Targets the DuckDB community `httpserver` extension API:
@@ -88,18 +143,16 @@ impl DuckDbHttpAdapter {
     pub fn new(
         cluster_name: ClusterName,
         group_name: ClusterGroupName,
-        endpoint: String,
-        tls_skip: bool,
-        auth: Option<queryflux_core::config::ClusterAuth>,
+        config: DuckDbHttpConfig,
     ) -> Result<Self> {
         let mut builder = Client::builder().timeout(std::time::Duration::from_secs(120));
 
-        if tls_skip {
+        if config.tls_skip_verify {
             builder = builder.danger_accept_invalid_certs(true);
         }
 
         // Apply default authorization header if configured.
-        if let Some(auth) = auth {
+        if let Some(auth) = config.auth {
             use queryflux_core::config::ClusterAuth;
             let mut headers = reqwest::header::HeaderMap::new();
             match auth {
@@ -131,72 +184,12 @@ impl DuckDbHttpAdapter {
             .build()
             .map_err(|e| QueryFluxError::Engine(format!("Failed to build HTTP client: {e}")))?;
 
-        let endpoint = endpoint.trim_end_matches('/').to_string();
+        let endpoint = config.endpoint.trim_end_matches('/').to_string();
         Ok(Self {
             cluster_name,
             group_name,
             endpoint,
             client,
-        })
-    }
-
-    /// Build from a DB config JSON blob (bypasses the `ClusterConfig` god struct).
-    pub fn try_from_config_json(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        json: &serde_json::Value,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        use queryflux_core::engine_registry::{json_bool, json_str, parse_auth_from_config_json};
-
-        let endpoint = json_str(json, "endpoint").ok_or_else(|| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
-        })?;
-        let tls_skip = json_bool(json, "tlsInsecureSkipVerify");
-        let auth = parse_auth_from_config_json(json).map_err(|e| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': invalid auth ({e})"))
-        })?;
-        if let Some(ref a) = auth {
-            use queryflux_core::config::ClusterAuth;
-            if !matches!(a, ClusterAuth::Basic { .. } | ClusterAuth::Bearer { .. }) {
-                return Err(QueryFluxError::Engine(format!(
-                    "cluster '{cluster_name_str}': DuckDB HTTP supports only basic or bearer auth"
-                )));
-            }
-        }
-        Self::new(cluster_name, group_name, endpoint, tls_skip, auth).map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to create DuckDB HTTP adapter ({e})"
-            ))
-        })
-    }
-
-    /// Build from persisted / YAML [`ClusterConfig`].
-    pub fn try_from_cluster_config(
-        cluster_name: ClusterName,
-        group_name: ClusterGroupName,
-        cfg: &ClusterConfig,
-        cluster_name_str: &str,
-    ) -> Result<Self> {
-        let endpoint = cfg.endpoint.clone().ok_or_else(|| {
-            QueryFluxError::Engine(format!("cluster '{cluster_name_str}': missing endpoint"))
-        })?;
-        let tls_skip = cfg
-            .tls
-            .as_ref()
-            .map(|t| t.insecure_skip_verify)
-            .unwrap_or(false);
-        Self::new(
-            cluster_name,
-            group_name,
-            endpoint,
-            tls_skip,
-            cfg.auth.clone(),
-        )
-        .map_err(|e| {
-            QueryFluxError::Engine(format!(
-                "cluster '{cluster_name_str}': failed to create DuckDB HTTP adapter ({e})"
-            ))
         })
     }
 
@@ -596,12 +589,13 @@ impl crate::EngineAdapterFactory for DuckDbHttpFactory {
         group: ClusterGroupName,
         json: &serde_json::Value,
     ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+        use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
-        Ok(Arc::new(DuckDbHttpAdapter::try_from_config_json(
+        let config = DuckDbHttpConfig::from_json(json, &name)?;
+        Ok(Arc::new(DuckDbHttpAdapter::new(
             cluster_name,
             group,
-            json,
-            name.as_str(),
+            config,
         )?))
     }
 }

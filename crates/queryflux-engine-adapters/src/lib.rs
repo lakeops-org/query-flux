@@ -12,6 +12,7 @@ use futures::Stream;
 use queryflux_auth::QueryCredentials;
 use queryflux_core::{
     catalog::TableSchema,
+    config::ClusterConfig,
     engine_registry::EngineDescriptor,
     error::{QueryFluxError, Result},
     query::{
@@ -20,6 +21,18 @@ use queryflux_core::{
     session::SessionContext,
     tags::QueryTags,
 };
+
+/// Implemented by each engine's typed config struct.
+///
+/// Parsing succeeds only when all required fields are present and valid for that engine —
+/// construction IS validation. Engine-specific constraints (required fields, allowed auth types)
+/// live here rather than in core.
+pub trait EngineConfigParseable: Sized {
+    /// Parse and validate from a DB config JSON blob.
+    fn from_json(json: &serde_json::Value, cluster_name: &str) -> Result<Self>;
+    /// Parse and validate from a YAML-loaded [`ClusterConfig`].
+    fn from_cluster_config(cfg: &ClusterConfig, cluster_name: &str) -> Result<Self>;
+}
 
 /// A stream of Arrow RecordBatches — the universal output type for all adapters.
 pub type ArrowStream = Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send>>;

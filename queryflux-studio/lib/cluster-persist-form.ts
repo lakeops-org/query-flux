@@ -26,6 +26,7 @@ export const MANAGED_CONFIG_JSON_KEYS = new Set([
   "warehouse",
   "role",
   "schema",
+  "poolSize",
 ]);
 
 function jsonScalarToString(v: unknown): string {
@@ -62,6 +63,8 @@ export function persistedClusterConfigToFlat(
   flat["tls.insecureSkipVerify"] =
     config.tlsInsecureSkipVerify === true ? "true" : "false";
 
+  flat.poolSize = jsonScalarToString(config.poolSize);
+
   if (descriptor) {
     for (const f of descriptor.configFields) {
       if (flat[f.key] === undefined) flat[f.key] = "";
@@ -92,6 +95,10 @@ export function flatToPersistedConfig(flat: Record<string, string>): Record<stri
   if (flat.warehouse?.trim()) cfg.warehouse = flat.warehouse.trim();
   if (flat.role?.trim()) cfg.role = flat.role.trim();
   if (flat.schema?.trim()) cfg.schema = flat.schema.trim();
+  if (flat.poolSize?.trim()) {
+    const n = Number.parseInt(flat.poolSize.trim(), 10);
+    if (!Number.isNaN(n) && n >= 1) cfg.poolSize = n;
+  }
   return cfg;
 }
 
@@ -143,6 +150,15 @@ export function mergeClusterConfigFromFlat(
   setOrDel("role", flat.role, "role");
   setOrDel("schema", flat.schema, "schema");
 
+  if (flat.poolSize !== undefined) {
+    const t = flat.poolSize.trim();
+    if (t) {
+      const n = Number.parseInt(t, 10);
+      if (!Number.isNaN(n) && n >= 1) out.poolSize = n;
+      else delete out.poolSize;
+    } else delete out.poolSize;
+  }
+
   return out;
 }
 
@@ -177,6 +193,10 @@ export function buildValidateShape(flat: Record<string, string>): Record<string,
   if (flat.warehouse) o.warehouse = flat.warehouse;
   if (flat.role) o.role = flat.role;
   if (flat.schema) o.schema = flat.schema;
+  if (flat.poolSize?.trim()) {
+    const n = Number.parseInt(flat.poolSize.trim(), 10);
+    if (!Number.isNaN(n) && n >= 1) o.poolSize = n;
+  }
   const auth: Record<string, string> = {};
   if (flat["auth.type"]) auth.type = flat["auth.type"];
   if (flat["auth.username"]) auth.username = flat["auth.username"];
