@@ -66,9 +66,6 @@ pub struct ProxyConfig {
     /// Gateway-level authorization. Defaults to allow-all.
     #[serde(default)]
     pub authorization: AuthorizationConfig,
-    /// Admin REST API (port 9000) configuration.
-    #[serde(default)]
-    pub admin_api: AdminApiConfig,
 }
 
 // ---------------------------------------------------------------------------

@@ -117,6 +117,31 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function apiPutNoContent(path: string, body: unknown): Promise<void> {
+  const res = await fetch(`${adminApiOrigin()}${path}`, {
+    method: "PUT",
+    headers: await baseHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (res.status === 401) { dispatchUnauthorized(); throw new UnauthorizedError(); }
+  if (!res.ok) {
+    throw new Error(`Admin API PUT ${path} → ${res.status}: ${await res.text()}`);
+  }
+}
+
+async function apiDelete(path: string): Promise<void> {
+  const res = await fetch(`${adminApiOrigin()}${path}`, {
+    method: "DELETE",
+    headers: await baseHeaders(),
+    cache: "no-store",
+  });
+  if (res.status === 401) { dispatchUnauthorized(); throw new UnauthorizedError(); }
+  if (!res.ok && res.status !== 204) {
+    throw new Error(`Admin API DELETE ${path} → ${res.status}: ${await res.text()}`);
+  }
+}
+
 export async function getClusters(): Promise<ClusterStateDto[]> {
   return apiFetch<ClusterStateDto[]>("/admin/clusters");
 }
@@ -183,13 +208,7 @@ export async function renameClusterConfig(
 }
 
 export async function deleteClusterConfig(name: string): Promise<void> {
-  const res = await fetch(
-    `${adminApiOrigin()}/admin/config/clusters/${encodeURIComponent(name)}`,
-    { method: "DELETE", cache: "no-store" },
-  );
-  if (!res.ok && res.status !== 204) {
-    throw new Error(`DELETE cluster config ${name} → ${res.status}: ${await res.text()}`);
-  }
+  return apiDelete(`/admin/config/clusters/${encodeURIComponent(name)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -229,13 +248,7 @@ export async function renameGroupConfig(
 }
 
 export async function deleteGroupConfig(name: string): Promise<void> {
-  const res = await fetch(
-    `${adminApiOrigin()}/admin/config/groups/${encodeURIComponent(name)}`,
-    { method: "DELETE", cache: "no-store" },
-  );
-  if (!res.ok && res.status !== 204) {
-    throw new Error(`DELETE group config ${name} → ${res.status}: ${await res.text()}`);
-  }
+  return apiDelete(`/admin/config/groups/${encodeURIComponent(name)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -294,23 +307,11 @@ export async function getRoutingConfig(): Promise<import("./api-types").RoutingC
 }
 
 export async function putSecurityConfig(body: import("./api-types").UpsertSecurityConfig): Promise<void> {
-  const res = await fetch(`${adminApiOrigin()}/admin/config/security`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`PUT security config → ${res.status}: ${await res.text()}`);
+  return apiPutNoContent("/admin/config/security", body);
 }
 
 export async function putRoutingConfig(body: import("./api-types").UpsertRoutingConfig): Promise<void> {
-  const res = await fetch(`${adminApiOrigin()}/admin/config/routing`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`PUT routing config → ${res.status}: ${await res.text()}`);
+  return apiPutNoContent("/admin/config/routing", body);
 }
 
 // ---------------------------------------------------------------------------

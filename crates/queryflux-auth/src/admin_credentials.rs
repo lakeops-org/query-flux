@@ -10,8 +10,8 @@
 //!    Used until the operator changes the password via the web UI.
 //!
 //! # Persistence note
-//! Password changes require a `ProxySettingsStore` (Postgres). When running with
-//! in-memory persistence the change succeeds within the session but is lost on restart.
+//! Password changes require a `ProxySettingsStore` (Postgres). Without Postgres,
+//! `change_password` returns an error.
 
 use std::sync::Arc;
 
@@ -23,7 +23,8 @@ use tracing::{info, warn};
 const SETTINGS_KEY: &str = "admin_credentials";
 const BCRYPT_COST: u32 = 12;
 
-/// Stored in `proxy_settings` under key `"admin_credentials"`.
+/// Stored via `ProxySettingsStore` under key `"admin_credentials"` (in Postgres,
+/// nested under the `security_settings.config` JSON alongside Studio security config).
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredCredentials {
     username: String,
@@ -57,7 +58,14 @@ impl AdminCredentialsManager {
         let Some(store) = &self.store else {
             return false;
         };
-        matches!(store.get_proxy_setting(SETTINGS_KEY).await, Ok(Some(_)))
+        match store.get_proxy_setting(SETTINGS_KEY).await {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(e) => {
+                warn!(error = %e, "has_db_override: could not read admin credentials from store");
+                false
+            }
+        }
     }
 
     /// Validate `username` + `password` against the active credentials.
@@ -65,21 +73,28 @@ impl AdminCredentialsManager {
     /// - If a DB record exists: checks bcrypt hash, ignores bootstrap creds.
     /// - Otherwise: plain-text comparison against bootstrap creds.
     pub async fn verify(&self, username: &str, password: &str) -> bool {
-        if let Some(stored) = self.load_db_credentials().await {
-            if username != stored.username {
-                return false;
+        match self.load_db_credentials().await {
+            Ok(Some(stored)) => {
+                if username != stored.username {
+                    return false;
+                }
+                tokio::task::spawn_blocking({
+                    let hash = stored.password_hash.clone();
+                    let pw = password.to_string();
+                    move || bcrypt::verify(&pw, &hash).unwrap_or(false)
+                })
+                .await
+                .unwrap_or(false)
             }
-            return tokio::task::spawn_blocking({
-                let hash = stored.password_hash.clone();
-                let pw = password.to_string();
-                move || bcrypt::verify(&pw, &hash).unwrap_or(false)
-            })
-            .await
-            .unwrap_or(false);
+            Ok(None) => username == self.bootstrap_username && password == self.bootstrap_password,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "admin credentials could not be loaded from store; denying verify"
+                );
+                false
+            }
         }
-
-        // Fall back to bootstrap plain-text comparison.
-        username == self.bootstrap_username && password == self.bootstrap_password
     }
 
     /// Change the admin password.
@@ -91,14 +106,16 @@ impl AdminCredentialsManager {
     /// Returns an error if:
     /// - `current_password` is wrong.
     /// - `new_password` is shorter than 8 characters.
-    /// - No DB store is configured (in-memory only — change applies until restart).
+    /// - No persistent store is configured (password cannot be saved).
     pub async fn change_password(&self, current_password: &str, new_password: &str) -> Result<()> {
-        // Resolve the username that will be stored (DB username if override exists,
-        // otherwise bootstrap username).
-        let username = self
-            .load_db_credentials()
-            .await
-            .map(|s| s.username)
+        let store = self.store.as_ref().ok_or_else(|| {
+            QueryFluxError::Auth("password change requires persistent storage".to_string())
+        })?;
+
+        let stored_opt = self.load_db_credentials().await?;
+        let username = stored_opt
+            .as_ref()
+            .map(|s| s.username.clone())
             .unwrap_or_else(|| self.bootstrap_username.clone());
 
         if !self.verify(&username, current_password).await {
@@ -128,21 +145,8 @@ impl AdminCredentialsManager {
         let value = serde_json::to_value(&stored)
             .map_err(|e| QueryFluxError::Auth(format!("serialize credentials: {e}")))?;
 
-        match &self.store {
-            Some(store) => {
-                store.set_proxy_setting(SETTINGS_KEY, value).await?;
-                info!(username, "Admin password changed and stored in DB");
-            }
-            None => {
-                // No persistent store — store in the in-memory fallback path by
-                // writing directly to the settings map via the None branch.
-                // Since there is no store, the change cannot be persisted; warn loudly.
-                warn!(
-                    "No persistent store configured — admin password change will be lost on restart. \
-                     Configure Postgres persistence to make password changes permanent."
-                );
-            }
-        }
+        store.set_proxy_setting(SETTINGS_KEY, value).await?;
+        info!(username, "Admin password changed and stored in DB");
 
         Ok(())
     }
@@ -151,9 +155,20 @@ impl AdminCredentialsManager {
     // Private helpers
     // ---------------------------------------------------------------------------
 
-    async fn load_db_credentials(&self) -> Option<StoredCredentials> {
-        let store = self.store.as_ref()?;
-        let value = store.get_proxy_setting(SETTINGS_KEY).await.ok()??;
-        serde_json::from_value(value).ok()
+    async fn load_db_credentials(&self) -> Result<Option<StoredCredentials>> {
+        let Some(store) = self.store.as_ref() else {
+            return Ok(None);
+        };
+        let value = store.get_proxy_setting(SETTINGS_KEY).await?;
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        serde_json::from_value(value)
+            .map_err(|e| {
+                QueryFluxError::Auth(format!(
+                    "invalid stored admin credentials at {SETTINGS_KEY}: {e}"
+                ))
+            })
+            .map(Some)
     }
 }

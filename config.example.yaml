@@ -24,6 +24,8 @@ queryflux:
   #   database: queryflux
   adminApi:
     port: 9000
+    # WARNING: default username/password below are for local development only — change before
+    # any public or production deployment (or use QUERYFLUX_ADMIN_USER / QUERYFLUX_ADMIN_PASSWORD).
     # Bootstrap admin credentials for the Admin REST API and Studio.
     # Change the password via the Studio Security page after first login — the new
     # bcrypt hash is stored in the database and these values are no longer used.

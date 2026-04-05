@@ -730,11 +730,11 @@ async fn main() -> Result<()> {
         config.queryflux.external_address.clone(),
     );
 
-    // Build admin credentials — env vars take precedence over YAML.
-    let admin_username =
-        std::env::var("QUERYFLUX_ADMIN_USER").unwrap_or_else(|_| config.admin_api.username.clone());
+    // Build admin credentials — env vars take precedence over YAML (same `queryflux.adminApi` as port).
+    let admin_username = std::env::var("QUERYFLUX_ADMIN_USER")
+        .unwrap_or_else(|_| config.queryflux.admin_api.username.clone());
     let admin_password = std::env::var("QUERYFLUX_ADMIN_PASSWORD")
-        .unwrap_or_else(|_| config.admin_api.password.clone());
+        .unwrap_or_else(|_| config.queryflux.admin_api.password.clone());
     let settings_store = pg_store
         .clone()
         .map(|pg| pg as Arc<dyn queryflux_persistence::ProxySettingsStore>);

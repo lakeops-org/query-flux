@@ -13,13 +13,9 @@ export default function GlobalError({
   useEffect(() => {
     if (error.name === "UnauthorizedError" || error.message === "Unauthorized") {
       window.dispatchEvent(new Event("qf:unauthorized"));
+      reset();
     }
-  }, [error]);
-
-  if (error.name === "UnauthorizedError" || error.message === "Unauthorized") {
-    // ClientShell will show the login dialog — render nothing here.
-    return null;
-  }
+  }, [error, reset]);
 
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">

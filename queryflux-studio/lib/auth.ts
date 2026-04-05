@@ -7,9 +7,14 @@ function notifyAuthChanged(): void {
   window.dispatchEvent(new Event("qf:auth-change"));
 }
 
-/** Encode username + password as base64(user:pass) — the raw value stored in the cookie. */
+/** Encode username + password as base64(utf8(user:pass)) — stored in the cookie. */
 function encodePair(username: string, password: string): string {
-  return btoa(`${username}:${password}`);
+  const bytes = new TextEncoder().encode(`${username}:${password}`);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
 }
 
 /** Encode username + password as a Basic auth header value. */
@@ -21,7 +26,8 @@ export function encodeBasicAuth(username: string, password: string): string {
 export function saveCredentials(username: string, password: string): void {
   if (!isBrowser) return;
   const value = encodeURIComponent(encodePair(username, password));
-  document.cookie = `${COOKIE_NAME}=${value}; SameSite=Strict; path=/; max-age=86400`;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${COOKIE_NAME}=${value}; SameSite=Strict; path=/; max-age=86400${secure}`;
   notifyAuthChanged();
 }
 
@@ -38,7 +44,9 @@ export function loadCredentials(): { username: string; password: string } | null
   const raw = readCookieClient();
   if (!raw) return null;
   try {
-    const decoded = atob(raw);
+    const binary = atob(raw);
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    const decoded = new TextDecoder().decode(bytes);
     const idx = decoded.indexOf(":");
     if (idx === -1) return null;
     return { username: decoded.slice(0, idx), password: decoded.slice(idx + 1) };
