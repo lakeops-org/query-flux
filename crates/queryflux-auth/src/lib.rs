@@ -1,9 +1,11 @@
+pub mod admin_credentials;
 pub mod authorization;
 pub mod credentials;
 pub mod ldap;
 pub mod provider;
 pub mod resolver;
 
+pub use admin_credentials::AdminCredentialsManager;
 pub use authorization::{
     AllowAllAuthorization, AuthorizationChecker, OpenFgaAuthorizationClient,
     SimpleAuthorizationPolicy,

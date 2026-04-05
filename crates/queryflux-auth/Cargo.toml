@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 queryflux-core = { workspace = true }
+queryflux-persistence = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -15,3 +16,4 @@ jsonwebtoken = "10.3.0"
 ldap3 = { version = "0.12.1", default-features = false, features = ["tls-rustls-aws-lc-rs"] }
 dashmap = { workspace = true }
 tokio = { workspace = true }
+bcrypt = { workspace = true }

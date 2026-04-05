@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'getting-started',
         'configuration',
+        'studio',
         'project-structure',
         'benchmarks',
         'development',

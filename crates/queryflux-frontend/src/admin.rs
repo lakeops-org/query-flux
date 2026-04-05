@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
-    http::{Method, StatusCode},
-    response::IntoResponse,
-    routing::{get, patch},
+    extract::{Path, Query, Request, State},
+    http::{header::AUTHORIZATION, Method, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, patch, post},
     Json, Router,
 };
+use queryflux_auth::AdminCredentialsManager;
 use queryflux_core::{
     config::{
         AuthConfig, AuthProviderConfig, AuthorizationConfig, AuthorizationProviderConfig,
@@ -31,7 +33,7 @@ use queryflux_persistence::{
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::info;
+use tracing::{info, warn};
 use utoipa::{OpenApi, ToSchema};
 
 use crate::{state::LiveConfig, FrontendListenerTrait};
@@ -409,6 +411,8 @@ struct AdminState {
     config_reload_notify: Arc<tokio::sync::Notify>,
     /// Snapshot of protocol listeners from startup config (YAML); not hot-reloaded.
     frontends_status: FrontendsStatusDto,
+    /// Admin API credential manager — validates Basic auth and handles password changes.
+    admin_creds: Arc<AdminCredentialsManager>,
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +429,7 @@ pub struct AdminFrontend {
     engine_registry: Arc<EngineRegistry>,
     config_reload_notify: Arc<tokio::sync::Notify>,
     frontends_status: FrontendsStatusDto,
+    admin_creds: Arc<AdminCredentialsManager>,
 }
 
 impl AdminFrontend {
@@ -439,6 +444,7 @@ impl AdminFrontend {
         engine_registry: Arc<EngineRegistry>,
         config_reload_notify: Arc<tokio::sync::Notify>,
         frontends_status: FrontendsStatusDto,
+        admin_creds: Arc<AdminCredentialsManager>,
     ) -> Self {
         Self {
             prometheus,
@@ -450,6 +456,7 @@ impl AdminFrontend {
             engine_registry,
             config_reload_notify,
             frontends_status,
+            admin_creds,
         }
     }
 
@@ -463,14 +470,32 @@ impl AdminFrontend {
             engine_registry: self.engine_registry.clone(),
             config_reload_notify: self.config_reload_notify.clone(),
             frontends_status: self.frontends_status.clone(),
+            admin_creds: self.admin_creds.clone(),
         });
 
         let spec_json =
             serde_json::to_string(&ApiDoc::openapi()).unwrap_or_else(|_| "{}".to_string());
 
-        Router::new()
-            .route("/metrics", get(metrics_handler))
+        // Public routes — no authentication required.
+        let public = Router::new()
             .route("/health", get(health_handler))
+            .route("/metrics", get(metrics_handler))
+            .route(
+                "/openapi.json",
+                get({
+                    let spec = spec_json.clone();
+                    move || {
+                        let spec = spec.clone();
+                        async move {
+                            (StatusCode::OK, [("content-type", "application/json")], spec)
+                        }
+                    }
+                }),
+            )
+            .route("/docs", get(swagger_ui_handler));
+
+        // Protected routes — require valid Basic auth credentials.
+        let protected = Router::new()
             .route("/admin/clusters", get(clusters_handler))
             .route("/admin/queries", get(list_queries_handler))
             .route("/admin/stats", get(get_stats_handler))
@@ -520,14 +545,17 @@ impl AdminFrontend {
                 "/admin/config/routing",
                 get(get_routing_config_handler).put(put_routing_config_handler),
             )
-            .route(
-                "/openapi.json",
-                get(move || {
-                    let spec = spec_json.clone();
-                    async move { (StatusCode::OK, [("content-type", "application/json")], spec) }
-                }),
-            )
-            .route("/docs", get(swagger_ui_handler))
+            // Auth management endpoints
+            .route("/admin/auth/status", get(auth_status_handler))
+            .route("/admin/auth/change-password", post(change_password_handler))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                admin_auth_middleware,
+            ));
+
+        Router::new()
+            .merge(public)
+            .merge(protected)
             .with_state(state)
             .layer(
                 CorsLayer::new()
@@ -574,6 +602,110 @@ async fn metrics_handler(State(state): State<Arc<AdminState>>) -> impl IntoRespo
         body,
     )
 }
+
+// ---------------------------------------------------------------------------
+// Auth middleware
+// ---------------------------------------------------------------------------
+
+/// Axum middleware that enforces HTTP Basic authentication on all protected routes.
+///
+/// Expects `Authorization: Basic <base64(username:password)>` on every request.
+/// Returns `401 Unauthorized` with a `WWW-Authenticate` challenge on failure.
+async fn admin_auth_middleware(
+    State(state): State<Arc<AdminState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let auth_header = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if let Some((username, password)) = parse_basic_auth(auth_header) {
+        if state.admin_creds.verify(&username, &password).await {
+            return next.run(req).await;
+        }
+        warn!(username, "Admin API: invalid credentials");
+    } else {
+        warn!("Admin API: missing or malformed Authorization header");
+    }
+
+    (
+        StatusCode::UNAUTHORIZED,
+        [(
+            "WWW-Authenticate",
+            r#"Basic realm="QueryFlux Admin", charset="UTF-8""#,
+        )],
+        "Unauthorized",
+    )
+        .into_response()
+}
+
+/// Parse `Authorization: Basic <base64(user:pass)>` → `(username, password)`.
+fn parse_basic_auth(header: &str) -> Option<(String, String)> {
+    let encoded = header.strip_prefix("Basic ")?;
+    let decoded = base64_decode(encoded)?;
+    let (user, pass) = decoded.split_once(':')?;
+    Some((user.to_string(), pass.to_string()))
+}
+
+/// Minimal base64 decoder (no extra deps — same approach as Trino HTTP frontend).
+fn base64_decode(encoded: &str) -> Option<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+// ---------------------------------------------------------------------------
+// Auth management handlers
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct AuthStatusResponse {
+    /// `true` once the operator has changed the password via the web UI.
+    /// `false` means bootstrap (YAML/env) credentials are still in use.
+    db_override: bool,
+}
+
+async fn auth_status_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
+    let db_override = state.admin_creds.has_db_override().await;
+    Json(AuthStatusResponse { db_override })
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+async fn change_password_handler(
+    State(state): State<Arc<AdminState>>,
+    Json(body): Json<ChangePasswordRequest>,
+) -> impl IntoResponse {
+    match state
+        .admin_creds
+        .change_password(&body.current_password, &body.new_password)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            let status = if msg.contains("incorrect") {
+                StatusCode::UNAUTHORIZED
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            (status, Json(serde_json::json!({"error": msg}))).into_response()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Standard handlers
+// ---------------------------------------------------------------------------
 
 /// Liveness probe.
 #[utoipa::path(

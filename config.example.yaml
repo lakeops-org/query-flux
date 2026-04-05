@@ -24,6 +24,12 @@ queryflux:
   #   database: queryflux
   adminApi:
     port: 9000
+    # Bootstrap admin credentials for the Admin REST API and Studio.
+    # Change the password via the Studio Security page after first login — the new
+    # bcrypt hash is stored in the database and these values are no longer used.
+    # Override via env vars: QUERYFLUX_ADMIN_USER / QUERYFLUX_ADMIN_PASSWORD.
+    username: admin
+    password: admin
   # When persistence.type is postgres: how often (seconds) to poll the DB and refresh the in-memory
   # RouterChain + cluster/group state (default 30 if omitted). Set to 0 to disable polling only;
   # config still reloads immediately after routing/cluster/group writes via the admin API.

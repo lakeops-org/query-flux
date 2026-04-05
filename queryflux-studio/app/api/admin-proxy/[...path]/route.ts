@@ -13,6 +13,9 @@ async function forward(req: NextRequest, pathSegments: string[]) {
   const headers = new Headers();
   const contentType = req.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
+  // Forward the Basic auth credential from the browser to the admin API.
+  const authorization = req.headers.get("authorization");
+  if (authorization) headers.set("authorization", authorization);
 
   const init: RequestInit = {
     method: req.method,

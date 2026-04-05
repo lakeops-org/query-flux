@@ -730,6 +730,20 @@ async fn main() -> Result<()> {
         config.queryflux.external_address.clone(),
     );
 
+    // Build admin credentials — env vars take precedence over YAML.
+    let admin_username =
+        std::env::var("QUERYFLUX_ADMIN_USER").unwrap_or_else(|_| config.admin_api.username.clone());
+    let admin_password = std::env::var("QUERYFLUX_ADMIN_PASSWORD")
+        .unwrap_or_else(|_| config.admin_api.password.clone());
+    let settings_store = pg_store
+        .clone()
+        .map(|pg| pg as Arc<dyn queryflux_persistence::ProxySettingsStore>);
+    let admin_creds = Arc::new(queryflux_auth::AdminCredentialsManager::new(
+        admin_username,
+        admin_password,
+        settings_store,
+    ));
+
     let admin = AdminFrontend::new(
         prometheus,
         live.clone(),
@@ -740,6 +754,7 @@ async fn main() -> Result<()> {
         engine_registry,
         config_reload_notify.clone(),
         frontends_status,
+        admin_creds,
     );
 
     // --- Start Trino HTTP frontend ---

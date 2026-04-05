@@ -37,7 +37,7 @@ docker compose up -d --wait
 | SQL (Trino **via** QueryFlux) | http://localhost:8080 |
 | Trino (direct, bypasses QueryFlux) | http://localhost:8081 |
 | Admin API | http://localhost:9000 |
-| Studio | http://localhost:3000 |
+| Studio | http://localhost:3000 (login **admin** / **admin**) |
 | Postgres (from host) | `localhost:5433` — user `queryflux`, password `queryflux`, database `queryflux` |
 
 **Next steps:** Trino CLI from the host or from inside the `trino` container, verifying traffic goes through QueryFlux — full walkthrough in **[`examples/minimal/README.md`](https://github.com/lakeops-org/queryflux/blob/main/examples/minimal/README.md)** (including Studio **Queries** and the port/hostname cheat sheet).
@@ -87,7 +87,7 @@ docker compose --profile loader run --rm -T starrocks-catalog-setup
 | --- | --- |
 | Trino via QueryFlux | http://localhost:8080 |
 | MySQL wire (e.g. StarRocks via QueryFlux) | `mysql` client to **localhost:3306** |
-| Studio | http://localhost:3000 |
+| Studio | http://localhost:3000 (login **admin** / **admin**) |
 | Trino (direct) | http://localhost:8081 |
 | MinIO console | http://localhost:19001 |
 | Lakekeeper REST | http://localhost:8181 |
