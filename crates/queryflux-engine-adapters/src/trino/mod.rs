@@ -93,6 +93,7 @@ impl crate::EngineConfigParseable for TrinoConfig {
 /// For Trino→Trino transparent forwarding, `submit_query` and `poll_query` return
 /// `QueryExecution::Async { initial_body: Some(...) }` and `QueryPollResult::Raw { ... }`
 /// respectively. The Trino HTTP frontend rewrites nextUri and returns raw bytes directly.
+#[derive(Clone)]
 pub struct TrinoAdapter {
     pub cluster_name: ClusterName,
     pub group_name: ClusterGroupName,
@@ -385,8 +386,8 @@ impl AsyncAdapter for TrinoAdapter {
         tags: &queryflux_core::tags::QueryTags,
     ) -> crate::Result<crate::SyncExecution> {
         use crate::SyncExecution;
-        use futures::stream;
         use queryflux_core::query::QueryPollResult;
+        use tokio_stream::wrappers::ReceiverStream;
 
         let execution = self.submit_query(sql, session, credentials, tags).await?;
         let queryflux_core::query::QueryExecution::Async {
@@ -395,50 +396,92 @@ impl AsyncAdapter for TrinoAdapter {
             initial_body,
         } = execution;
 
-        let mut batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
-        let mut schema: Option<std::sync::Arc<arrow::datatypes::Schema>> = None;
-        let mut last_engine_stats: Option<QueryEngineStats> = None;
+        let (batch_tx, batch_rx) = tokio::sync::mpsc::channel::<crate::Result<RecordBatch>>(32);
+        let (stats_tx, stats_rx) = tokio::sync::oneshot::channel();
 
-        // Process the initial response body — may contain the first page of data.
-        if let Some(ref body) = initial_body {
-            if let Some(batch) = trino_body_to_batch(body, &mut schema)? {
-                batches.push(batch);
-            }
-        }
+        let adapter = self.clone();
 
-        // Poll until the query is complete (next_uri becomes None).
-        while next_uri.is_some() {
-            let result = self
-                .poll_query(&backend_query_id, next_uri.as_deref())
-                .await?;
-            match result {
-                QueryPollResult::Raw {
-                    body,
-                    next_uri: next,
-                    engine_stats,
-                } => {
-                    if let Some(batch) = trino_body_to_batch(&body, &mut schema)? {
-                        batches.push(batch);
+        tokio::spawn(async move {
+            let mut schema: Option<std::sync::Arc<arrow::datatypes::Schema>> = None;
+            let mut last_engine_stats: Option<QueryEngineStats> = None;
+            let mut sent_any = false;
+
+            // Process the initial response body — may contain the first page of data.
+            if let Some(ref body) = initial_body {
+                match trino_body_to_batch(body, &mut schema) {
+                    Ok(Some(batch)) => {
+                        sent_any = true;
+                        if batch_tx.send(Ok(batch)).await.is_err() {
+                            return;
+                        }
                     }
-                    if next.is_none() {
-                        last_engine_stats = engine_stats;
+                    Ok(None) => {}
+                    Err(e) => {
+                        let _ = batch_tx.send(Err(e)).await;
+                        return;
                     }
-                    next_uri = next;
-                }
-                QueryPollResult::Failed { message, .. } => {
-                    return Err(QueryFluxError::Engine(message));
-                }
-                QueryPollResult::Pending { .. } => {
-                    // Trino uses long-polling; Pending should not occur in practice.
-                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             }
-        }
 
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = tx.send(last_engine_stats);
-        let stream = Box::pin(stream::iter(batches.into_iter().map(Ok)));
-        Ok(SyncExecution { stream, stats: rx })
+            // Poll until the query is complete (next_uri becomes None).
+            while next_uri.is_some() {
+                let result = adapter
+                    .poll_query(&backend_query_id, next_uri.as_deref())
+                    .await;
+                match result {
+                    Err(e) => {
+                        let _ = batch_tx.send(Err(e)).await;
+                        return;
+                    }
+                    Ok(QueryPollResult::Raw {
+                        body,
+                        next_uri: next,
+                        engine_stats,
+                    }) => {
+                        if next.is_none() {
+                            last_engine_stats = engine_stats;
+                        }
+                        next_uri = next;
+                        match trino_body_to_batch(&body, &mut schema) {
+                            Ok(Some(batch)) => {
+                                sent_any = true;
+                                if batch_tx.send(Ok(batch)).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                let _ = batch_tx.send(Err(e)).await;
+                                return;
+                            }
+                        }
+                    }
+                    Ok(QueryPollResult::Failed { message, .. }) => {
+                        let _ = batch_tx.send(Err(QueryFluxError::Engine(message))).await;
+                        return;
+                    }
+                    Ok(QueryPollResult::Pending { .. }) => {
+                        // Trino uses long-polling; Pending should not occur in practice.
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                }
+            }
+
+            // If the query returned a schema but no rows, emit a zero-row batch so
+            // the caller can still observe the real column types.
+            if !sent_any {
+                if let Some(s) = schema {
+                    let _ = batch_tx.send(Ok(RecordBatch::new_empty(s))).await;
+                }
+            }
+
+            let _ = stats_tx.send(last_engine_stats);
+        });
+
+        Ok(SyncExecution {
+            stream: Box::pin(ReceiverStream::new(batch_rx)),
+            stats: stats_rx,
+        })
     }
 
     async fn health_check(&self) -> bool {

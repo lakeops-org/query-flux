@@ -99,16 +99,17 @@ fn try_polyglot(
     // 2. Non-determinism detection via AST walk.
     let is_deterministic = !statements.iter().any(contains_nondeterministic_expr);
 
-    // 3. Re-serialize for query_hash (normalized but with original literal values).
+    // 3. Re-serialize for query_hash (deterministic output from generate_by_name; no case folding).
     let normalized_parts: Vec<String> = statements
         .iter()
         .map(|s| generate_by_name(s, dialect))
         .collect::<Result<Vec<_>, _>>()?;
-    let normalized = normalized_parts.join("; ").to_lowercase();
+    let normalized = normalized_parts.join("; ");
     let query_hash = xxh64(normalized.as_bytes(), 0);
 
-    // 4. Apply literal replacement to the normalized SQL → digest_text.
-    let digest_text = fallback::parameterize(&normalized);
+    // 4. Parameterization: case-fold for stable literal/identifier buckets in digest.
+    let normalized_lower = normalized.to_lowercase();
+    let digest_text = fallback::parameterize(&normalized_lower);
     let parameterized_hash = xxh64(digest_text.as_bytes(), 0);
 
     Ok((

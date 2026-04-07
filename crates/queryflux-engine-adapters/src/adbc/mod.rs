@@ -6,7 +6,6 @@ use adbc_driver_manager::{ManagedDatabase, ManagedDriver};
 use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use futures::stream;
 use queryflux_core::{
     catalog::TableSchema,
     config::ClusterConfig,
@@ -16,7 +15,8 @@ use queryflux_core::{
     tags::QueryTags,
 };
 use r2d2_adbc::AdbcConnectionManager;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{AdapterKind, EngineAdapterFactory, SyncAdapter, SyncExecution};
 use queryflux_core::engine_registry::{
@@ -330,29 +330,57 @@ impl SyncAdapter for AdbcAdapter {
         let pool = self.pool.clone();
         let sql = sql.to_string();
 
-        let batches = tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(|e| {
-                QueryFluxError::Engine(format!("ADBC: failed to get connection from pool: {e}"))
-            })?;
-            let mut stmt = conn.new_statement().map_err(|e| {
-                QueryFluxError::Engine(format!("ADBC: failed to create statement: {e}"))
-            })?;
-            stmt.set_sql_query(&sql).map_err(|e| {
-                QueryFluxError::Engine(format!("ADBC: failed to set SQL query: {e}"))
-            })?;
-            let reader = stmt.execute().map_err(|e| {
-                QueryFluxError::Engine(format!("ADBC: query execution failed: {e}"))
-            })?;
-            collect_batches(reader)
-        })
-        .await
-        .map_err(|e| QueryFluxError::Engine(format!("ADBC: spawn_blocking failed: {e}")))??;
+        let (batch_tx, batch_rx) = mpsc::channel::<Result<RecordBatch>>(32);
+        let (stats_tx, stats_rx) = oneshot::channel();
+        let _ = stats_tx.send(None); // ADBC has no standard stats API
 
-        let (tx, rx) = oneshot::channel();
-        let _ = tx.send(None); // ADBC has no standard stats API
+        tokio::task::spawn_blocking(move || {
+            let mut conn = match pool.get() {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = batch_tx.blocking_send(Err(QueryFluxError::Engine(format!(
+                        "ADBC: failed to get connection from pool: {e}"
+                    ))));
+                    return;
+                }
+            };
+            let mut stmt = match conn.new_statement() {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = batch_tx.blocking_send(Err(QueryFluxError::Engine(format!(
+                        "ADBC: failed to create statement: {e}"
+                    ))));
+                    return;
+                }
+            };
+            if let Err(e) = stmt.set_sql_query(&sql) {
+                let _ = batch_tx.blocking_send(Err(QueryFluxError::Engine(format!(
+                    "ADBC: failed to set SQL query: {e}"
+                ))));
+                return;
+            }
+            let reader = match stmt.execute() {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = batch_tx.blocking_send(Err(QueryFluxError::Engine(format!(
+                        "ADBC: query execution failed: {e}"
+                    ))));
+                    return;
+                }
+            };
+            for batch in reader {
+                let result = batch.map_err(|e| {
+                    QueryFluxError::Engine(format!("ADBC: failed to read results: {e}"))
+                });
+                if batch_tx.blocking_send(result).is_err() {
+                    return; // consumer dropped, stop reading
+                }
+            }
+        });
+
         Ok(SyncExecution {
-            stream: Box::pin(stream::iter(batches.into_iter().map(Ok))),
-            stats: rx,
+            stream: Box::pin(ReceiverStream::new(batch_rx)),
+            stats: stats_rx,
         })
     }
 
@@ -418,6 +446,7 @@ impl SyncAdapter for AdbcAdapter {
         let pool = self.pool.clone();
         let catalog = catalog.to_string();
         let result = tokio::task::spawn_blocking(move || {
+            let catalog = catalog.replace('\'', "''");
             let mut conn = pool.get().map_err(|e| QueryFluxError::Engine(format!("ADBC: {e}")))?;
             let mut stmt = conn.new_statement().map_err(|e| QueryFluxError::Engine(format!("ADBC: {e}")))?;
             stmt.set_sql_query(format!(
@@ -454,6 +483,8 @@ impl SyncAdapter for AdbcAdapter {
         let catalog = catalog.to_string();
         let database = database.to_string();
         let result = tokio::task::spawn_blocking(move || {
+            let catalog = catalog.replace('\'', "''");
+            let database = database.replace('\'', "''");
             let mut conn = pool.get().map_err(|e| QueryFluxError::Engine(format!("ADBC: {e}")))?;
             let mut stmt = conn.new_statement().map_err(|e| QueryFluxError::Engine(format!("ADBC: {e}")))?;
             stmt.set_sql_query(format!(

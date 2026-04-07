@@ -13,6 +13,34 @@
 
 use xxhash_rust::xxh64::Xxh64;
 
+/// True when a leading `-` before digits may start a numeric literal (unary minus),
+/// based on the previous ASCII byte (same-index `i - 1` in the UTF-8 stream).
+#[inline]
+fn prev_byte_allows_unary_minus(prev: u8) -> bool {
+    matches!(
+        prev,
+        b'(' | b'['
+            | b'{'
+            | b','
+            | b';'
+            | b':'
+            | b'='
+            | b'<'
+            | b'>'
+            | b'!'
+            | b'+'
+            | b'-'
+            | b'*'
+            | b'/'
+            | b'%'
+            | b'^'
+            | b'&'
+            | b'|'
+            | b'~'
+            | b'?'
+    )
+}
+
 /// Compute a fast parameterized hash of `sql` suitable for routing.
 ///
 /// Two queries that differ only in literal values will produce the same hash.
@@ -106,11 +134,13 @@ pub fn fast_hash(sql: &str) -> u64 {
         }
 
         // ── Digit sequence (number literal) ─────────────────────────────────
-        if b.is_ascii_digit() || (b == b'-' && i + 1 < len && bytes[i + 1].is_ascii_digit()) {
-            // Only treat leading minus as part of number when it's not an operator context
-            // Simple heuristic: if previous char was space or operator, treat as number
+        let neg_number_start = b == b'-'
+            && i + 1 < len
+            && bytes[i + 1].is_ascii_digit()
+            && (i == 0 || last_was_space || prev_byte_allows_unary_minus(bytes[i - 1]));
+        if b.is_ascii_digit() || neg_number_start {
             if b == b'-' {
-                i += 1; // consume the minus
+                i += 1; // consume unary minus only when neg_number_start holds
             }
             while i < len
                 && (bytes[i].is_ascii_digit()
@@ -201,6 +231,28 @@ mod tests {
     fn null_normalized() {
         let a = fast_hash("SELECT * FROM t WHERE x = NULL");
         let b = fast_hash("SELECT * FROM t WHERE x = null");
+        assert_eq!(a, b);
+    }
+
+    /// `a-1` is subtraction, not a negative literal; literals 1 vs 2 should still match.
+    #[test]
+    fn minus_between_identifier_and_digit_is_not_unary() {
+        let a = fast_hash("SELECT a-1");
+        let b = fast_hash("SELECT a-2");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn unary_minus_after_operator_without_space() {
+        let a = fast_hash("WHERE id=-1");
+        let b = fast_hash("WHERE id=-2");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn unary_minus_after_whitespace() {
+        let a = fast_hash("WHERE id = -1");
+        let b = fast_hash("WHERE id = -99");
         assert_eq!(a, b);
     }
 }

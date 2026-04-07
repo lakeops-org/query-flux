@@ -176,23 +176,32 @@ fn replace_number_literals(sql: &str) -> String {
 }
 
 fn replace_null(sql: &str) -> String {
-    // Case-insensitive NULL replacement at word boundaries
-    let lower = sql.to_lowercase();
+    // Case-insensitive NULL replacement at word boundaries (char-safe for UTF-8).
+    let seq: Vec<(usize, char)> = sql.char_indices().collect();
     let mut out = String::with_capacity(sql.len());
-    let bytes = lower.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if i + 3 < bytes.len()
-            && &bytes[i..i + 4] == b"null"
-            && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
-            && (i + 4 >= bytes.len() || !bytes[i + 4].is_ascii_alphanumeric())
-        {
-            out.push('?');
-            i += 4;
-        } else {
-            out.push(sql.as_bytes()[i] as char);
-            i += 1;
+    let mut pos = 0usize;
+    while pos < seq.len() {
+        if pos + 3 < seq.len() {
+            let (_, a) = seq[pos];
+            let (_, b) = seq[pos + 1];
+            let (_, c) = seq[pos + 2];
+            let (_, d) = seq[pos + 3];
+            if a.eq_ignore_ascii_case(&'n')
+                && b.eq_ignore_ascii_case(&'u')
+                && c.eq_ignore_ascii_case(&'l')
+                && d.eq_ignore_ascii_case(&'l')
+            {
+                let prev_ok = pos == 0 || !seq[pos - 1].1.is_ascii_alphanumeric();
+                let next_ok = pos + 4 >= seq.len() || !seq[pos + 4].1.is_ascii_alphanumeric();
+                if prev_ok && next_ok {
+                    out.push('?');
+                    pos += 4;
+                    continue;
+                }
+            }
         }
+        out.push(seq[pos].1);
+        pos += 1;
     }
     out
 }

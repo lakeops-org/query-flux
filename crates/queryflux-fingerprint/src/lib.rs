@@ -25,7 +25,7 @@ pub fn polyglot_dialect(dialect: &queryflux_core::query::SqlDialect) -> &'static
         SqlDialect::StarRocks => "starrocks",
         SqlDialect::ClickHouse => "clickhouse",
         SqlDialect::MySql => "mysql",
-        SqlDialect::Postgres => "postgres",
+        SqlDialect::Postgres => "postgresql",
         SqlDialect::Generic => "generic",
     }
 }
