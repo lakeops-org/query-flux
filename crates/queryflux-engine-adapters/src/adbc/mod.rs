@@ -56,16 +56,15 @@ fn driver_to_engine_type(driver: &str) -> EngineType {
     }
 }
 
-fn parse_engine_type_override(value: &str) -> Result<EngineType> {
+/// Returns `None` if the value is empty or not a recognized engine name (ignored, falls back to driver-based type).
+fn parse_engine_type_override(value: &str) -> Option<EngineType> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "trino" => Ok(EngineType::Trino),
-        "duckdb" => Ok(EngineType::DuckDb),
-        "starrocks" => Ok(EngineType::StarRocks),
-        "clickhouse" => Ok(EngineType::ClickHouse),
-        "adbc" => Ok(EngineType::Adbc),
-        other => Err(QueryFluxError::Engine(format!(
-            "parse_engine_type_override: unknown flightSqlEngine: '{other}'"
-        ))),
+        "trino" => Some(EngineType::Trino),
+        "duckdb" => Some(EngineType::DuckDb),
+        "starrocks" => Some(EngineType::StarRocks),
+        "clickhouse" => Some(EngineType::ClickHouse),
+        "adbc" => Some(EngineType::Adbc),
+        _ => None,
     }
 }
 
@@ -156,8 +155,7 @@ impl crate::EngineConfigParseable for AdbcConfig {
         let flight_sql_engine = json
             .get("flightSqlEngine")
             .and_then(|v| v.as_str())
-            .map(parse_engine_type_override)
-            .transpose()?;
+            .and_then(parse_engine_type_override);
 
         let pool_size = json
             .get("poolSize")
