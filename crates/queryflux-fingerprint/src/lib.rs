@@ -26,6 +26,13 @@ pub fn polyglot_dialect(dialect: &queryflux_core::query::SqlDialect) -> &'static
         SqlDialect::ClickHouse => "clickhouse",
         SqlDialect::MySql => "mysql",
         SqlDialect::Postgres => "postgresql",
+        SqlDialect::Sqlite => "sqlite",
+        SqlDialect::Snowflake => "snowflake",
+        SqlDialect::BigQuery => "bigquery",
+        SqlDialect::Databricks => "databricks",
+        SqlDialect::MsSql => "tsql",
+        SqlDialect::Redshift => "redshift",
+        SqlDialect::Exasol => "exasol",
         SqlDialect::Generic => "generic",
     }
 }

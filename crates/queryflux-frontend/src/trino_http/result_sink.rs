@@ -140,17 +140,22 @@ impl ResultSink for TrinoHttpResultSink {
         }
         // Fallback formatter for types that don't have a native JSON primitive
         // (timestamps, dates, decimals, complex types).
+        // Use `.ok()` so columns with unsupported Arrow types (e.g. Utf8View,
+        // BinaryView, Interval) don't abort the entire batch — they fall back
+        // to a null value instead of crashing the response.
         let opts = FormatOptions::default().with_null("NULL");
-        let formatters: Vec<ArrayFormatter> = batch
+        let formatters: Vec<Option<ArrayFormatter>> = batch
             .columns()
             .iter()
-            .map(|col| ArrayFormatter::try_new(col.as_ref(), &opts))
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| queryflux_core::error::QueryFluxError::Engine(e.to_string()))?;
+            .map(|col| ArrayFormatter::try_new(col.as_ref(), &opts).ok())
+            .collect();
 
         for row in 0..batch.num_rows() {
             let cells: Vec<Value> = (0..batch.num_columns())
-                .map(|col_idx| arrow_cell_to_json(batch, col_idx, row, &formatters[col_idx]))
+                .map(|col_idx| match formatters[col_idx].as_ref() {
+                    Some(f) => arrow_cell_to_json(batch, col_idx, row, f),
+                    None => Value::Null,
+                })
                 .collect();
             self.rows.push(Value::Array(cells));
         }

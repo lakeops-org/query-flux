@@ -847,10 +847,12 @@ async fn execute_stream(
                 }
                 rows_returned += batch.num_rows() as u64;
                 if let Err(e) = sink.on_batch(&batch).await {
+                    let msg = e.to_string();
+                    let _ = sink.on_error(&msg).await;
                     let outcome = SyncOutcome {
                         status: QueryStatus::Failed,
                         rows: Some(rows_returned),
-                        error: Some("client disconnected during result send".to_string()),
+                        error: Some(msg),
                         elapsed_ms: elapsed(),
                         engine_stats: None,
                     };

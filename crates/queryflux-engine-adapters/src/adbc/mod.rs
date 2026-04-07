@@ -50,8 +50,16 @@ fn driver_to_engine_type(driver: &str) -> EngineType {
         "duckdb" => EngineType::DuckDb,
         "starrocks" => EngineType::StarRocks,
         "clickhouse" => EngineType::ClickHouse,
-        "mysql" => EngineType::Adbc, // MySql dialect — use Adbc until MySql EngineType exists
-        "postgresql" => EngineType::Adbc,
+        "mysql" => EngineType::MySql,
+        "postgresql" => EngineType::Postgres,
+        "sqlite" => EngineType::Sqlite,
+        "snowflake" => EngineType::Snowflake,
+        "bigquery" => EngineType::BigQuery,
+        "databricks" => EngineType::Databricks,
+        "mssql" => EngineType::MsSql,
+        "redshift" => EngineType::Redshift,
+        "exasol" => EngineType::Exasol,
+        "singlestore" => EngineType::SingleStore,
         _ => EngineType::Adbc,
     }
 }
@@ -96,6 +104,16 @@ fn parse_engine_type_override(value: &str) -> Option<EngineType> {
         "starrocks" => Some(EngineType::StarRocks),
         "clickhouse" => Some(EngineType::ClickHouse),
         "adbc" => Some(EngineType::Adbc),
+        "postgres" | "postgresql" => Some(EngineType::Postgres),
+        "mysql" => Some(EngineType::MySql),
+        "sqlite" => Some(EngineType::Sqlite),
+        "snowflake" => Some(EngineType::Snowflake),
+        "bigquery" => Some(EngineType::BigQuery),
+        "databricks" => Some(EngineType::Databricks),
+        "mssql" => Some(EngineType::MsSql),
+        "redshift" => Some(EngineType::Redshift),
+        "exasol" => Some(EngineType::Exasol),
+        "singlestore" => Some(EngineType::SingleStore),
         _ => None,
     }
 }
@@ -781,13 +799,13 @@ mod tests {
     }
 
     #[test]
-    fn mysql_driver_maps_to_adbc_engine_type() {
+    fn mysql_driver_maps_to_mysql_engine_type() {
         let json = serde_json::json!({
             "driver": "mysql",
             "uri": "mysql://localhost:3306/db"
         });
         let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
-        assert_eq!(cfg.engine_type(), EngineType::Adbc);
+        assert_eq!(cfg.engine_type(), EngineType::MySql);
     }
 
     #[test]
