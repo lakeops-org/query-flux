@@ -1,10 +1,10 @@
-# QueryFlux
+# <p align="center"><big>QueryFlux</big></p>
 
 <p align="center">
   <img src="website/static/img/queryflux-hero-cover.png" alt="QueryFlux — multi-engine SQL query proxy and router in Rust" width="720" />
 </p>
 
-<p align="center"><big>Universal SQL query proxy and router in Rust</big></p>
+# <p align="center"><big>Universal SQL multi-engine query router and proxy in Rust</big></p>
 
 QueryFlux sits between SQL clients and multiple backend query engines, providing protocol translation, intelligent routing, load balancing, and automatic SQL dialect conversion.
 
