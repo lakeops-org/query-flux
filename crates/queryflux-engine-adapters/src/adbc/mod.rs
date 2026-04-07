@@ -56,14 +56,16 @@ fn driver_to_engine_type(driver: &str) -> EngineType {
     }
 }
 
-fn parse_engine_type_override(value: &str) -> Option<EngineType> {
+fn parse_engine_type_override(value: &str) -> Result<EngineType> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "trino" => Some(EngineType::Trino),
-        "duckdb" => Some(EngineType::DuckDb),
-        "starrocks" => Some(EngineType::StarRocks),
-        "clickhouse" => Some(EngineType::ClickHouse),
-        "adbc" => Some(EngineType::Adbc),
-        _ => None,
+        "trino" => Ok(EngineType::Trino),
+        "duckdb" => Ok(EngineType::DuckDb),
+        "starrocks" => Ok(EngineType::StarRocks),
+        "clickhouse" => Ok(EngineType::ClickHouse),
+        "adbc" => Ok(EngineType::Adbc),
+        other => Err(QueryFluxError::Engine(format!(
+            "parse_engine_type_override: unknown flightSqlEngine: '{other}'"
+        ))),
     }
 }
 
@@ -154,7 +156,8 @@ impl crate::EngineConfigParseable for AdbcConfig {
         let flight_sql_engine = json
             .get("flightSqlEngine")
             .and_then(|v| v.as_str())
-            .and_then(parse_engine_type_override);
+            .map(parse_engine_type_override)
+            .transpose()?;
 
         let pool_size = json
             .get("poolSize")
@@ -355,7 +358,6 @@ impl SyncAdapter for AdbcAdapter {
 
         let (batch_tx, batch_rx) = mpsc::channel::<Result<RecordBatch>>(32);
         let (stats_tx, stats_rx) = oneshot::channel();
-        let _ = stats_tx.send(None); // ADBC has no standard stats API
 
         tokio::task::spawn_blocking(move || {
             let mut conn = match pool.get() {
@@ -399,6 +401,8 @@ impl SyncAdapter for AdbcAdapter {
                     return; // consumer dropped, stop reading
                 }
             }
+            // Send stats only after all batches have been produced.
+            let _ = stats_tx.send(None); // ADBC has no standard stats API
         });
 
         Ok(SyncExecution {
@@ -462,7 +466,7 @@ impl SyncAdapter for AdbcAdapter {
         .await
         .map_err(|e| QueryFluxError::Engine(format!("ADBC: spawn_blocking: {e}")))?;
 
-        result.or_else(|_: QueryFluxError| Ok(Vec::new()))
+        result
     }
 
     async fn list_databases(&self, catalog: &str) -> Result<Vec<String>> {
@@ -498,7 +502,7 @@ impl SyncAdapter for AdbcAdapter {
         .await
         .map_err(|e| QueryFluxError::Engine(format!("ADBC: spawn_blocking: {e}")))?;
 
-        result.or_else(|_: QueryFluxError| Ok(Vec::new()))
+        result
     }
 
     async fn list_tables(&self, catalog: &str, database: &str) -> Result<Vec<String>> {
@@ -536,7 +540,7 @@ impl SyncAdapter for AdbcAdapter {
         .await
         .map_err(|e| QueryFluxError::Engine(format!("ADBC: spawn_blocking: {e}")))?;
 
-        result.or_else(|_: QueryFluxError| Ok(Vec::new()))
+        result
     }
 
     async fn describe_table(
