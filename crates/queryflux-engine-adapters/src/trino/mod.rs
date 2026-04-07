@@ -547,26 +547,10 @@ impl AsyncAdapter for TrinoAdapter {
         &self.endpoint
     }
 
-    /// Trino exposes `GET /v1/cluster` with aggregate running/queued counts.
+    /// Uses `system.runtime.queries` so reconcile matches Trino's own definition of RUNNING.
     async fn fetch_running_query_count(&self) -> Option<u64> {
-        #[derive(serde::Deserialize)]
-        struct ClusterInfo {
-            #[serde(rename = "runningQueries")]
-            running_queries: u64,
-        }
-        let url = self.trino_url("/v1/cluster");
-        let resp = self
-            .apply_cluster_auth(self.http_client.get(&url))
-            .send()
-            .await
-            .ok()?;
-        if !resp.status().is_success() {
-            return None;
-        }
-        resp.json::<ClusterInfo>()
-            .await
-            .ok()
-            .map(|c| c.running_queries)
+        const SQL: &str = "SELECT count(*) FROM system.runtime.queries WHERE state = 'RUNNING'";
+        self.run_discovery_scalar_u64(SQL).await
     }
 
     // --- Catalog discovery ---
@@ -622,6 +606,60 @@ impl AsyncAdapter for TrinoAdapter {
 }
 
 impl TrinoAdapter {
+    /// Submit a single-cell numeric discovery query and read the result via submit + poll.
+    async fn run_discovery_scalar_u64(&self, sql: &str) -> Option<u64> {
+        let session = SessionContext::TrinoHttp {
+            headers: HashMap::from([(
+                "x-trino-user".to_string(),
+                "queryflux-running-query-reconcile".to_string(),
+            )]),
+            tags: QueryTags::new(),
+        };
+        let execution = self
+            .submit_query(
+                sql,
+                &session,
+                &queryflux_auth::QueryCredentials::ServiceAccount,
+                &QueryTags::new(),
+            )
+            .await
+            .ok()?;
+        let QueryExecution::Async {
+            backend_query_id,
+            mut next_uri,
+            initial_body,
+        } = execution;
+        let mut body = initial_body?;
+
+        if let Some(n) = trino_json_first_cell_u64_from_body(&body) {
+            return Some(n);
+        }
+
+        while let Some(ref uri) = next_uri {
+            let result = self
+                .poll_query(&backend_query_id, Some(uri.as_str()))
+                .await
+                .ok()?;
+            match result {
+                QueryPollResult::Raw {
+                    body: b,
+                    next_uri: n,
+                    ..
+                } => {
+                    if let Some(v) = trino_json_first_cell_u64_from_body(&b) {
+                        return Some(v);
+                    }
+                    n.as_ref()?;
+                    body = b;
+                    next_uri = n;
+                }
+                QueryPollResult::Failed { .. } | QueryPollResult::Pending { .. } => return None,
+            }
+        }
+
+        trino_json_first_cell_u64_from_body(&body)
+    }
+
     async fn run_show_query(&self, sql: &str) -> Result<Vec<String>> {
         let session = SessionContext::TrinoHttp {
             headers: HashMap::from([(
@@ -661,6 +699,23 @@ impl TrinoAdapter {
 // ---------------------------------------------------------------------------
 // Arrow conversion helpers for execute_as_arrow
 // ---------------------------------------------------------------------------
+
+fn trino_json_first_cell_u64_from_body(body: &bytes::Bytes) -> Option<u64> {
+    let trino_resp: TrinoResponse = serde_json::from_slice(body.as_ref()).ok()?;
+    if trino_resp.error.is_some() {
+        return None;
+    }
+    trino_json_first_cell_u64(&trino_resp.data)
+}
+
+fn trino_json_first_cell_u64(data: &Option<serde_json::Value>) -> Option<u64> {
+    let rows = data.as_ref()?.as_array()?;
+    let row0 = rows.first()?.as_array()?;
+    let cell = row0.first()?;
+    cell.as_u64()
+        .or_else(|| cell.as_i64().map(|n| n.max(0) as u64))
+        .or_else(|| cell.as_str()?.parse().ok())
+}
 
 /// Parse a raw Trino response body and yield a RecordBatch if the page has data.
 /// Builds/reuses the Arrow schema from column metadata on the first data page.

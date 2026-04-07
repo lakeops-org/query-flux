@@ -338,15 +338,25 @@ async fn main() -> Result<()> {
             }
             let cluster_name = ClusterName(record.name.clone());
             let placeholder_group = ClusterGroupName("_".to_string());
-            let adapter = registered_engines::build_adapter_from_record(
+            match registered_engines::build_adapter_from_record(
                 cluster_name,
                 placeholder_group,
                 &record.engine_key,
                 &record.config,
             )
             .await
-            .with_context(|| format!("Failed to build adapter for cluster '{}'", record.name))?;
-            adapters.insert(record.name.clone(), adapter);
+            {
+                Ok(adapter) => {
+                    adapters.insert(record.name.clone(), adapter);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        cluster = %record.name,
+                        error = %e,
+                        "Failed to build engine adapter — cluster omitted from routing until config or environment is fixed"
+                    );
+                }
+            }
         }
     } else {
         for (cluster_name_str, cluster_cfg) in &config.clusters {
@@ -356,15 +366,25 @@ async fn main() -> Result<()> {
             }
             let cluster_name = ClusterName(cluster_name_str.clone());
             let placeholder_group = ClusterGroupName("_".to_string());
-            let adapter = registered_engines::build_adapter(
+            match registered_engines::build_adapter(
                 cluster_name,
                 placeholder_group,
                 cluster_cfg,
                 cluster_name_str,
             )
             .await
-            .with_context(|| format!("Failed to build adapter for cluster '{cluster_name_str}'"))?;
-            adapters.insert(cluster_name_str.clone(), adapter);
+            {
+                Ok(adapter) => {
+                    adapters.insert(cluster_name_str.clone(), adapter);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        cluster = %cluster_name_str,
+                        error = %e,
+                        "Failed to build engine adapter — cluster omitted from routing until config or environment is fixed"
+                    );
+                }
+            }
         }
     }
 
@@ -403,8 +423,11 @@ async fn main() -> Result<()> {
             ))?;
 
             if !adapters.contains_key(member_name.as_str()) {
-                // Cluster was disabled in Pass 1 — skip silently.
-                tracing::info!(group = %group_name, cluster = %member_name, "Skipping disabled cluster in group");
+                tracing::warn!(
+                    group = %group_name,
+                    cluster = %member_name,
+                    "Skipping cluster in group: disabled, or adapter failed to build at startup"
+                );
                 continue;
             }
 
@@ -1215,7 +1238,11 @@ async fn build_live_config(
         {
             Ok(a) => a,
             Err(e) => {
-                tracing::warn!(cluster = %cluster_name_str, "Reload: adapter build failed: {e:#}");
+                tracing::error!(
+                    cluster = %cluster_name_str,
+                    error = %e,
+                    "Reload: failed to build engine adapter — cluster omitted until fixed"
+                );
                 continue;
             }
         };

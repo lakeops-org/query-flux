@@ -56,7 +56,39 @@ fn driver_to_engine_type(driver: &str) -> EngineType {
     }
 }
 
-/// Returns `None` if the value is empty or not a recognized engine name (ignored, falls back to driver-based type).
+/// First numeric cell of the first row (for `COUNT(*)`-style reconcile queries).
+fn batch_first_cell_as_u64(batch: &RecordBatch) -> Option<u64> {
+    if batch.num_columns() == 0 || batch.num_rows() == 0 {
+        return None;
+    }
+    use arrow::array::{
+        Int16Array, Int32Array, Int64Array, Int8Array, StringArray, UInt32Array, UInt64Array,
+    };
+    let col = batch.column(0);
+    if let Some(a) = col.as_any().downcast_ref::<UInt64Array>() {
+        return (!a.is_null(0)).then(|| a.value(0));
+    }
+    if let Some(a) = col.as_any().downcast_ref::<Int64Array>() {
+        return (!a.is_null(0)).then(|| a.value(0).max(0) as u64);
+    }
+    if let Some(a) = col.as_any().downcast_ref::<UInt32Array>() {
+        return (!a.is_null(0)).then(|| a.value(0) as u64);
+    }
+    if let Some(a) = col.as_any().downcast_ref::<Int32Array>() {
+        return (!a.is_null(0)).then(|| a.value(0).max(0) as u64);
+    }
+    if let Some(a) = col.as_any().downcast_ref::<Int16Array>() {
+        return (!a.is_null(0)).then(|| a.value(0).max(0) as u64);
+    }
+    if let Some(a) = col.as_any().downcast_ref::<Int8Array>() {
+        return (!a.is_null(0)).then(|| a.value(0).max(0) as u64);
+    }
+    if let Some(a) = col.as_any().downcast_ref::<StringArray>() {
+        return (!a.is_null(0)).then(|| a.value(0).parse().ok()).flatten();
+    }
+    None
+}
+
 fn parse_engine_type_override(value: &str) -> Option<EngineType> {
     match value.trim().to_ascii_lowercase().as_str() {
         "trino" => Some(EngineType::Trino),
@@ -411,6 +443,57 @@ impl SyncAdapter for AdbcAdapter {
 
     fn engine_type(&self) -> EngineType {
         self.engine_type.clone()
+    }
+
+    async fn fetch_running_query_count(&self) -> Option<u64> {
+        match &self.engine_type {
+            EngineType::Trino => {
+                let pool = self.pool.clone();
+                let sql = "SELECT count(*) FROM system.runtime.queries WHERE state = 'RUNNING'"
+                    .to_string();
+                tokio::task::spawn_blocking(move || {
+                    let mut conn = pool.get().ok()?;
+                    let mut stmt = conn.new_statement().ok()?;
+                    stmt.set_sql_query(&sql).ok()?;
+                    let reader = stmt.execute().ok()?;
+                    let batches = collect_batches(reader).ok()?;
+                    batches.iter().find_map(batch_first_cell_as_u64)
+                })
+                .await
+                .ok()?
+            }
+            EngineType::StarRocks => {
+                let pool = self.pool.clone();
+                let sql =
+                    "SELECT COUNT(*) FROM information_schema.processlist WHERE COMMAND = 'Query'"
+                        .to_string();
+                tokio::task::spawn_blocking(move || {
+                    let mut conn = pool.get().ok()?;
+                    let mut stmt = conn.new_statement().ok()?;
+                    stmt.set_sql_query(&sql).ok()?;
+                    let reader = stmt.execute().ok()?;
+                    let batches = collect_batches(reader).ok()?;
+                    batches.iter().find_map(batch_first_cell_as_u64)
+                })
+                .await
+                .ok()?
+            }
+            EngineType::ClickHouse => {
+                let pool = self.pool.clone();
+                let sql = "SELECT count() FROM system.processes".to_string();
+                tokio::task::spawn_blocking(move || {
+                    let mut conn = pool.get().ok()?;
+                    let mut stmt = conn.new_statement().ok()?;
+                    stmt.set_sql_query(&sql).ok()?;
+                    let reader = stmt.execute().ok()?;
+                    let batches = collect_batches(reader).ok()?;
+                    batches.iter().find_map(batch_first_cell_as_u64)
+                })
+                .await
+                .ok()?
+            }
+            _ => None,
+        }
     }
 
     async fn health_check(&self) -> bool {
@@ -814,5 +897,16 @@ mod tests {
         let d = super::AdbcAdapter::descriptor();
         assert_eq!(d.engine_key, "adbc");
         assert!(d.implemented);
+    }
+
+    #[test]
+    fn flightsql_starrocks_engine_type_for_reconcile_sql() {
+        let json = serde_json::json!({
+            "driver": "flightsql",
+            "uri": "grpc://h:9000",
+            "flightSqlEngine": "starrocks"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::StarRocks);
     }
 }
