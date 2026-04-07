@@ -14,6 +14,7 @@ import { readGroupMaxRunningQueries } from "@/lib/cluster-config-helpers";
 import {
   buildClusterUpsertFromForm,
   buildValidateShape,
+  isAdbcPostgresqlDriver,
   MANAGED_CONFIG_JSON_KEYS,
   persistedClusterConfigToFlat,
   validateEngineSpecific,
@@ -1190,6 +1191,11 @@ function EngineEditForm({
             engineKey={persisted.engineKey}
             descriptor={descriptor}
             flat={editFlat}
+            hiddenFieldKeys={
+              persisted.engineKey === "adbc" && isAdbcPostgresqlDriver(editFlat)
+                ? new Set(["username", "password"])
+                : undefined
+            }
             onPatch={onPatchFlat}
           />
         ) : (

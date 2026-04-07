@@ -25,7 +25,8 @@ export const adbcStudioEngine: StudioEngineModule = {
       {
         key: "uri",
         label: "URI",
-        description: "Driver-specific connection URI.",
+        description:
+          "Driver-specific connection URI. For PostgreSQL ADBC, put user and password in the URI (e.g. postgresql://user:pass@localhost:5433/postgres).",
         fieldType: "text",
         required: true,
         example: "http://trino-host:8080",

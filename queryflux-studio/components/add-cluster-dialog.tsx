@@ -18,6 +18,7 @@ import {
 import {
   buildValidateShape,
   flatToPersistedConfig,
+  isAdbcPostgresqlDriver,
   toUpsertBody,
   validateEngineSpecific,
 } from "@/lib/cluster-persist-form";
@@ -532,6 +533,13 @@ export function AddClusterDialog({ open, onClose }: Props) {
                                   ? ["driver", "flightSqlEngine"]
                                   : ["driver"],
                               )
+                            : undefined
+                        }
+                        hiddenFieldKeys={
+                          selected.engineKey === "adbc" &&
+                          (selected.adbcDriver === "postgresql" ||
+                            isAdbcPostgresqlDriver(flat))
+                            ? new Set(["username", "password"])
                             : undefined
                         }
                         onPatch={(patch) =>

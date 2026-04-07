@@ -449,7 +449,7 @@ impl SyncAdapter for AdbcAdapter {
         match &self.engine_type {
             EngineType::Trino => {
                 let pool = self.pool.clone();
-                let sql = "SELECT count(*) FROM system.runtime.queries WHERE state = 'RUNNING'"
+                let sql = "SELECT count(*) - 1 FROM system.runtime.queries WHERE state = 'RUNNING'"
                     .to_string();
                 tokio::task::spawn_blocking(move || {
                     let mut conn = pool.get().ok()?;

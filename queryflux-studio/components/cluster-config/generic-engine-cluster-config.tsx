@@ -12,16 +12,21 @@ export function GenericEngineClusterConfig({
   flat,
   onPatch,
   readOnlyFieldKeys,
+  hiddenFieldKeys,
 }: {
   descriptor: EngineDescriptor;
   flat: FlatClusterConfig;
   onPatch: PatchClusterConfig;
   /** Field keys that cannot be changed (e.g. driver after ADBC variant pick). */
   readOnlyFieldKeys?: ReadonlySet<string>;
+  /** Field keys omitted from the form (e.g. PostgreSQL ADBC auth in URI). */
+  hiddenFieldKeys?: ReadonlySet<string>;
 }) {
   return (
     <div className="space-y-4">
-      {descriptor.configFields.map((field) => (
+      {descriptor.configFields
+        .filter((field) => !hiddenFieldKeys?.has(field.key))
+        .map((field) => (
         <ConfigFieldRow
           key={field.key}
           field={field}

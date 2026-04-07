@@ -81,6 +81,11 @@ function stripStudioDbKwargsMeta(
   return Object.keys(next).length ? next : undefined;
 }
 
+/** PostgreSQL ADBC uses userinfo in the URI; separate username/password fields are not used. */
+export function isAdbcPostgresqlDriver(flat: Record<string, string>): boolean {
+  return flat.driver?.trim().toLowerCase() === "postgresql";
+}
+
 /** Positive integer only; rejects floats, NaN, and non-integer `number` values. */
 export function parsePositiveIntString(s: string | undefined): number | undefined {
   if (s === undefined) return undefined;
@@ -144,8 +149,10 @@ export function flatToPersistedConfig(flat: Record<string, string>): Record<stri
   }
   if (flat.driver?.trim()) cfg.driver = flat.driver.trim();
   if (flat.uri?.trim()) cfg.uri = flat.uri.trim();
-  if (flat.username) cfg.username = flat.username;
-  if (flat.password) cfg.password = flat.password;
+  if (!isAdbcPostgresqlDriver(flat)) {
+    if (flat.username) cfg.username = flat.username;
+    if (flat.password) cfg.password = flat.password;
+  }
   const dbKwargs = stripStudioDbKwargsMeta(parseJsonObjectString(flat.dbKwargs));
   if (dbKwargs !== undefined) cfg.dbKwargs = dbKwargs;
   if (flat.flightSqlEngine?.trim()) cfg.flightSqlEngine = flat.flightSqlEngine.trim();
@@ -193,9 +200,14 @@ export function mergeClusterConfigFromFlat(
   }
   setOrDel("driver", flat.driver, "driver");
   setOrDel("uri", flat.uri, "uri");
-  setOrDel("username", flat.username, "username");
-  if (flat.password !== undefined && flat.password !== "") {
-    out.password = flat.password;
+  if (!isAdbcPostgresqlDriver(flat)) {
+    setOrDel("username", flat.username, "username");
+    if (flat.password !== undefined && flat.password !== "") {
+      out.password = flat.password;
+    }
+  } else {
+    delete out.username;
+    delete out.password;
   }
   if (flat.dbKwargs !== undefined) {
     const t = flat.dbKwargs.trim();
@@ -273,8 +285,10 @@ export function buildValidateShape(flat: Record<string, string>): Record<string,
   if (flat.region) o.region = flat.region;
   if (flat.driver) o.driver = flat.driver;
   if (flat.uri) o.uri = flat.uri;
-  if (flat.username) o.username = flat.username;
-  if (flat.password) o.password = flat.password;
+  if (!isAdbcPostgresqlDriver(flat)) {
+    if (flat.username) o.username = flat.username;
+    if (flat.password) o.password = flat.password;
+  }
   const dbKwargs = stripStudioDbKwargsMeta(parseJsonObjectString(flat.dbKwargs));
   if (dbKwargs !== undefined) o.dbKwargs = dbKwargs;
   if (flat.flightSqlEngine) o.flightSqlEngine = flat.flightSqlEngine;

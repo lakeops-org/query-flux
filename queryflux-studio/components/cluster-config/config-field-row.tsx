@@ -209,6 +209,12 @@ export function ConfigFieldRow({
         ? "url"
         : "text";
 
+  const textPlaceholder =
+    field.key === "uri" &&
+    (flat?.driver ?? "").trim().toLowerCase() === "postgresql"
+      ? "postgresql://user:pass@localhost:5433/postgres"
+      : field.example;
+
   return (
     <div>
       <label
@@ -223,7 +229,7 @@ export function ConfigFieldRow({
         type={inputType}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={field.example}
+        placeholder={textPlaceholder}
         className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400"
         autoComplete={field.fieldType === "secret" ? "new-password" : "off"}
       />
