@@ -614,7 +614,9 @@ mod tests {
             "uri": "mysql://sr:9030"
         });
         assert_eq!(
-            AdbcConfig::from_json(&sr, "c").expect("parse").engine_type(),
+            AdbcConfig::from_json(&sr, "c")
+                .expect("parse")
+                .engine_type(),
             EngineType::StarRocks
         );
         let ch = serde_json::json!({
@@ -622,7 +624,9 @@ mod tests {
             "uri": "http://localhost:8123"
         });
         assert_eq!(
-            AdbcConfig::from_json(&ch, "c").expect("parse").engine_type(),
+            AdbcConfig::from_json(&ch, "c")
+                .expect("parse")
+                .engine_type(),
             EngineType::ClickHouse
         );
     }

@@ -126,11 +126,7 @@ async fn trino_adbc_select_multi_row() {
     let Some(adapter) = trino_adbc_adapter_ready().await else {
         return;
     };
-    let n = count_arrow_rows(
-        &adapter,
-        "SELECT v FROM (VALUES (1), (2), (3)) t(v)",
-    )
-    .await;
+    let n = count_arrow_rows(&adapter, "SELECT v FROM (VALUES (1), (2), (3)) t(v)").await;
     assert_eq!(n, 3, "expected three rows from VALUES");
 }
 
@@ -140,10 +136,7 @@ async fn trino_adbc_list_catalogs_includes_system() {
     let Some(adapter) = trino_adbc_adapter_ready().await else {
         return;
     };
-    let catalogs = adapter
-        .list_catalogs()
-        .await
-        .expect("list_catalogs");
+    let catalogs = adapter.list_catalogs().await.expect("list_catalogs");
     assert!(
         catalogs.iter().any(|c| c == "system"),
         "expected catalog 'system', got {catalogs:?}"
