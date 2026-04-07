@@ -43,3 +43,6 @@ tracing-subscriber = { workspace = true }
 # Async trait
 async-trait = { workspace = true }
 
+# ADBC Trino integration test (StreamExt)
+futures = { workspace = true }
+

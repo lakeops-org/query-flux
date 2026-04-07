@@ -3616,6 +3616,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "futures",
  "queryflux-auth",
  "queryflux-cluster-manager",
  "queryflux-core",

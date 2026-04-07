@@ -524,3 +524,218 @@ impl EngineAdapterFactory for AdbcFactory {
         )?)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AdbcConfig;
+    use crate::EngineConfigParseable;
+    use queryflux_core::query::EngineType;
+
+    #[test]
+    fn trino_driver_maps_to_trino_engine_type() {
+        let json = serde_json::json!({
+            "driver": "trino",
+            "uri": "http://localhost:8080",
+            "poolSize": 2
+        });
+        let cfg = AdbcConfig::from_json(&json, "cluster-a").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Trino);
+        assert_eq!(cfg.driver, "trino");
+        assert_eq!(cfg.uri, "http://localhost:8080");
+        assert_eq!(cfg.pool_size, 2);
+    }
+
+    #[test]
+    fn trino_config_accepts_db_kwargs() {
+        let json = serde_json::json!({
+            "driver": "trino",
+            "uri": "http://trino:8080",
+            "dbKwargs": { "session_properties": "query_max_memory=1GB" }
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Trino);
+        assert_eq!(cfg.db_kwargs.len(), 1);
+        assert_eq!(cfg.db_kwargs[0].0, "session_properties");
+    }
+
+    #[test]
+    fn missing_driver_field_errors() {
+        let json = serde_json::json!({ "uri": "http://localhost:8080" });
+        match AdbcConfig::from_json(&json, "x") {
+            Err(e) => assert!(e.to_string().contains("driver"), "unexpected: {e}"),
+            Ok(_) => panic!("expected parse error when driver is missing"),
+        }
+    }
+
+    #[test]
+    fn missing_uri_field_errors() {
+        let json = serde_json::json!({ "driver": "trino" });
+        match AdbcConfig::from_json(&json, "c") {
+            Err(e) => assert!(e.to_string().contains("uri"), "unexpected: {e}"),
+            Ok(_) => panic!("expected parse error when uri is missing"),
+        }
+    }
+
+    #[test]
+    fn default_pool_size_when_omitted() {
+        let json = serde_json::json!({
+            "driver": "duckdb",
+            "uri": "duckdb:///tmp/x.db"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.pool_size, 4);
+    }
+
+    #[test]
+    fn pool_size_zero_clamps_to_one() {
+        let json = serde_json::json!({
+            "driver": "trino",
+            "uri": "http://localhost:8080",
+            "poolSize": 0
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.pool_size, 1);
+    }
+
+    #[test]
+    fn duckdb_driver_maps_to_duckdb_engine_type() {
+        let json = serde_json::json!({
+            "driver": "duckdb",
+            "uri": "duckdb:///tmp/q.db"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::DuckDb);
+    }
+
+    #[test]
+    fn starrocks_and_clickhouse_map_to_engine_types() {
+        let sr = serde_json::json!({
+            "driver": "starrocks",
+            "uri": "mysql://sr:9030"
+        });
+        assert_eq!(
+            AdbcConfig::from_json(&sr, "c").expect("parse").engine_type(),
+            EngineType::StarRocks
+        );
+        let ch = serde_json::json!({
+            "driver": "clickhouse",
+            "uri": "http://localhost:8123"
+        });
+        assert_eq!(
+            AdbcConfig::from_json(&ch, "c").expect("parse").engine_type(),
+            EngineType::ClickHouse
+        );
+    }
+
+    #[test]
+    fn unknown_driver_maps_to_adbc_engine_type() {
+        let json = serde_json::json!({
+            "driver": "snowflake",
+            "uri": "snowflake://acct/db"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Adbc);
+    }
+
+    #[test]
+    fn mysql_driver_maps_to_adbc_engine_type() {
+        let json = serde_json::json!({
+            "driver": "mysql",
+            "uri": "mysql://localhost:3306/db"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Adbc);
+    }
+
+    #[test]
+    fn flightsql_without_override_maps_to_adbc() {
+        let json = serde_json::json!({
+            "driver": "flightsql",
+            "uri": "grpc://localhost:31337"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Adbc);
+        assert!(cfg.flight_sql_engine.is_none());
+    }
+
+    #[test]
+    fn flightsql_with_trino_override_maps_to_trino() {
+        let json = serde_json::json!({
+            "driver": "flightsql",
+            "uri": "grpc://localhost:31337",
+            "flightSqlEngine": "trino"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Trino);
+    }
+
+    #[test]
+    fn flight_sql_engine_override_is_case_insensitive() {
+        let json = serde_json::json!({
+            "driver": "flightsql",
+            "uri": "grpc://localhost:31337",
+            "flightSqlEngine": "StarRocks"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::StarRocks);
+    }
+
+    #[test]
+    fn unknown_flight_sql_engine_string_is_ignored() {
+        let json = serde_json::json!({
+            "driver": "flightsql",
+            "uri": "grpc://localhost:31337",
+            "flightSqlEngine": "not-a-known-engine"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Adbc);
+    }
+
+    #[test]
+    fn username_and_password_parsed() {
+        let json = serde_json::json!({
+            "driver": "trino",
+            "uri": "http://localhost:8080",
+            "username": "alice",
+            "password": "secret"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.username.as_deref(), Some("alice"));
+        assert_eq!(cfg.password.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn db_kwargs_only_includes_string_values() {
+        let json = serde_json::json!({
+            "driver": "trino",
+            "uri": "http://localhost:8080",
+            "dbKwargs": {
+                "a": "ok",
+                "ignored_number": 42,
+                "ignored_bool": true
+            }
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.db_kwargs.len(), 1);
+        assert_eq!(cfg.db_kwargs[0].0, "a");
+        assert_eq!(cfg.db_kwargs[0].1, "ok");
+    }
+
+    #[test]
+    fn non_object_db_kwargs_yields_empty() {
+        let json = serde_json::json!({
+            "driver": "trino",
+            "uri": "http://localhost:8080",
+            "dbKwargs": "not-an-object"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert!(cfg.db_kwargs.is_empty());
+    }
+
+    #[test]
+    fn adbc_descriptor_reports_adbc_engine_key() {
+        let d = super::AdbcAdapter::descriptor();
+        assert_eq!(d.engine_key, "adbc");
+        assert!(d.implemented);
+    }
+}
