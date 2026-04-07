@@ -89,6 +89,25 @@ impl AdbcConfig {
     }
 }
 
+/// Map a `dbKwargs` JSON value to the string passed to the ADBC driver. Scalars are preserved;
+/// arrays and objects are rejected so misconfiguration is visible instead of silently dropped.
+fn db_kwarg_value_to_string(
+    cluster_name: &str,
+    key: &str,
+    v: &serde_json::Value,
+) -> Result<String> {
+    match v {
+        serde_json::Value::String(s) => Ok(s.clone()),
+        serde_json::Value::Number(_) | serde_json::Value::Bool(_) => Ok(v.to_string()),
+        serde_json::Value::Null => Ok("null".to_string()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Err(
+            QueryFluxError::Engine(format!(
+                "cluster '{cluster_name}': dbKwargs['{key}'] must be a string, number, boolean, or null (arrays and objects are not supported)"
+            )),
+        ),
+    }
+}
+
 impl crate::EngineConfigParseable for AdbcConfig {
     fn from_json(json: &serde_json::Value, cluster_name: &str) -> crate::Result<Self> {
         let driver = json
@@ -121,10 +140,14 @@ impl crate::EngineConfigParseable for AdbcConfig {
             .map(str::to_string);
 
         let db_kwargs = match json.get("dbKwargs") {
-            Some(serde_json::Value::Object(map)) => map
-                .iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect(),
+            Some(serde_json::Value::Object(map)) => {
+                let mut out = Vec::with_capacity(map.len());
+                for (k, v) in map {
+                    let s = db_kwarg_value_to_string(cluster_name, k, v)?;
+                    out.push((k.clone(), s));
+                }
+                out
+            }
             _ => Vec::new(),
         };
 
@@ -740,20 +763,37 @@ mod tests {
     }
 
     #[test]
-    fn db_kwargs_only_includes_string_values() {
+    fn db_kwargs_serializes_scalar_values() {
         let json = serde_json::json!({
             "driver": "trino",
             "uri": "http://localhost:8080",
             "dbKwargs": {
                 "a": "ok",
-                "ignored_number": 42,
-                "ignored_bool": true
+                "n": 42,
+                "flag": true,
+                "empty": null
             }
         });
         let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
-        assert_eq!(cfg.db_kwargs.len(), 1);
-        assert_eq!(cfg.db_kwargs[0].0, "a");
-        assert_eq!(cfg.db_kwargs[0].1, "ok");
+        assert_eq!(cfg.db_kwargs.len(), 4);
+        let m: std::collections::HashMap<_, _> = cfg.db_kwargs.into_iter().collect();
+        assert_eq!(m.get("a").map(String::as_str), Some("ok"));
+        assert_eq!(m.get("n").map(String::as_str), Some("42"));
+        assert_eq!(m.get("flag").map(String::as_str), Some("true"));
+        assert_eq!(m.get("empty").map(String::as_str), Some("null"));
+    }
+
+    #[test]
+    fn db_kwargs_rejects_nested_array() {
+        let json = serde_json::json!({
+            "driver": "trino",
+            "uri": "http://localhost:8080",
+            "dbKwargs": { "bad": [1, 2] }
+        });
+        match AdbcConfig::from_json(&json, "c") {
+            Err(e) => assert!(e.to_string().contains("dbKwargs['bad']"), "unexpected: {e}"),
+            Ok(_) => panic!("expected error for array dbKwargs value"),
+        }
     }
 
     #[test]

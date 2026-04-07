@@ -217,6 +217,42 @@ impl TrinoAdapter {
         }
         builder
     }
+
+    /// Best-effort: `DELETE` Trino `nextUri` to cancel an in-flight query.
+    async fn cancel_at_next_uri(&self, next_uri: Option<&str>) {
+        let Some(uri) = next_uri else {
+            return;
+        };
+        match self
+            .apply_cluster_auth(self.http_client.delete(uri))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                debug!(
+                    cluster = %self.cluster_name,
+                    uri = %uri,
+                    "Trino query cancelled (DELETE nextUri)"
+                );
+            }
+            Ok(resp) => {
+                debug!(
+                    cluster = %self.cluster_name,
+                    status = %resp.status(),
+                    uri = %uri,
+                    "Trino cancel DELETE non-success (ignored)"
+                );
+            }
+            Err(e) => {
+                debug!(
+                    cluster = %self.cluster_name,
+                    uri = %uri,
+                    error = %e,
+                    "Trino cancel DELETE failed (ignored)"
+                );
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -412,14 +448,20 @@ impl AsyncAdapter for TrinoAdapter {
                     Ok(Some(batch)) => {
                         sent_any = true;
                         if batch_tx.send(Ok(batch)).await.is_err() {
+                            adapter.cancel_at_next_uri(next_uri.as_deref()).await;
                             return;
                         }
                     }
                     Ok(None) => {}
                     Err(e) => {
+                        adapter.cancel_at_next_uri(next_uri.as_deref()).await;
                         let _ = batch_tx.send(Err(e)).await;
                         return;
                     }
+                }
+                // Fast queries finish on the POST with no nextUri — stats only appear here, not in the poll loop.
+                if next_uri.is_none() {
+                    last_engine_stats = adapter.terminal_stats_from_body(body);
                 }
             }
 
@@ -430,6 +472,7 @@ impl AsyncAdapter for TrinoAdapter {
                     .await;
                 match result {
                     Err(e) => {
+                        adapter.cancel_at_next_uri(next_uri.as_deref()).await;
                         let _ = batch_tx.send(Err(e)).await;
                         return;
                     }
@@ -446,17 +489,20 @@ impl AsyncAdapter for TrinoAdapter {
                             Ok(Some(batch)) => {
                                 sent_any = true;
                                 if batch_tx.send(Ok(batch)).await.is_err() {
+                                    adapter.cancel_at_next_uri(next_uri.as_deref()).await;
                                     return;
                                 }
                             }
                             Ok(None) => {}
                             Err(e) => {
+                                adapter.cancel_at_next_uri(next_uri.as_deref()).await;
                                 let _ = batch_tx.send(Err(e)).await;
                                 return;
                             }
                         }
                     }
                     Ok(QueryPollResult::Failed { message, .. }) => {
+                        adapter.cancel_at_next_uri(next_uri.as_deref()).await;
                         let _ = batch_tx.send(Err(QueryFluxError::Engine(message))).await;
                         return;
                     }
