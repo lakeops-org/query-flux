@@ -8,6 +8,7 @@ use queryflux_core::config::{ClusterConfig, EngineConfig};
 use queryflux_core::engine_registry::EngineDescriptor;
 use queryflux_core::error::QueryFluxError;
 use queryflux_core::query::{ClusterGroupName, ClusterName};
+use queryflux_engine_adapters::adbc::AdbcFactory;
 use queryflux_engine_adapters::athena::{AthenaAdapter, AthenaConfig, AthenaFactory};
 use queryflux_engine_adapters::duckdb::http::{
     DuckDbHttpAdapter, DuckDbHttpConfig, DuckDbHttpFactory,
@@ -15,7 +16,7 @@ use queryflux_engine_adapters::duckdb::http::{
 use queryflux_engine_adapters::duckdb::{DuckDbAdapter, DuckDbConfig, DuckDbFactory};
 use queryflux_engine_adapters::starrocks::{StarRocksAdapter, StarRocksConfig, StarRocksFactory};
 use queryflux_engine_adapters::trino::{TrinoAdapter, TrinoConfig, TrinoFactory};
-use queryflux_engine_adapters::{EngineAdapterFactory, EngineAdapterTrait, EngineConfigParseable};
+use queryflux_engine_adapters::{AdapterKind, EngineAdapterFactory, EngineConfigParseable};
 
 /// All registered engine adapter factories.
 ///
@@ -28,6 +29,7 @@ pub fn all_factories() -> Vec<Box<dyn EngineAdapterFactory>> {
         Box::new(DuckDbHttpFactory),
         Box::new(StarRocksFactory),
         Box::new(AthenaFactory),
+        Box::new(AdbcFactory),
     ]
 }
 
@@ -49,7 +51,7 @@ pub async fn build_adapter_from_record(
     group: ClusterGroupName,
     engine_key: &str,
     config_json: &serde_json::Value,
-) -> Result<Arc<dyn EngineAdapterTrait>> {
+) -> Result<AdapterKind> {
     let factories = all_factories();
     let factory = factories
         .iter()
@@ -70,51 +72,58 @@ pub async fn build_adapter(
     placeholder_group: ClusterGroupName,
     cluster_cfg: &ClusterConfig,
     cluster_name_str: &str,
-) -> Result<Arc<dyn EngineAdapterTrait>> {
+) -> Result<AdapterKind> {
     let engine = cluster_cfg.engine.as_ref().context(format!(
         "cluster '{cluster_name_str}' missing required 'engine' field"
     ))?;
 
-    let adapter: Arc<dyn EngineAdapterTrait> = match engine {
+    let adapter: AdapterKind = match engine {
         EngineConfig::Trino => {
             let config = TrinoConfig::from_cluster_config(cluster_cfg, cluster_name_str)
                 .map_err(map_qf_err)?;
-            Arc::new(TrinoAdapter::new(cluster_name, placeholder_group, config))
+            AdapterKind::Async(Arc::new(TrinoAdapter::new(
+                cluster_name,
+                placeholder_group,
+                config,
+            )))
         }
         EngineConfig::DuckDb => {
             let config = DuckDbConfig::from_cluster_config(cluster_cfg, cluster_name_str)
                 .map_err(map_qf_err)?;
-            Arc::new(
+            AdapterKind::Sync(Arc::new(
                 DuckDbAdapter::new(cluster_name, placeholder_group, config).map_err(map_qf_err)?,
-            )
+            ))
         }
         EngineConfig::DuckDbHttp => {
             let config = DuckDbHttpConfig::from_cluster_config(cluster_cfg, cluster_name_str)
                 .map_err(map_qf_err)?;
-            Arc::new(
+            AdapterKind::Sync(Arc::new(
                 DuckDbHttpAdapter::new(cluster_name, placeholder_group, config)
                     .map_err(map_qf_err)?,
-            )
+            ))
         }
         EngineConfig::StarRocks => {
             let config = StarRocksConfig::from_cluster_config(cluster_cfg, cluster_name_str)
                 .map_err(map_qf_err)?;
-            Arc::new(
+            AdapterKind::Sync(Arc::new(
                 StarRocksAdapter::new(cluster_name, placeholder_group, config)
                     .map_err(map_qf_err)?,
-            )
+            ))
         }
         EngineConfig::Athena => {
             let config = AthenaConfig::from_cluster_config(cluster_cfg, cluster_name_str)
                 .map_err(map_qf_err)?;
-            Arc::new(
+            AdapterKind::Async(Arc::new(
                 AthenaAdapter::new(cluster_name, placeholder_group, config)
                     .await
                     .map_err(map_qf_err)?,
-            )
+            ))
         }
         EngineConfig::ClickHouse => {
             anyhow::bail!("Engine ClickHouse not yet implemented")
+        }
+        EngineConfig::Adbc => {
+            anyhow::bail!("ADBC clusters must be created via the admin API, not YAML config")
         }
     };
 

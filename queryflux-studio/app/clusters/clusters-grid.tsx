@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ClusterConfigRecord, ClusterDisplayRow } from "@/lib/api-types";
 import {
   deleteClusterConfig,
@@ -88,8 +88,19 @@ function clusterRowKey(c: ClusterDisplayRow, index: number): string {
 // Grid
 // ---------------------------------------------------------------------------
 
-export function ClustersGrid({ clusters }: { clusters: ClusterDisplayRow[] }) {
+export function ClustersGrid({
+  clusters,
+  clusterConfigs,
+}: {
+  clusters: ClusterDisplayRow[];
+  clusterConfigs: ClusterConfigRecord[];
+}) {
   const [selected, setSelected] = useState<ClusterDisplayRow | null>(null);
+
+  const configByName = useMemo(
+    () => new Map(clusterConfigs.map((r) => [r.name, r])),
+    [clusterConfigs],
+  );
 
   if (clusters.length === 0) {
     return (
@@ -113,6 +124,7 @@ export function ClustersGrid({ clusters }: { clusters: ClusterDisplayRow[] }) {
           <ClusterCard
             key={clusterRowKey(c, i)}
             cluster={c}
+            clusterConfig={configByName.get(c.cluster_name)}
             onClick={() => setSelected(c)}
           />
         ))}
@@ -121,6 +133,7 @@ export function ClustersGrid({ clusters }: { clusters: ClusterDisplayRow[] }) {
       {selected && (
         <ClusterDialog
           cluster={selected}
+          clusterConfigHint={configByName.get(selected.cluster_name)}
           onClose={() => setSelected(null)}
           onUpdated={(updated) => setSelected(updated)}
         />
@@ -135,9 +148,11 @@ export function ClustersGrid({ clusters }: { clusters: ClusterDisplayRow[] }) {
 
 function ClusterCard({
   cluster: c,
+  clusterConfig,
   onClick,
 }: {
   cluster: ClusterDisplayRow;
+  clusterConfig?: ClusterConfigRecord;
   onClick: () => void;
 }) {
   const overlay = clusterDbOverlay(c);
@@ -214,7 +229,7 @@ function ClusterCard({
           </div>
         </div>
         <div className="mt-2">
-          <EngineBadge engine={c.engine_type} />
+          <EngineBadge engine={c.engine_type} clusterConfig={clusterConfig} />
         </div>
       </div>
 
@@ -289,10 +304,13 @@ function ClusterCard({
 
 function ClusterDialog({
   cluster: c,
+  clusterConfigHint,
   onClose,
   onUpdated,
 }: {
   cluster: ClusterDisplayRow;
+  /** From server merge; used for badge until GET config returns. */
+  clusterConfigHint?: ClusterConfigRecord;
   onClose: () => void;
   onUpdated: (updated: ClusterDisplayRow) => void;
 }) {
@@ -650,7 +668,14 @@ function ClusterDialog({
                 Disabled
               </span>
             )}
-            <EngineBadge engine={c.engine_type} />
+            <EngineBadge
+              engine={c.engine_type}
+              clusterConfig={
+                persistStatus === "ok" && persisted
+                  ? persisted
+                  : clusterConfigHint
+              }
+            />
             {descriptor && (
               <ConnectionTypeBadge type={descriptor.connectionType} />
             )}
@@ -882,6 +907,12 @@ function ClusterDialog({
 const PERSISTED_CONFIG_ROW_ORDER: Array<{ key: string; label: string }> = [
   { key: "endpoint", label: "Endpoint" },
   { key: "databasePath", label: "Database path" },
+  { key: "driver", label: "ADBC driver" },
+  { key: "uri", label: "Driver URI" },
+  { key: "username", label: "Username" },
+  { key: "password", label: "Password" },
+  { key: "dbKwargs", label: "Driver options" },
+  { key: "poolSize", label: "Pool size" },
   { key: "region", label: "AWS region" },
   { key: "s3OutputLocation", label: "S3 output location" },
   { key: "workgroup", label: "Workgroup" },
@@ -895,7 +926,7 @@ const PERSISTED_CONFIG_ROW_ORDER: Array<{ key: string; label: string }> = [
 
 function formatPersistedConfigValue(key: string, raw: unknown): string {
   if (raw === undefined || raw === null) return "—";
-  if (key === "authPassword" || key === "authToken") {
+  if (key === "authPassword" || key === "authToken" || key === "password") {
     const s = typeof raw === "string" ? raw : String(raw);
     return s ? "••••••••" : "—";
   }
@@ -1007,6 +1038,8 @@ function EngineConfigView({
                 label={
                   connectionType === "mysqlWire"
                     ? "MySQL endpoint"
+                    : connectionType === "driver"
+                      ? "Driver URI"
                     : "HTTP endpoint"
                 }
                 value={c.endpoint ?? "—"}
@@ -1219,6 +1252,11 @@ function ConnectionTypeBadge({ type }: { type: ConnectionType }) {
       label: "In-process",
       icon: <Zap size={10} />,
       className: "text-violet-600 bg-violet-50 border-violet-200",
+    },
+    driver: {
+      label: "ADBC driver",
+      icon: <Database size={10} />,
+      className: "text-indigo-600 bg-indigo-50 border-indigo-200",
     },
   };
 

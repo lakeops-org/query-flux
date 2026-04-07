@@ -103,6 +103,29 @@ html[data-theme='dark'] .sectionSub {
   pointer-events: none;
 }
 
+.cardBadge {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  margin: 0 0 0.85rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: #7c3aed;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.1) 0%, rgba(192, 38, 211, 0.07) 100%);
+  border: 1px solid rgba(124, 58, 237, 0.2);
+  border-radius: 6px;
+  padding: 0.2em 0.55em;
+  line-height: 1.4;
+}
+
+html[data-theme='dark'] .cardBadge {
+  color: #c4b5fd;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.18) 0%, rgba(234, 88, 12, 0.06) 100%);
+  border-color: rgba(167, 139, 250, 0.25);
+}
+
 .cardTitle {
   position: relative;
   z-index: 1;

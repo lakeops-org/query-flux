@@ -36,7 +36,19 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 use utoipa::{OpenApi, ToSchema};
 
+use std::future::Future;
+use std::pin::Pin;
+
 use crate::{state::LiveConfig, FrontendListenerTrait};
+
+/// Callback type for testing a cluster config without persisting it.
+/// Receives `(engine_key, config_json)` → returns `Ok(true)` if healthy, `Ok(false)` if
+/// adapter built but health check failed, `Err(msg)` if adapter construction failed.
+pub type TestClusterFn = Arc<
+    dyn Fn(String, serde_json::Value) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send>>
+        + Send
+        + Sync,
+>;
 
 // ---------------------------------------------------------------------------
 // OpenAPI spec
@@ -413,6 +425,8 @@ struct AdminState {
     frontends_status: FrontendsStatusDto,
     /// Admin API credential manager — validates Basic auth and handles password changes.
     admin_creds: Arc<AdminCredentialsManager>,
+    /// Test a cluster config (build adapter + health_check) without persisting it.
+    test_cluster_fn: TestClusterFn,
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +444,7 @@ pub struct AdminFrontend {
     config_reload_notify: Arc<tokio::sync::Notify>,
     frontends_status: FrontendsStatusDto,
     admin_creds: Arc<AdminCredentialsManager>,
+    test_cluster_fn: TestClusterFn,
 }
 
 impl AdminFrontend {
@@ -445,6 +460,7 @@ impl AdminFrontend {
         config_reload_notify: Arc<tokio::sync::Notify>,
         frontends_status: FrontendsStatusDto,
         admin_creds: Arc<AdminCredentialsManager>,
+        test_cluster_fn: TestClusterFn,
     ) -> Self {
         Self {
             prometheus,
@@ -457,6 +473,7 @@ impl AdminFrontend {
             config_reload_notify,
             frontends_status,
             admin_creds,
+            test_cluster_fn,
         }
     }
 
@@ -471,6 +488,7 @@ impl AdminFrontend {
             config_reload_notify: self.config_reload_notify.clone(),
             frontends_status: self.frontends_status.clone(),
             admin_creds: self.admin_creds.clone(),
+            test_cluster_fn: self.test_cluster_fn.clone(),
         });
 
         let spec_json =
@@ -510,6 +528,10 @@ impl AdminFrontend {
             .route("/admin/engine-registry", get(engine_registry_handler))
             // Persisted cluster config CRUD (requires Postgres persistence)
             .route("/admin/config/clusters", get(list_cluster_configs_handler))
+            .route(
+                "/admin/config/clusters/test",
+                post(test_cluster_config_handler),
+            )
             .route(
                 "/admin/config/clusters/{name}",
                 get(get_cluster_config_handler)
@@ -1076,6 +1098,42 @@ async fn delete_cluster_config_handler(
         }
         Ok(false) => (StatusCode::NOT_FOUND, "Cluster config not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TestClusterConfigRequest {
+    engine_key: String,
+    config: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+struct TestClusterConfigResponse {
+    ok: bool,
+    message: String,
+}
+
+async fn test_cluster_config_handler(
+    State(state): State<Arc<AdminState>>,
+    Json(body): Json<TestClusterConfigRequest>,
+) -> impl IntoResponse {
+    match (state.test_cluster_fn)(body.engine_key, body.config).await {
+        Ok(true) => Json(TestClusterConfigResponse {
+            ok: true,
+            message: "Connection successful".to_string(),
+        })
+        .into_response(),
+        Ok(false) => Json(TestClusterConfigResponse {
+            ok: false,
+            message: "Adapter built but health check failed — check credentials and connectivity"
+                .to_string(),
+        })
+        .into_response(),
+        Err(e) => Json(TestClusterConfigResponse {
+            ok: false,
+            message: e.to_string(),
+        })
+        .into_response(),
     }
 }
 

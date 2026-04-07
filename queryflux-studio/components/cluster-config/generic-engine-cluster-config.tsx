@@ -11,10 +11,13 @@ export function GenericEngineClusterConfig({
   descriptor,
   flat,
   onPatch,
+  readOnlyFieldKeys,
 }: {
   descriptor: EngineDescriptor;
   flat: FlatClusterConfig;
   onPatch: PatchClusterConfig;
+  /** Field keys that cannot be changed (e.g. driver after ADBC variant pick). */
+  readOnlyFieldKeys?: ReadonlySet<string>;
 }) {
   return (
     <div className="space-y-4">
@@ -24,6 +27,8 @@ export function GenericEngineClusterConfig({
           field={field}
           value={flat[field.key] ?? ""}
           supportedAuth={descriptor.supportedAuth}
+          flat={flat}
+          readOnly={readOnlyFieldKeys?.has(field.key) ?? false}
           onChange={(v) => onPatch({ [field.key]: v })}
         />
       ))}

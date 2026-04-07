@@ -156,7 +156,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/queryflux-unified/Dockerfile
+          file: docker/queryflux/Dockerfile
+          target: runtime-unified
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           build-args: |

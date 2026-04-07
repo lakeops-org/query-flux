@@ -9,8 +9,7 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use aws_sdk_athena::types::{QueryExecutionContext, QueryExecutionState, ResultConfiguration};
-use futures::stream;
+use aws_sdk_athena::types::QueryExecutionState;
 use queryflux_core::{
     catalog::TableSchema,
     config::{ClusterAuth, ClusterConfig},
@@ -23,7 +22,7 @@ use queryflux_core::{
 };
 use tracing::warn;
 
-use crate::EngineAdapterTrait;
+use crate::{AdapterKind, AsyncAdapter};
 
 /// Parsed and validated configuration for an Athena cluster.
 pub struct AthenaConfig {
@@ -354,7 +353,7 @@ impl AthenaAdapter {
 }
 
 #[async_trait]
-impl EngineAdapterTrait for AthenaAdapter {
+impl AsyncAdapter for AthenaAdapter {
     async fn submit_query(
         &self,
         _sql: &str,
@@ -387,6 +386,78 @@ impl EngineAdapterTrait for AthenaAdapter {
         Ok(())
     }
 
+    async fn execute_as_arrow(
+        &self,
+        sql: &str,
+        session: &queryflux_core::session::SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
+        _tags: &queryflux_core::tags::QueryTags,
+    ) -> crate::Result<crate::SyncExecution> {
+        use crate::SyncExecution;
+        use futures::stream;
+
+        let ctx = aws_sdk_athena::types::QueryExecutionContext::builder()
+            .catalog(&self.catalog)
+            .set_database(session.database().map(|s| s.to_string()))
+            .build();
+        let result_cfg = aws_sdk_athena::types::ResultConfiguration::builder()
+            .output_location(&self.s3_output_location)
+            .build();
+
+        let resp = self
+            .client
+            .start_query_execution()
+            .query_string(sql)
+            .query_execution_context(ctx)
+            .result_configuration(result_cfg)
+            .work_group(&self.workgroup)
+            .send()
+            .await
+            .map_err(|e| {
+                QueryFluxError::Engine(format!("Athena StartQueryExecution: {}", aws_err(&e)))
+            })?;
+
+        let execution_id = resp
+            .query_execution_id()
+            .ok_or_else(|| QueryFluxError::Engine("Athena returned no execution ID".to_string()))?
+            .to_string();
+
+        self.wait_for_completion(&execution_id).await?;
+
+        let (col_names, col_types, rows) = self.fetch_all_results(&execution_id).await?;
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        if col_names.is_empty() {
+            let _ = tx.send(None);
+            return Ok(SyncExecution {
+                stream: Box::pin(stream::empty()),
+                stats: rx,
+            });
+        }
+
+        let fields: Vec<Field> = col_names
+            .iter()
+            .zip(col_types.iter())
+            .map(|(name, ty)| Field::new(name, athena_type_to_arrow(ty), true))
+            .collect();
+        let schema = Arc::new(ArrowSchema::new(fields));
+
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
+        for (col_idx, field) in schema.fields().iter().enumerate() {
+            columns.push(build_column(field.data_type(), &rows, col_idx)?);
+        }
+
+        let batch = RecordBatch::try_new(schema, columns)
+            .map_err(|e| QueryFluxError::Engine(format!("Athena RecordBatch failed: {e}")))?;
+
+        let _ = tx.send(None);
+        Ok(SyncExecution {
+            stream: Box::pin(stream::iter(std::iter::once(Ok(batch)))),
+            stats: rx,
+        })
+    }
+
     async fn health_check(&self) -> bool {
         match self
             .client
@@ -409,78 +480,6 @@ impl EngineAdapterTrait for AthenaAdapter {
 
     fn engine_type(&self) -> EngineType {
         EngineType::Athena
-    }
-
-    fn supports_async(&self) -> bool {
-        false
-    }
-
-    async fn execute_as_arrow(
-        &self,
-        sql: &str,
-        session: &SessionContext,
-        _credentials: &queryflux_auth::QueryCredentials,
-        _tags: &QueryTags,
-    ) -> Result<crate::ArrowStream> {
-        // 1. Start execution.
-        let start = self
-            .client
-            .start_query_execution()
-            .query_string(sql)
-            .result_configuration(
-                ResultConfiguration::builder()
-                    .output_location(&self.s3_output_location)
-                    .build(),
-            )
-            .work_group(&self.workgroup)
-            .query_execution_context(
-                QueryExecutionContext::builder()
-                    .catalog(&self.catalog)
-                    .set_database(session.database().map(|s| s.to_string()))
-                    .build(),
-            );
-
-        let resp = start.send().await.map_err(|e| {
-            QueryFluxError::Engine(format!("Athena StartQueryExecution: {}", aws_err(&e)))
-        })?;
-
-        let execution_id = resp
-            .query_execution_id()
-            .ok_or_else(|| QueryFluxError::Engine("Athena returned no execution ID".to_string()))?
-            .to_string();
-
-        // 2. Wait for completion.
-        self.wait_for_completion(&execution_id).await?;
-
-        // 3. Fetch all result pages.
-        let (col_names, col_types, rows) = self.fetch_all_results(&execution_id).await?;
-
-        if col_names.is_empty() || rows.is_empty() {
-            return Ok(Box::pin(stream::empty()));
-        }
-
-        // 4. Build Arrow schema.
-        let fields: Vec<Field> = col_names
-            .iter()
-            .zip(col_types.iter())
-            .map(|(name, ty)| Field::new(name, athena_type_to_arrow(ty), true))
-            .collect();
-        let schema = Arc::new(ArrowSchema::new(fields));
-
-        // 5. Build Arrow columns.
-        let num_cols = schema.fields().len();
-        let mut columns: Vec<ArrayRef> = Vec::with_capacity(num_cols);
-
-        for col_idx in 0..num_cols {
-            let dt = schema.field(col_idx).data_type();
-            let col = build_column(dt, &rows, col_idx)?;
-            columns.push(col);
-        }
-
-        let batch = RecordBatch::try_new(schema, columns)
-            .map_err(|e| QueryFluxError::Engine(format!("Athena RecordBatch: {e}")))?;
-
-        Ok(Box::pin(stream::iter(std::iter::once(Ok(batch)))))
     }
 
     // --- Catalog discovery via Glue ---
@@ -790,12 +789,12 @@ impl crate::EngineAdapterFactory for AthenaFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+    ) -> Result<crate::AdapterKind> {
         use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
         let config = AthenaConfig::from_json(json, &name)?;
-        Ok(Arc::new(
+        Ok(AdapterKind::Async(Arc::new(
             AthenaAdapter::new(cluster_name, group, config).await?,
-        ))
+        )))
     }
 }

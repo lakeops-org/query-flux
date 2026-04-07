@@ -49,6 +49,17 @@ pub struct QueryRecord {
     /// Effective query tags: group default_tags merged with session tags.
     /// Session tags win on key conflicts. Empty map when no tags were set.
     pub query_tags: QueryTags,
+    /// xxHash-64 of the normalized original SQL (no literal replacement).
+    /// Stored as i64 in Postgres (reinterpret the bit pattern; use to_hex() in queries).
+    pub query_hash: Option<i64>,
+    /// xxHash-64 of the parameterized original SQL (literals → `?`).
+    pub query_parameterized_hash: Option<i64>,
+    /// xxHash-64 of the parameterized translated SQL. None when no translation occurred.
+    pub translated_query_hash: Option<i64>,
+    /// Parameterized (literals → `?`) original SQL — the human-readable digest stored in `query_digest_stats`.
+    pub digest_text: Option<String>,
+    /// Parameterized translated SQL digest. None when no translation occurred.
+    pub translated_digest_text: Option<String>,
 }
 
 /// A periodic snapshot of one cluster's live utilization.

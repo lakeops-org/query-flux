@@ -527,6 +527,8 @@ pub enum EngineConfig {
     ClickHouse,
     /// Amazon Athena — serverless SQL over S3 via the AWS SDK.
     Athena,
+    /// Generic ADBC adapter — runtime-loaded shared library driver.
+    Adbc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

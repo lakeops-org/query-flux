@@ -7,7 +7,7 @@ import type {
 } from "@/lib/api-types";
 import { GroupsConfigPanel } from "@/components/groups-config-panel";
 import { formatDuration } from "@/components/ui-helpers";
-import { findEngineByType } from "@/components/engine-catalog";
+import { resolveEngineDefForBadge } from "@/lib/engine-badge-def";
 import { EngineIcon } from "@/components/engine-icon";
 import {
   Activity,
@@ -44,6 +44,10 @@ export default async function EnginesPage({ searchParams }: Props) {
   ]);
 
   const clusterNames = clusterConfigs.map((c) => c.name).sort((a, b) => a.localeCompare(b));
+
+  const clusterConfigByName = new Map(
+    clusterConfigs.map((c) => [c.name, c] as const),
+  );
 
   const membersByGroup = new Map<string, string[]>(
     groupConfigs.map((g) => [g.name, g.members]),
@@ -180,6 +184,7 @@ export default async function EnginesPage({ searchParams }: Props) {
                     stats={statsByGroup.get(g.name) ?? null}
                     groupName={g.name}
                     clusters={clustersByGroup.get(g.name) ?? []}
+                    clusterConfigByName={clusterConfigByName}
                   />
                 ))}
               </div>
@@ -220,6 +225,7 @@ export default async function EnginesPage({ searchParams }: Props) {
                     key={`orphan-${s.cluster_group}`}
                     stats={s}
                     clusters={clustersByGroup.get(s.cluster_group) ?? []}
+                    clusterConfigByName={clusterConfigByName}
                   />
                 ))}
                 {visibleLiveOnlyGroups.map((groupName) => (
@@ -228,6 +234,7 @@ export default async function EnginesPage({ searchParams }: Props) {
                     stats={null}
                     groupName={groupName}
                     clusters={clustersByGroup.get(groupName) ?? []}
+                    clusterConfigByName={clusterConfigByName}
                   />
                 ))}
               </div>
@@ -277,10 +284,12 @@ function GroupCard({
   stats,
   clusters,
   groupName,
+  clusterConfigByName,
 }: {
   stats: GroupStatRow | null;
   clusters: ClusterDisplayRow[];
   groupName?: string;
+  clusterConfigByName: Map<string, ClusterConfigRecord>;
 }) {
   const name = stats?.cluster_group ?? groupName ?? "Unknown";
 
@@ -459,7 +468,10 @@ function GroupCard({
                 : clusterUtil > 80 ? "bg-red-400"
                 : clusterUtil > 50 ? "bg-amber-400"
                 : "bg-emerald-400";
-              const clusterEngineDef = findEngineByType(c.engine_type);
+              const clusterEngineDef = resolveEngineDefForBadge(
+                c.engine_type,
+                clusterConfigByName.get(c.cluster_name),
+              );
               return (
                 <div key={`${c.group_name}-${c.cluster_name}-${i}`} className="space-y-1">
                   <div className="flex items-center justify-between text-xs">

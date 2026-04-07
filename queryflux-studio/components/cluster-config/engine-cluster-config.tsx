@@ -11,11 +11,13 @@ export function EngineClusterConfig({
   descriptor,
   flat,
   onPatch,
+  readOnlyFieldKeys,
 }: {
   engineKey: string;
   descriptor: EngineDescriptor;
   flat: FlatClusterConfig;
   onPatch: PatchClusterConfig;
+  readOnlyFieldKeys?: ReadonlySet<string>;
 }) {
   const mod = getStudioEngineModule(engineKey);
   const id = mod?.customFormId;
@@ -25,5 +27,12 @@ export function EngineClusterConfig({
       return <Form flat={flat} onPatch={onPatch} />;
     }
   }
-  return <GenericEngineClusterConfig descriptor={descriptor} flat={flat} onPatch={onPatch} />;
+  return (
+    <GenericEngineClusterConfig
+      descriptor={descriptor}
+      flat={flat}
+      onPatch={onPatch}
+      readOnlyFieldKeys={readOnlyFieldKeys}
+    />
+  );
 }

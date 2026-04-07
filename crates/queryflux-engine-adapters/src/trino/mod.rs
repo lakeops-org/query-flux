@@ -23,10 +23,9 @@ use queryflux_core::{
     tags::QueryTags,
 };
 use reqwest::{Client, StatusCode};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::debug;
 
-use crate::EngineAdapterTrait;
+use crate::{AdapterKind, AsyncAdapter};
 use api::TrinoResponse;
 
 use queryflux_core::engine_registry::{
@@ -220,7 +219,7 @@ impl TrinoAdapter {
 }
 
 #[async_trait]
-impl EngineAdapterTrait for TrinoAdapter {
+impl AsyncAdapter for TrinoAdapter {
     async fn submit_query(
         &self,
         sql: &str,
@@ -363,6 +362,85 @@ impl EngineAdapterTrait for TrinoAdapter {
         Ok(())
     }
 
+    fn terminal_stats_from_body(&self, body: &bytes::Bytes) -> Option<QueryEngineStats> {
+        let trino_resp: TrinoResponse = serde_json::from_slice(body.as_ref()).ok()?;
+        let s = &trino_resp.stats;
+        Some(QueryEngineStats {
+            engine_elapsed_time_ms: Some(s.elapsed_time_millis),
+            cpu_time_ms: Some(s.cpu_time_millis),
+            processed_rows: Some(s.processed_rows),
+            processed_bytes: Some(s.processed_bytes),
+            physical_input_bytes: Some(s.physical_input_bytes),
+            peak_memory_bytes: Some(s.peak_memory_bytes),
+            spilled_bytes: Some(s.spilled_bytes),
+            total_splits: Some(s.total_splits),
+        })
+    }
+
+    async fn execute_as_arrow(
+        &self,
+        sql: &str,
+        session: &queryflux_core::session::SessionContext,
+        credentials: &queryflux_auth::QueryCredentials,
+        tags: &queryflux_core::tags::QueryTags,
+    ) -> crate::Result<crate::SyncExecution> {
+        use crate::SyncExecution;
+        use futures::stream;
+        use queryflux_core::query::QueryPollResult;
+
+        let execution = self.submit_query(sql, session, credentials, tags).await?;
+        let queryflux_core::query::QueryExecution::Async {
+            backend_query_id,
+            mut next_uri,
+            initial_body,
+        } = execution;
+
+        let mut batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
+        let mut schema: Option<std::sync::Arc<arrow::datatypes::Schema>> = None;
+        let mut last_engine_stats: Option<QueryEngineStats> = None;
+
+        // Process the initial response body — may contain the first page of data.
+        if let Some(ref body) = initial_body {
+            if let Some(batch) = trino_body_to_batch(body, &mut schema)? {
+                batches.push(batch);
+            }
+        }
+
+        // Poll until the query is complete (next_uri becomes None).
+        while next_uri.is_some() {
+            let result = self
+                .poll_query(&backend_query_id, next_uri.as_deref())
+                .await?;
+            match result {
+                QueryPollResult::Raw {
+                    body,
+                    next_uri: next,
+                    engine_stats,
+                } => {
+                    if let Some(batch) = trino_body_to_batch(&body, &mut schema)? {
+                        batches.push(batch);
+                    }
+                    if next.is_none() {
+                        last_engine_stats = engine_stats;
+                    }
+                    next_uri = next;
+                }
+                QueryPollResult::Failed { message, .. } => {
+                    return Err(QueryFluxError::Engine(message));
+                }
+                QueryPollResult::Pending { .. } => {
+                    // Trino uses long-polling; Pending should not occur in practice.
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(last_engine_stats);
+        let stream = Box::pin(stream::iter(batches.into_iter().map(Ok)));
+        Ok(SyncExecution { stream, stats: rx })
+    }
+
     async fn health_check(&self) -> bool {
         let url = self.trino_url("/v1/info");
         self.apply_cluster_auth(self.http_client.get(&url))
@@ -376,123 +454,8 @@ impl EngineAdapterTrait for TrinoAdapter {
         EngineType::Trino
     }
 
-    fn supports_async(&self) -> bool {
-        true
-    }
-
     fn base_url(&self) -> &str {
         &self.endpoint
-    }
-
-    async fn execute_as_arrow(
-        &self,
-        sql: &str,
-        session: &SessionContext,
-        _credentials: &queryflux_auth::QueryCredentials,
-        tags: &QueryTags,
-    ) -> Result<crate::ArrowStream> {
-        // Submit query — get initial body + first next_uri.
-        let execution = self
-            .submit_query(
-                sql,
-                session,
-                &queryflux_auth::QueryCredentials::ServiceAccount,
-                tags,
-            )
-            .await?;
-        let QueryExecution::Async {
-            initial_body,
-            next_uri: first_next_uri,
-            ..
-        } = execution;
-
-        let http_client = self.http_client.clone();
-        let auth = self.auth.clone();
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<RecordBatch>>();
-
-        tokio::spawn(async move {
-            let mut next_uri = first_next_uri;
-            let mut schema: Option<Arc<ArrowSchema>> = None;
-
-            // Process initial body (first page from submit).
-            if let Some(body) = initial_body {
-                match trino_body_to_batch(&body, &mut schema) {
-                    Err(e) => {
-                        let _ = tx.send(Err(e));
-                        return;
-                    }
-                    Ok(Some(batch)) => {
-                        let _ = tx.send(Ok(batch));
-                    }
-                    Ok(None) => {}
-                }
-                // Update next_uri from the initial body.
-                if let Ok(resp) = serde_json::from_slice::<TrinoResponse>(&body) {
-                    next_uri = resp.next_uri;
-                }
-            }
-
-            // Poll remaining pages.
-            while let Some(uri) = next_uri {
-                let req = match &auth {
-                    Some(ClusterAuth::Basic { username, password }) => {
-                        http_client.get(&uri).basic_auth(username, Some(password))
-                    }
-                    Some(ClusterAuth::Bearer { token }) => http_client.get(&uri).bearer_auth(token),
-                    Some(ClusterAuth::AccessKey { .. })
-                    | Some(ClusterAuth::KeyPair { .. })
-                    | Some(ClusterAuth::RoleArn { .. }) => http_client.get(&uri),
-                    None => http_client.get(&uri),
-                };
-                let body = match req.send().await {
-                    Err(e) => {
-                        let _ = tx.send(Err(QueryFluxError::Engine(format!(
-                            "Trino poll failed: {e}"
-                        ))));
-                        return;
-                    }
-                    Ok(resp) => match resp.bytes().await {
-                        Err(e) => {
-                            let _ = tx.send(Err(QueryFluxError::Engine(format!(
-                                "Trino read body failed: {e}"
-                            ))));
-                            return;
-                        }
-                        Ok(b) => b,
-                    },
-                };
-
-                // Parse next_uri before converting to batch.
-                let resp: TrinoResponse = match serde_json::from_slice(&body) {
-                    Err(e) => {
-                        let _ = tx.send(Err(QueryFluxError::Engine(format!(
-                            "Trino parse failed: {e}"
-                        ))));
-                        return;
-                    }
-                    Ok(r) => r,
-                };
-                if let Some(err) = &resp.error {
-                    let _ = tx.send(Err(QueryFluxError::Engine(err.message.clone())));
-                    return;
-                }
-                next_uri = resp.next_uri.clone();
-
-                match trino_body_to_batch(&body, &mut schema) {
-                    Err(e) => {
-                        let _ = tx.send(Err(e));
-                        return;
-                    }
-                    Ok(Some(batch)) => {
-                        let _ = tx.send(Ok(batch));
-                    }
-                    Ok(None) => {}
-                }
-            }
-            // tx dropped here → stream ends.
-        });
-
-        Ok(Box::pin(UnboundedReceiverStream::new(rx)))
     }
 
     /// Trino exposes `GET /v1/cluster` with aggregate running/queued counts.
@@ -924,10 +887,14 @@ impl crate::EngineAdapterFactory for TrinoFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+    ) -> Result<crate::AdapterKind> {
         use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
         let config = TrinoConfig::from_json(json, &name)?;
-        Ok(Arc::new(TrinoAdapter::new(cluster_name, group, config)))
+        Ok(AdapterKind::Async(Arc::new(TrinoAdapter::new(
+            cluster_name,
+            group,
+            config,
+        ))))
     }
 }

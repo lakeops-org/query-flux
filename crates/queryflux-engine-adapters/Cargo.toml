@@ -12,6 +12,7 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
+bytes = { workspace = true }
 tracing = { workspace = true }
 duckdb = { version = "1.85.1" }
 mysql_async = { workspace = true }
@@ -24,3 +25,7 @@ aws-config = { version = "1", default-features = false, features = ["rustls"] }
 aws-credential-types = "1"
 aws-types = "1"
 url = "2"
+adbc_core = "0.23"
+adbc_driver_manager = "0.23"
+r2d2 = "0.8"
+r2d2_adbc = { git = "https://github.com/amitgilad3/r2d2-adbc.git" }

@@ -27,9 +27,7 @@ use queryflux_core::{
     error::Result as QfResult,
     query::{ClusterGroupName, ClusterName, EngineType},
 };
-use queryflux_engine_adapters::{
-    starrocks::StarRocksAdapter, trino::TrinoAdapter, EngineAdapterTrait,
-};
+use queryflux_engine_adapters::{starrocks::StarRocksAdapter, trino::TrinoAdapter, AdapterKind};
 use queryflux_frontend::{
     state::LiveConfig,
     trino_http::{state::AppState, TrinoHttpFrontend},
@@ -79,7 +77,7 @@ impl TestHarness {
             Arc<dyn queryflux_cluster_manager::strategy::ClusterSelectionStrategy>,
         );
         let mut group_states: HashMap<ClusterGroupName, GroupEntry> = HashMap::new();
-        let mut adapters: HashMap<String, Arc<dyn EngineAdapterTrait>> = HashMap::new();
+        let mut adapters: HashMap<String, AdapterKind> = HashMap::new();
         let mut group_members: HashMap<String, Vec<String>> = HashMap::new();
         let mut group_order: Vec<String> = Vec::new();
         let mut available_groups: Vec<String> = Vec::new();
@@ -111,12 +109,12 @@ impl TestHarness {
                     tls_skip_verify: false,
                     auth: None,
                 },
-            )) as Arc<dyn EngineAdapterTrait>;
+            ));
 
             group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
             group_members.insert(GROUP_TRINO.to_string(), vec![cluster.0.clone()]);
             group_order.push(GROUP_TRINO.to_string());
-            adapters.insert(cluster.0.clone(), adapter);
+            adapters.insert(cluster.0.clone(), AdapterKind::Async(adapter));
             available_groups.push(GROUP_TRINO.to_string());
             header_map.insert(GROUP_TRINO.to_string(), group);
         }
@@ -184,7 +182,7 @@ impl TestHarness {
         }
 
         if let Some((cluster, sr)) = sr_adapter {
-            adapters.insert(cluster.0.clone(), sr as Arc<dyn EngineAdapterTrait>);
+            adapters.insert(cluster.0.clone(), AdapterKind::Sync(sr));
         }
 
         if group_states.is_empty() {

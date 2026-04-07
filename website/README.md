@@ -31,7 +31,7 @@ When a release is ready to freeze:
 npm run docs:version 0.2.0   # example; use your semver
 ```
 
-Then edit **`sidebars.ts`** only for **Next**; for an older release, edit **`versioned_sidebars/version-X-sidebars.json`** and files under **`versioned_docs/version-X/`**.
+Then edit **`sidebars.ts`** only for **Next**; for an older release, edit **`versioned_sidebars/version-X-sidebars.json`** and files under **`versioned_docs/version-X/`**. Keep **`sidebars.ts`** and **`version-0.1.0-sidebars.json`** in sync (same categories: Guides, Reference, Architecture, Frontends, Extending, Project).
 
 ## Deployment URL
 

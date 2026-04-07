@@ -93,6 +93,8 @@ pub enum EngineType {
     ClickHouse,
     /// Amazon Athena (Presto/Trino-compatible SQL over S3).
     Athena,
+    /// Generic ADBC adapter — dialect depends on the configured driver.
+    Adbc,
 }
 
 impl EngineType {
@@ -103,6 +105,7 @@ impl EngineType {
             EngineType::DuckDb | EngineType::DuckDbHttp => SqlDialect::DuckDb,
             EngineType::StarRocks => SqlDialect::StarRocks,
             EngineType::ClickHouse => SqlDialect::ClickHouse,
+            EngineType::Adbc => SqlDialect::Generic,
         }
     }
 }

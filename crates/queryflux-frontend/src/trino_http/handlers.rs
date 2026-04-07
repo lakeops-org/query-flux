@@ -691,7 +691,16 @@ pub async fn get_executing_statement(
     };
 
     let adapter = match state.adapter(&executing.cluster_name.0).await {
-        Some(a) => a,
+        Some(a) => match a.as_async() {
+            Some(async_adapter) => async_adapter,
+            None => {
+                warn!(
+                    "Adapter for cluster {}/{} is not async",
+                    executing.cluster_group, executing.cluster_name
+                );
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        },
         None => {
             warn!(
                 "No adapter for cluster {}/{}",
@@ -752,16 +761,17 @@ pub async fn get_executing_statement(
     // Build query context once — reused for both the success and failure record_query calls.
     let was_translated = executing.translated_sql.is_some();
     let ctx = QueryContext {
-        query_id: &executing.id,
+        query_id: executing.id.clone(),
         // original SQL: when translated, translated_sql holds it; otherwise sql is original
         sql: executing
             .translated_sql
             .as_deref()
-            .unwrap_or(&executing.sql),
-        session: &session,
+            .unwrap_or(&executing.sql)
+            .to_string(),
+        session: session.clone(),
         protocol: FrontendProtocol::TrinoHttp,
-        group: &executing.cluster_group,
-        cluster: &executing.cluster_name,
+        group: executing.cluster_group.clone(),
+        cluster: executing.cluster_name.clone(),
         cluster_group_config_id: executing.cluster_group_config_id,
         cluster_config_id: executing.cluster_config_id,
         engine_type: adapter.engine_type(),

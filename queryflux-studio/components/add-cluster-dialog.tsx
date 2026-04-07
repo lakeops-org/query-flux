@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   CATEGORY_ORDER,
   ENGINE_CATALOG,
+  type EngineCategory,
   type EngineDef,
 } from "@/components/engine-catalog";
 import { EngineIcon } from "@/components/engine-icon";
@@ -16,11 +17,13 @@ import {
 } from "@/lib/engine-registry";
 import {
   buildValidateShape,
+  flatToPersistedConfig,
   toUpsertBody,
   validateEngineSpecific,
 } from "@/lib/cluster-persist-form";
-import { upsertClusterConfig } from "@/lib/api";
-import { AlertCircle, ArrowLeft, ChevronRight, Loader2, X } from "lucide-react";
+import { testClusterConfig, upsertClusterConfig } from "@/lib/api";
+import type { TestClusterConfigResponse } from "@/lib/api";
+import { AlertCircle, ArrowLeft, CheckCircle2, ChevronRight, Loader2, X } from "lucide-react";
 
 type Props = {
   open: boolean;
@@ -28,22 +31,79 @@ type Props = {
 };
 
 type Step = 1 | 2;
+type PickerEngine = EngineDef & {
+  pickerKey: string;
+  adbcDriver?: string;
+  flightSqlEngine?: string;
+};
+
+const ADBC_DRIVER_VARIANTS: Array<{
+  driver: string;
+  name: string;
+  category: EngineCategory;
+  simpleIconSlug: string | null;
+  hex: string;
+}> = [
+  { driver: "trino", name: "Trino", category: "Lakehouse", simpleIconSlug: "siTrino", hex: "DD00A1" },
+  { driver: "duckdb", name: "DuckDB", category: "Open Source OLAP", simpleIconSlug: "siDuckdb", hex: "FCC021" },
+  { driver: "flightsql", name: "StarRocks", category: "Open Source OLAP", simpleIconSlug: null, hex: "A9334A" },
+  { driver: "clickhouse", name: "ClickHouse", category: "Open Source OLAP", simpleIconSlug: "siClickhouse", hex: "FFCC01" },
+  { driver: "mysql", name: "MySQL", category: "OLTP / General", simpleIconSlug: "siMysql", hex: "4479A1" },
+  { driver: "postgresql", name: "PostgreSQL", category: "OLTP / General", simpleIconSlug: "siPostgresql", hex: "4169E1" },
+  { driver: "sqlite", name: "SQLite", category: "Embedded", simpleIconSlug: "siSqlite", hex: "003B57" },
+  { driver: "flightsql", name: "Flight SQL", category: "Other", simpleIconSlug: null, hex: "6366F1" },
+  { driver: "snowflake", name: "Snowflake", category: "Cloud Warehouse", simpleIconSlug: "siSnowflake", hex: "29B5E8" },
+  { driver: "bigquery", name: "BigQuery", category: "Cloud Warehouse", simpleIconSlug: null, hex: "4285F4" },
+  { driver: "databricks", name: "Databricks", category: "Lakehouse", simpleIconSlug: "siDatabricks", hex: "FF3621" },
+  { driver: "mssql", name: "SQL Server", category: "OLTP / General", simpleIconSlug: null, hex: "CC2927" },
+  { driver: "redshift", name: "Redshift", category: "Cloud Warehouse", simpleIconSlug: null, hex: "8C4FFF" },
+  { driver: "exasol", name: "Exasol", category: "Cloud Warehouse", simpleIconSlug: null, hex: "003A70" },
+  { driver: "singlestore", name: "SingleStore", category: "Open Source OLAP", simpleIconSlug: "siSinglestore", hex: "AA00FF" },
+];
+
+function buildPickerEngines(): PickerEngine[] {
+  const out: PickerEngine[] = [];
+  for (const e of ENGINE_CATALOG) {
+    if (e.engineKey === "adbc") {
+      for (const v of ADBC_DRIVER_VARIANTS) {
+        out.push({
+          name: v.name,
+          simpleIconSlug: v.simpleIconSlug,
+          hex: v.hex,
+          category: v.category,
+          description: `Connect via ADBC driver: ${v.driver}`,
+          engineKey: "adbc",
+          supported: true,
+          pickerKey: `adbc:${v.driver}:${v.name.toLowerCase().replace(/\s+/g, "-")}`,
+          adbcDriver: v.driver,
+          flightSqlEngine: v.name === "StarRocks" ? "starrocks" : undefined,
+        });
+      }
+      continue;
+    }
+    out.push({ ...e, pickerKey: `engine:${e.engineKey ?? e.name}` });
+  }
+  return out;
+}
 
 export function AddClusterDialog({ open, onClose }: Props) {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
-  const [selected, setSelected] = useState<EngineDef | null>(null);
+  const [selected, setSelected] = useState<PickerEngine | null>(null);
   const [clusterName, setClusterName] = useState("");
   const [flat, setFlat] = useState<Record<string, string>>({});
   const [clusterEnabled, setClusterEnabled] = useState(true);
   const [clusterMaxRunning, setClusterMaxRunning] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestClusterConfigResponse | null>(null);
 
   const descriptor = useMemo(
     () => (selected?.engineKey ? findEngineDescriptor(selected.engineKey) : undefined),
     [selected],
   );
+  const pickerEngines = useMemo(() => buildPickerEngines(), []);
 
   const reset = useCallback(() => {
     setStep(1);
@@ -54,6 +114,8 @@ export function AddClusterDialog({ open, onClose }: Props) {
     setClusterMaxRunning("");
     setSaving(false);
     setSaveError(null);
+    setTesting(false);
+    setTestResult(null);
   }, []);
 
   useEffect(() => {
@@ -83,6 +145,12 @@ export function AddClusterDialog({ open, onClose }: Props) {
         }
       }
     }
+    if (selected.adbcDriver) {
+      initial.driver = selected.adbcDriver;
+    }
+    if (selected.flightSqlEngine) {
+      initial.flightSqlEngine = selected.flightSqlEngine;
+    }
     setFlat(initial);
     setStep(2);
   }
@@ -90,6 +158,23 @@ export function AddClusterDialog({ open, onClose }: Props) {
   function goBack() {
     setStep(1);
     setSaveError(null);
+    setTestResult(null);
+  }
+
+  async function handleTest() {
+    if (!selected?.engineKey) return;
+    setTesting(true);
+    setTestResult(null);
+    setSaveError(null);
+    try {
+      const config = flatToPersistedConfig(flat);
+      const result = await testClusterConfig(selected.engineKey, config);
+      setTestResult(result);
+    } catch (e) {
+      setTestResult({ ok: false, message: e instanceof Error ? e.message : "Test failed" });
+    } finally {
+      setTesting(false);
+    }
   }
 
   async function handleSave() {
@@ -209,10 +294,10 @@ export function AddClusterDialog({ open, onClose }: Props) {
                 <div className="hidden sm:block flex-1 h-px bg-slate-100" />
                 <span className="text-xs text-slate-400">
                   {
-                    ENGINE_CATALOG.filter((e) => isClusterOnboardingSelectable(e))
+                    pickerEngines.filter((e) => isClusterOnboardingSelectable(e))
                       .length
                   }{" "}
-                  supported · {ENGINE_CATALOG.length} total
+                  supported · {pickerEngines.length} total
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 -mt-2">
@@ -220,72 +305,113 @@ export function AddClusterDialog({ open, onClose }: Props) {
                 <span className="font-medium text-slate-600">Not supported yet</span>.
               </p>
 
-              {CATEGORY_ORDER.map((category) => {
-                const engines = ENGINE_CATALOG.filter((e) => e.category === category);
-                if (engines.length === 0) return null;
-                return (
-                  <div key={category}>
-                    <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-3">
-                      {category}
-                    </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                      {engines.map((e) => {
-                        const isSel = selected?.name === e.name;
-                        const selectable = isClusterOnboardingSelectable(e);
-                        return (
-                          <button
-                            key={e.name}
-                            type="button"
-                            disabled={!selectable}
-                            onClick={() => setSelected(e)}
-                            aria-disabled={!selectable}
-                            title={
-                              selectable
-                                ? undefined
-                                : "Not supported yet — no QueryFlux adapter for this engine in Studio."
-                            }
-                            className={`rounded-xl border p-4 flex items-center gap-3 text-left transition-all duration-150 focus:outline-none ${
-                              !selectable
-                                ? "border-slate-100 bg-slate-50/80 cursor-not-allowed opacity-75 grayscale-[0.35]"
-                                : isSel
-                                  ? "border-indigo-500 bg-indigo-50/50 shadow-sm ring-1 ring-indigo-200 focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2"
-                                  : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2"
-                            }`}
-                          >
-                            <EngineIcon engine={e} size={36} />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-start justify-between gap-2">
-                                <p
-                                  className={`text-sm font-semibold leading-tight truncate ${
-                                    selectable ? "text-slate-800" : "text-slate-500"
-                                  }`}
-                                >
-                                  {e.name}
-                                </p>
-                                {!selectable && (
+              <div>
+                <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-widest mb-3">
+                  Supported
+                </p>
+                <div className="space-y-5">
+                  {CATEGORY_ORDER.map((category) => {
+                    const engines = pickerEngines.filter(
+                      (e) => e.category === category && isClusterOnboardingSelectable(e),
+                    );
+                    if (engines.length === 0) return null;
+                    return (
+                      <div key={`supported-${category}`}>
+                        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-3">
+                          {category}
+                        </p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                          {engines.map((e) => {
+                            const isSel = selected?.pickerKey === e.pickerKey;
+                            return (
+                              <button
+                                key={e.pickerKey}
+                                type="button"
+                                onClick={() => setSelected(e)}
+                                className={`rounded-xl border p-4 flex items-center gap-3 text-left transition-all duration-150 focus:outline-none ${
+                                  isSel
+                                    ? "border-indigo-500 bg-indigo-50/50 shadow-sm ring-1 ring-indigo-200 focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2"
+                                    : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2"
+                                }`}
+                              >
+                                <EngineIcon engine={e} size={36} />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="text-sm font-semibold leading-tight truncate text-slate-800">
+                                      {e.name}
+                                    </p>
+                                    {e.adbcDriver && (
+                                      <span className="flex-shrink-0 text-[9px] font-semibold uppercase tracking-wide text-indigo-800 bg-indigo-100 border border-indigo-200/80 px-1.5 py-0.5 rounded-md">
+                                        ADBC
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] text-slate-400 mt-0.5 leading-tight line-clamp-2">
+                                    {e.description}
+                                  </p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-widest mb-3">
+                  Not supported yet
+                </p>
+                <div className="space-y-5">
+                  {CATEGORY_ORDER.map((category) => {
+                    const engines = pickerEngines.filter(
+                      (e) => e.category === category && !isClusterOnboardingSelectable(e),
+                    );
+                    if (engines.length === 0) return null;
+                    return (
+                      <div key={`unsupported-${category}`}>
+                        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-3">
+                          {category}
+                        </p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                          {engines.map((e) => (
+                            <button
+                              key={e.pickerKey}
+                              type="button"
+                              disabled
+                              aria-disabled
+                              title="Not supported yet — no QueryFlux adapter for this engine in Studio."
+                              className="rounded-xl border p-4 flex items-center gap-3 text-left transition-all duration-150 focus:outline-none border-slate-100 bg-slate-50/80 cursor-not-allowed opacity-75 grayscale-[0.35]"
+                            >
+                              <EngineIcon engine={e} size={36} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-sm font-semibold leading-tight truncate text-slate-500">
+                                    {e.name}
+                                  </p>
+                                  {e.adbcDriver && (
+                                    <span className="flex-shrink-0 text-[9px] font-semibold uppercase tracking-wide text-indigo-800 bg-indigo-100 border border-indigo-200/80 px-1.5 py-0.5 rounded-md">
+                                      ADBC
+                                    </span>
+                                  )}
                                   <span className="flex-shrink-0 text-[9px] font-semibold uppercase tracking-wide text-amber-800 bg-amber-100 border border-amber-200/80 px-1.5 py-0.5 rounded-md">
                                     Not supported yet
                                   </span>
-                                )}
-                              </div>
-                              <p className="text-[11px] text-slate-400 mt-0.5 leading-tight line-clamp-2">
-                                {e.description}
-                              </p>
-                              {selectable && e.engineKey ? (
-                                <p className="text-[10px] font-mono text-indigo-600 mt-1.5">
-                                  {e.engineKey}
+                                </div>
+                                <p className="text-[11px] text-slate-400 mt-0.5 leading-tight line-clamp-2">
+                                  {e.description}
                                 </p>
-                              ) : selectable && !e.engineKey ? (
-                                <p className="text-[10px] text-slate-400 mt-1.5">preview</p>
-                              ) : null}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="px-6 py-5 space-y-5">
@@ -294,6 +420,9 @@ export function AddClusterDialog({ open, onClose }: Props) {
                   <EngineIcon engine={selected} size={40} />
                   <div>
                     <p className="text-sm font-semibold text-slate-800">{selected.name}</p>
+                    {selected.adbcDriver && (
+                      <p className="text-[11px] text-indigo-700">ADBC driver: {selected.adbcDriver}</p>
+                    )}
                     {selected.engineKey && (
                       <p className="text-[11px] font-mono text-indigo-600">{selected.engineKey}</p>
                     )}
@@ -396,6 +525,15 @@ export function AddClusterDialog({ open, onClose }: Props) {
                         engineKey={selected.engineKey}
                         descriptor={descriptor}
                         flat={flat}
+                        readOnlyFieldKeys={
+                          selected.adbcDriver
+                            ? new Set<string>(
+                                selected.flightSqlEngine
+                                  ? ["driver", "flightSqlEngine"]
+                                  : ["driver"],
+                              )
+                            : undefined
+                        }
                         onPatch={(patch) =>
                           setFlat((prev) => ({ ...prev, ...patch }))
                         }
@@ -416,7 +554,24 @@ export function AddClusterDialog({ open, onClose }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-100 bg-slate-50/80 flex-shrink-0">
+        <div className="flex flex-col gap-2 px-6 py-4 border-t border-slate-100 bg-slate-50/80 flex-shrink-0">
+          {step === 2 && testResult && (
+            <div
+              className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs ${
+                testResult.ok
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-red-200 bg-red-50 text-red-700"
+              }`}
+            >
+              {testResult.ok ? (
+                <CheckCircle2 size={14} className="flex-shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+              )}
+              {testResult.message}
+            </div>
+          )}
+        <div className="flex items-center justify-end gap-2">
           {step === 1 ? (
             <>
               <button
@@ -438,35 +593,31 @@ export function AddClusterDialog({ open, onClose }: Props) {
             </>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={goBack}
-                disabled={saving}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={saving}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
               {!unsupported && (
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={saving || !clusterName.trim()}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  {saving ? <Loader2 size={16} className="animate-spin" /> : null}
-                  {saving ? "Saving…" : "Save cluster"}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={handleTest}
+                    disabled={saving || testing}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {testing ? <Loader2 size={16} className="animate-spin" /> : null}
+                    {testing ? "Testing…" : "Test connection"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={saving || testing || !clusterName.trim()}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {saving ? <Loader2 size={16} className="animate-spin" /> : null}
+                    {saving ? "Saving…" : "Save cluster"}
+                  </button>
+                </>
               )}
             </>
           )}
+        </div>
         </div>
       </div>
     </div>

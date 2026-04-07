@@ -72,6 +72,31 @@
   box-shadow: 0 12px 36px rgba(124, 58, 237, 0.12);
 }
 
+.featureIconWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: 0 0 1.1rem 0.75rem;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.12) 0%, rgba(192, 38, 211, 0.08) 100%);
+  border: 1px solid rgba(124, 58, 237, 0.18);
+  color: #7c3aed;
+  flex-shrink: 0;
+}
+
+.featureIconWrap svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+html[data-theme='dark'] .featureIconWrap {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(234, 88, 12, 0.08) 100%);
+  border-color: rgba(167, 139, 250, 0.25);
+  color: #c4b5fd;
+}
+
 .featureTitle {
   font-size: var(--qf-home-card-title-size);
   font-weight: var(--qf-home-card-title-fw);

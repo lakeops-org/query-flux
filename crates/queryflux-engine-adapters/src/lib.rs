@@ -1,3 +1,4 @@
+pub mod adbc;
 pub mod athena;
 pub mod duckdb;
 pub mod starrocks;
@@ -9,17 +10,11 @@ use std::sync::Arc;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use futures::Stream;
-use queryflux_auth::QueryCredentials;
 use queryflux_core::{
-    catalog::TableSchema,
     config::ClusterConfig,
     engine_registry::EngineDescriptor,
-    error::{QueryFluxError, Result},
-    query::{
-        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
-    },
-    session::SessionContext,
-    tags::QueryTags,
+    error::Result,
+    query::{ClusterGroupName, ClusterName},
 };
 
 /// Implemented by each engine's typed config struct.
@@ -36,6 +31,157 @@ pub trait EngineConfigParseable: Sized {
 
 /// A stream of Arrow RecordBatches — the universal output type for all adapters.
 pub type ArrowStream = Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send>>;
+
+/// Returned by `SyncAdapter::execute_as_arrow`.
+///
+/// Carries both the result stream and a post-completion stats channel.
+/// Drive `stream` to exhaustion before reading `stats` — adapters send stats
+/// into the oneshot only after all batches have been produced.
+///
+/// `stats` resolves to `None` when the engine does not expose structured
+/// execution statistics (CPU time, bytes scanned, etc.).
+pub struct SyncExecution {
+    /// Arrow RecordBatch stream — drive to completion before reading stats.
+    pub stream: ArrowStream,
+    /// Engine-reported execution stats. Sent by the adapter once the stream ends.
+    pub stats: tokio::sync::oneshot::Receiver<Option<queryflux_core::query::QueryEngineStats>>,
+}
+
+/// Sync engines: execute to completion, stream Arrow results.
+/// Used by DuckDB (embedded + HTTP) and StarRocks.
+#[async_trait]
+pub trait SyncAdapter: Send + Sync {
+    async fn execute_as_arrow(
+        &self,
+        sql: &str,
+        session: &queryflux_core::session::SessionContext,
+        credentials: &queryflux_auth::QueryCredentials,
+        tags: &queryflux_core::tags::QueryTags,
+    ) -> Result<SyncExecution>;
+    fn engine_type(&self) -> queryflux_core::query::EngineType;
+    async fn health_check(&self) -> bool;
+    async fn fetch_running_query_count(&self) -> Option<u64> {
+        None
+    }
+    async fn list_catalogs(&self) -> Result<Vec<String>>;
+    async fn list_databases(&self, catalog: &str) -> Result<Vec<String>>;
+    async fn list_tables(&self, catalog: &str, database: &str) -> Result<Vec<String>>;
+    async fn describe_table(
+        &self,
+        catalog: &str,
+        database: &str,
+        table: &str,
+    ) -> Result<Option<queryflux_core::catalog::TableSchema>>;
+}
+
+/// Async engines: submit-and-poll; lifecycle spans multiple HTTP requests.
+/// Used by Trino and Athena.
+#[async_trait]
+pub trait AsyncAdapter: Send + Sync {
+    async fn submit_query(
+        &self,
+        sql: &str,
+        session: &queryflux_core::session::SessionContext,
+        credentials: &queryflux_auth::QueryCredentials,
+        tags: &queryflux_core::tags::QueryTags,
+    ) -> Result<queryflux_core::query::QueryExecution>;
+    async fn poll_query(
+        &self,
+        backend_id: &queryflux_core::query::BackendQueryId,
+        next_uri: Option<&str>,
+    ) -> Result<queryflux_core::query::QueryPollResult>;
+    async fn cancel_query(&self, backend_id: &queryflux_core::query::BackendQueryId) -> Result<()>;
+    fn engine_type(&self) -> queryflux_core::query::EngineType;
+    fn base_url(&self) -> &str {
+        ""
+    }
+    /// Execute a query synchronously by driving the internal submit+poll loop to completion.
+    ///
+    /// Enables MySQL/Postgres wire protocol clients to query async engines.
+    /// Returns `Err(SyncEngineRequired)` by default — engines that support this path override it.
+    async fn execute_as_arrow(
+        &self,
+        _sql: &str,
+        _session: &queryflux_core::session::SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
+        _tags: &queryflux_core::tags::QueryTags,
+    ) -> Result<SyncExecution> {
+        Err(queryflux_core::error::QueryFluxError::SyncEngineRequired(
+            "this engine only supports the async (HTTP submit-poll) protocol".to_string(),
+        ))
+    }
+    /// Extract engine-reported execution stats from a terminal submit-response body.
+    ///
+    /// Called by dispatch when the engine returns a terminal state on the initial POST
+    /// (no `nextUri`). The body is the raw bytes returned by `submit_query`. Engines that
+    /// embed stats in their response (e.g. Trino) override this; others return `None`.
+    fn terminal_stats_from_body(
+        &self,
+        _body: &bytes::Bytes,
+    ) -> Option<queryflux_core::query::QueryEngineStats> {
+        None
+    }
+    async fn health_check(&self) -> bool;
+    async fn fetch_running_query_count(&self) -> Option<u64> {
+        None
+    }
+    async fn list_catalogs(&self) -> Result<Vec<String>>;
+    async fn list_databases(&self, catalog: &str) -> Result<Vec<String>>;
+    async fn list_tables(&self, catalog: &str, database: &str) -> Result<Vec<String>>;
+    async fn describe_table(
+        &self,
+        catalog: &str,
+        database: &str,
+        table: &str,
+    ) -> Result<Option<queryflux_core::catalog::TableSchema>>;
+}
+
+/// Type-safe adapter discriminant — replaces the `supports_async()` runtime flag.
+///
+/// Dispatch matches on this to route queries to the correct execution path:
+/// `Sync` → `execute_to_sink`, `Async` → `dispatch_query`.
+#[derive(Clone)]
+pub enum AdapterKind {
+    Sync(Arc<dyn SyncAdapter>),
+    Async(Arc<dyn AsyncAdapter>),
+}
+
+impl AdapterKind {
+    pub fn engine_type(&self) -> queryflux_core::query::EngineType {
+        match self {
+            Self::Sync(a) => a.engine_type(),
+            Self::Async(a) => a.engine_type(),
+        }
+    }
+
+    pub async fn health_check(&self) -> bool {
+        match self {
+            Self::Sync(a) => a.health_check().await,
+            Self::Async(a) => a.health_check().await,
+        }
+    }
+
+    pub async fn fetch_running_query_count(&self) -> Option<u64> {
+        match self {
+            Self::Sync(a) => a.fetch_running_query_count().await,
+            Self::Async(a) => a.fetch_running_query_count().await,
+        }
+    }
+
+    pub fn as_sync(&self) -> Option<Arc<dyn SyncAdapter>> {
+        match self {
+            Self::Sync(a) => Some(a.clone()),
+            Self::Async(_) => None,
+        }
+    }
+
+    pub fn as_async(&self) -> Option<Arc<dyn AsyncAdapter>> {
+        match self {
+            Self::Async(a) => Some(a.clone()),
+            Self::Sync(_) => None,
+        }
+    }
+}
 
 /// Factory for constructing engine adapters from raw configuration.
 ///
@@ -56,108 +202,5 @@ pub trait EngineAdapterFactory: Send + Sync {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-    ) -> Result<Arc<dyn EngineAdapterTrait>>;
-}
-
-/// Implemented by each query engine backend (Trino, DuckDB, StarRocks, ClickHouse, ...).
-///
-/// Engines that run queries synchronously return `QueryExecution::Sync` from `submit_query`.
-/// Engines that run queries asynchronously return `QueryExecution::Async` and expect the
-/// caller to poll via `poll_query` until `QueryPollResult::Complete` or `QueryPollResult::Failed`.
-#[async_trait]
-pub trait EngineAdapterTrait: Send + Sync {
-    /// Submit a query for execution.
-    ///
-    /// Synchronous engines (DuckDB, StarRocks) return `QueryExecution::Sync` with the
-    /// full result immediately. Async engines (Trino, ClickHouse) return `QueryExecution::Async`
-    /// with a backend query ID to poll.
-    ///
-    /// `credentials` carries the resolved backend identity (Phase 1: always `ServiceAccount`).
-    /// `session` carries unverified protocol metadata (headers, catalog hints, session properties)
-    /// still needed for session setup until Phase 3b introduces `EngineConnectionOptions`.
-    async fn submit_query(
-        &self,
-        sql: &str,
-        session: &SessionContext,
-        credentials: &QueryCredentials,
-        tags: &QueryTags,
-    ) -> Result<QueryExecution>;
-
-    /// Poll a previously submitted async query for its current state.
-    /// Only called when `submit_query` returned `QueryExecution::Async`.
-    async fn poll_query(
-        &self,
-        backend_id: &BackendQueryId,
-        next_uri: Option<&str>,
-    ) -> Result<QueryPollResult>;
-
-    /// Cancel a running or queued query.
-    async fn cancel_query(&self, backend_id: &BackendQueryId) -> Result<()>;
-
-    /// Check whether this cluster is reachable and healthy.
-    async fn health_check(&self) -> bool;
-
-    /// The engine type this adapter targets.
-    fn engine_type(&self) -> EngineType;
-
-    /// Whether this engine supports async polling.
-    /// Sync engines always return false; their `poll_query` impl is unreachable.
-    fn supports_async(&self) -> bool;
-
-    /// The base URL of this engine instance (e.g. `http://trino:8080`).
-    /// Used to reconstruct Trino poll URLs from the client-supplied path.
-    /// Returns empty string for sync engines that don't have an HTTP endpoint.
-    fn base_url(&self) -> &str {
-        ""
-    }
-
-    /// Fetch the number of queries currently running on this engine instance,
-    /// as reported by the engine itself. Used by the background reconciler to
-    /// correct the in-memory `running_queries` counter after crashes or client disconnects.
-    ///
-    /// Return `None` if the engine does not expose this information.
-    /// Default: `None` (unsupported). Engines that support it should override this.
-    async fn fetch_running_query_count(&self) -> Option<u64> {
-        None
-    }
-
-    /// Execute a query and return results as a stream of Arrow RecordBatches.
-    ///
-    /// This is the primary execution path for all non-Trino-HTTP frontends.
-    /// Each adapter owns its type mapping (engine types → Arrow DataType) internally.
-    /// The caller (execute_to_sink) feeds the stream to a ResultSink without
-    /// inspecting individual types.
-    ///
-    /// Default: returns an error. Adapters that support Arrow execution override this.
-    async fn execute_as_arrow(
-        &self,
-        _sql: &str,
-        _session: &SessionContext,
-        _credentials: &QueryCredentials,
-        _tags: &QueryTags,
-    ) -> Result<ArrowStream> {
-        Err(QueryFluxError::Engine(format!(
-            "Arrow execution not implemented for {:?} adapter",
-            self.engine_type()
-        )))
-    }
-
-    // --- Catalog discovery ---
-
-    /// List all catalogs this engine instance is connected to.
-    async fn list_catalogs(&self) -> Result<Vec<String>>;
-
-    /// List all databases within a catalog.
-    async fn list_databases(&self, catalog: &str) -> Result<Vec<String>>;
-
-    /// List all tables within a catalog.database.
-    async fn list_tables(&self, catalog: &str, database: &str) -> Result<Vec<String>>;
-
-    /// Describe a specific table's columns and types.
-    async fn describe_table(
-        &self,
-        catalog: &str,
-        database: &str,
-        table: &str,
-    ) -> Result<Option<TableSchema>>;
+    ) -> Result<AdapterKind>;
 }

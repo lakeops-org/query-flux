@@ -1,6 +1,5 @@
-# Verify both release Dockerfiles on PRs (host platform only, no push).
-#   - docker/queryflux/Dockerfile — server only
-#   - docker/queryflux-unified/Dockerfile — server + Studio
+# Verify both image targets on PRs (host platform only, no push).
+#   One Dockerfile: docker/queryflux/Dockerfile — targets runtime-server | runtime-unified
 
 name: Docker — QueryFlux (verify)
 
@@ -20,9 +19,11 @@ jobs:
         include:
           - name: server-only
             file: docker/queryflux/Dockerfile
+            target: runtime-server
             tag: queryflux:pr-verify-slim
           - name: server-and-studio
-            file: docker/queryflux-unified/Dockerfile
+            file: docker/queryflux/Dockerfile
+            target: runtime-unified
             tag: queryflux:pr-verify-full
     permissions:
       contents: read
@@ -37,6 +38,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
           push: false
           load: true
           tags: ${{ matrix.tag }}

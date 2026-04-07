@@ -195,6 +195,7 @@ const ENGINE_CATALOG_SLOTS = [
   },
 
   // ── OLTP / General ───────────────────────────────────────────────────────
+  { k: "studio", engineKey: "adbc" },
   {
     name: "PostgreSQL",
     simpleIconSlug: "siPostgresql",
