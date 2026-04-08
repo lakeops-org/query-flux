@@ -56,10 +56,10 @@ export const adbcStudioEngine: StudioEngineModule = {
         example: "{}",
       },
       {
-        key: "flightSqlEngine",
-        label: "FlightSQL target engine",
+        key: "flightSqlClusterDialect",
+        label: "Cluster SQL dialect (Flight SQL)",
         description:
-          "Only when driver is flightsql: backend SQL dialect for translation/transpilation. Flight SQL is transport only—it does not tell us which engine speaks on the other end.",
+          "Only when driver is flightsql: which SQL dialect this cluster speaks, for translation. Flight SQL is only the wire protocol.",
         fieldType: "text",
         required: false,
         example: "starrocks",

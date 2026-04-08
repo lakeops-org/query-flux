@@ -27,7 +27,7 @@ function readConfigString(
 /**
  * Resolves catalog metadata (logo, label) for a cluster badge.
  * ADBC clusters report a generic engine label from the proxy; use persisted
- * `driver` and optional `flightSqlEngine` to pick the same engine card as Studio.
+ * `driver` and optional `flightSqlClusterDialect` (or legacy `flightSqlEngine`) to pick the same engine card as Studio.
  */
 export function resolveEngineDefForBadge(
   engineTypeLabel: string,
@@ -43,15 +43,21 @@ export function resolveEngineDefForBadge(
     const cfg = (clusterConfig.config ?? {}) as Record<string, unknown>;
     const driverRaw = readConfigString(cfg, "driver", "driver");
     const driver = driverRaw.toLowerCase();
-    const flightRaw = readConfigString(
+    const flightNew = readConfigString(
+      cfg,
+      "flightSqlClusterDialect",
+      "flight_sql_cluster_dialect",
+    );
+    const flightLegacy = readConfigString(
       cfg,
       "flightSqlEngine",
       "flight_sql_engine",
     );
-    const flightSqlEngine = flightRaw.toLowerCase();
+    const flightRaw = flightNew.trim() ? flightNew : flightLegacy;
+    const flightDialect = flightRaw.toLowerCase();
 
-    if (driver === "flightsql" && flightSqlEngine) {
-      const byFlight = findEngineByType(flightSqlEngine);
+    if (driver === "flightsql" && flightDialect) {
+      const byFlight = findEngineByType(flightDialect);
       if (byFlight) return byFlight;
     }
 

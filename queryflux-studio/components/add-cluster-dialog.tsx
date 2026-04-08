@@ -22,6 +22,9 @@ import {
   toUpsertBody,
   validateEngineSpecific,
 } from "@/lib/cluster-persist-form";
+import {
+  hiddenAdbcFieldKeysForDriver,
+} from "@/lib/adbc-driver-spec";
 import { testClusterConfig, upsertClusterConfig } from "@/lib/api";
 import type { TestClusterConfigResponse } from "@/lib/api";
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronRight, Loader2, X } from "lucide-react";
@@ -35,7 +38,6 @@ type Step = 1 | 2;
 type PickerEngine = EngineDef & {
   pickerKey: string;
   adbcDriver?: string;
-  flightSqlEngine?: string;
 };
 
 const ADBC_DRIVER_VARIANTS: Array<{
@@ -45,8 +47,9 @@ const ADBC_DRIVER_VARIANTS: Array<{
   simpleIconSlug: string | null;
   hex: string;
 }> = [
+  // Official Arrow ADBC drivers (arrow.apache.org/adbc) + ADBC Driver Foundry (github.com/adbc-drivers).
   { driver: "trino", name: "Trino", category: "Lakehouse", simpleIconSlug: "siTrino", hex: "DD00A1" },
-  { driver: "duckdb", name: "DuckDB", category: "Open Source OLAP", simpleIconSlug: "siDuckdb", hex: "FCC021" },
+  { driver: "duckdb", name: "DuckDB", category: "Embedded", simpleIconSlug: "siDuckdb", hex: "FCC021" },
   { driver: "flightsql", name: "StarRocks", category: "Open Source OLAP", simpleIconSlug: null, hex: "A9334A" },
   { driver: "clickhouse", name: "ClickHouse", category: "Open Source OLAP", simpleIconSlug: "siClickhouse", hex: "FFCC01" },
   { driver: "mysql", name: "MySQL", category: "OLTP / General", simpleIconSlug: "siMysql", hex: "4479A1" },
@@ -59,7 +62,8 @@ const ADBC_DRIVER_VARIANTS: Array<{
   { driver: "mssql", name: "SQL Server", category: "OLTP / General", simpleIconSlug: null, hex: "CC2927" },
   { driver: "redshift", name: "Redshift", category: "Cloud Warehouse", simpleIconSlug: null, hex: "8C4FFF" },
   { driver: "exasol", name: "Exasol", category: "Cloud Warehouse", simpleIconSlug: null, hex: "003A70" },
-  { driver: "singlestore", name: "SingleStore", category: "Open Source OLAP", simpleIconSlug: "siSinglestore", hex: "AA00FF" },
+  { driver: "singlestore", name: "SingleStore", category: "Cloud Warehouse", simpleIconSlug: "siSinglestore", hex: "AA00FF" },
+  { driver: "jdbc", name: "JDBC", category: "Other", simpleIconSlug: null, hex: "0EA5E9" },
 ];
 
 function buildPickerEngines(): PickerEngine[] {
@@ -77,7 +81,6 @@ function buildPickerEngines(): PickerEngine[] {
           supported: true,
           pickerKey: `adbc:${v.driver}:${v.name.toLowerCase().replace(/\s+/g, "-")}`,
           adbcDriver: v.driver,
-          flightSqlEngine: v.name === "StarRocks" ? "starrocks" : undefined,
         });
       }
       continue;
@@ -148,9 +151,6 @@ export function AddClusterDialog({ open, onClose }: Props) {
     }
     if (selected.adbcDriver) {
       initial.driver = selected.adbcDriver;
-    }
-    if (selected.flightSqlEngine) {
-      initial.flightSqlEngine = selected.flightSqlEngine;
     }
     setFlat(initial);
     setStep(2);
@@ -529,17 +529,31 @@ export function AddClusterDialog({ open, onClose }: Props) {
                         readOnlyFieldKeys={
                           selected.adbcDriver
                             ? new Set<string>(
-                                selected.flightSqlEngine
-                                  ? ["driver", "flightSqlEngine"]
-                                  : ["driver"],
+                                ["driver"],
                               )
                             : undefined
                         }
                         hiddenFieldKeys={
-                          selected.engineKey === "adbc" &&
-                          (selected.adbcDriver === "postgresql" ||
-                            isAdbcPostgresqlDriver(flat))
-                            ? new Set(["username", "password"])
+                          selected.engineKey === "adbc"
+                            ? (() => {
+                                const hidden = new Set<string>();
+                                // Per-driver hiding (e.g. auth in URI).
+                                const driverHidden = hiddenAdbcFieldKeysForDriver(
+                                  selected.adbcDriver ?? flat.driver,
+                                );
+                                if (driverHidden) {
+                                  for (const k of driverHidden) hidden.add(k);
+                                }
+                                // Back-compat explicit check.
+                                if (
+                                  selected.adbcDriver === "postgresql" ||
+                                  isAdbcPostgresqlDriver(flat)
+                                ) {
+                                  hidden.add("username");
+                                  hidden.add("password");
+                                }
+                                return hidden.size ? hidden : undefined;
+                              })()
                             : undefined
                         }
                         onPatch={(patch) =>

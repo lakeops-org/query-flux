@@ -178,7 +178,7 @@ pub async fn dispatch_query(
     };
 
     let src_dialect = protocol.default_dialect();
-    let tgt_dialect = adapter.engine_type().dialect();
+    let tgt_dialect = adapter.translation_target_dialect();
     let original_sql = sql.clone();
     let sql = match state
         .translation
@@ -393,7 +393,7 @@ async fn finalize_trino_async_terminal_on_submit(
         cluster_config_id: executing.cluster_config_id,
         engine_type: adapter.engine_type(),
         src_dialect,
-        tgt_dialect: adapter.engine_type().dialect(),
+        tgt_dialect: adapter.translation_target_dialect(),
         was_translated,
         translated_sql: if was_translated {
             Some(executing.sql.clone())
@@ -564,6 +564,13 @@ impl DispatchAdapter {
             Self::Async(a) => a.engine_type(),
         }
     }
+
+    fn translation_target_dialect(&self) -> queryflux_core::query::SqlDialect {
+        match self {
+            Self::Sync(a) => a.translation_target_dialect(),
+            Self::Async(a) => a.translation_target_dialect(),
+        }
+    }
 }
 
 /// Everything resolved before execution begins on the sync path.
@@ -671,7 +678,7 @@ async fn setup_sync_query(
     );
 
     let src_dialect = protocol.default_dialect();
-    let tgt_dialect = adapter.engine_type().dialect();
+    let tgt_dialect = adapter.translation_target_dialect();
     let engine_type = adapter.engine_type();
     let start = Instant::now();
 

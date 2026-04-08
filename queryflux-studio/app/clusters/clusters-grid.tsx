@@ -19,6 +19,7 @@ import {
   persistedClusterConfigToFlat,
   validateEngineSpecific,
 } from "@/lib/cluster-persist-form";
+import { hiddenAdbcFieldKeysForDriver } from "@/lib/adbc-driver-spec";
 import { EngineClusterConfig } from "@/components/cluster-config";
 import {
   findEngineDescriptor,
@@ -913,6 +914,10 @@ const PERSISTED_CONFIG_ROW_ORDER: Array<{ key: string; label: string }> = [
   { key: "username", label: "Username" },
   { key: "password", label: "Password" },
   { key: "dbKwargs", label: "Driver options" },
+  {
+    key: "flightSqlClusterDialect",
+    label: "Cluster SQL dialect (Flight SQL)",
+  },
   { key: "poolSize", label: "Pool size" },
   { key: "region", label: "AWS region" },
   { key: "s3OutputLocation", label: "S3 output location" },
@@ -991,8 +996,13 @@ function EngineConfigView({
               mono
             />
             {PERSISTED_CONFIG_ROW_ORDER.map(({ key, label }) => {
-              if (!(key in cfg)) return null;
-              const raw = cfg[key];
+              let raw: unknown;
+              if (key === "flightSqlClusterDialect") {
+                raw = cfg.flightSqlClusterDialect ?? cfg.flightSqlEngine;
+              } else {
+                if (!(key in cfg)) return null;
+                raw = cfg[key];
+              }
               if (raw === undefined || raw === null || raw === "") return null;
               const isEndpoint = key === "endpoint";
               const ep =
@@ -1192,8 +1202,19 @@ function EngineEditForm({
             descriptor={descriptor}
             flat={editFlat}
             hiddenFieldKeys={
-              persisted.engineKey === "adbc" && isAdbcPostgresqlDriver(editFlat)
-                ? new Set(["username", "password"])
+              persisted.engineKey === "adbc"
+                ? (() => {
+                    const hidden = new Set<string>();
+                    const driverHidden = hiddenAdbcFieldKeysForDriver(editFlat.driver);
+                    if (driverHidden) {
+                      for (const k of driverHidden) hidden.add(k);
+                    }
+                    if (isAdbcPostgresqlDriver(editFlat)) {
+                      hidden.add("username");
+                      hidden.add("password");
+                    }
+                    return hidden.size ? hidden : undefined;
+                  })()
                 : undefined
             }
             onPatch={onPatchFlat}

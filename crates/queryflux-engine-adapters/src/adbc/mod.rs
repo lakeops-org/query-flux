@@ -125,18 +125,45 @@ pub struct AdbcConfig {
     pub username: Option<String>,
     pub password: Option<String>,
     pub db_kwargs: Vec<(String, String)>,
-    pub flight_sql_engine: Option<EngineType>,
+    /// When `driver` is `flightsql`, sqlglot `write` dialect for translation (any supported name).
+    /// JSON key `flightSqlClusterDialect`; legacy `flightSqlEngine` is still accepted when parsing.
+    pub flight_sql_cluster_dialect: Option<String>,
     pub pool_size: u32,
 }
 
 impl AdbcConfig {
     pub fn engine_type(&self) -> EngineType {
         if self.driver == "flightsql" {
-            if let Some(engine) = &self.flight_sql_engine {
-                return engine.clone();
+            if let Some(raw) = &self.flight_sql_cluster_dialect {
+                let t = raw.trim();
+                if !t.is_empty() {
+                    if let Some(engine) = parse_engine_type_override(t) {
+                        return engine;
+                    }
+                    return EngineType::Adbc;
+                }
             }
         }
         driver_to_engine_type(&self.driver)
+    }
+
+    /// Translation target for sqlglot when using the Flight SQL driver.
+    pub fn flight_sql_translation_dialect(&self) -> queryflux_core::query::SqlDialect {
+        use queryflux_core::query::SqlDialect;
+        if self.driver != "flightsql" {
+            return self.engine_type().dialect();
+        }
+        let Some(raw) = &self.flight_sql_cluster_dialect else {
+            return self.engine_type().dialect();
+        };
+        let t = raw.trim();
+        if t.is_empty() {
+            return self.engine_type().dialect();
+        }
+        if let Some(engine) = parse_engine_type_override(t) {
+            return engine.dialect();
+        }
+        SqlDialect::Sqlglot(t.to_lowercase())
     }
 }
 
@@ -202,10 +229,17 @@ impl crate::EngineConfigParseable for AdbcConfig {
             _ => Vec::new(),
         };
 
-        let flight_sql_engine = json
-            .get("flightSqlEngine")
+        let flight_sql_cluster_dialect = json
+            .get("flightSqlClusterDialect")
             .and_then(|v| v.as_str())
-            .and_then(parse_engine_type_override);
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                json.get("flightSqlEngine")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
 
         let pool_size = json
             .get("poolSize")
@@ -220,7 +254,7 @@ impl crate::EngineConfigParseable for AdbcConfig {
             username,
             password,
             db_kwargs,
-            flight_sql_engine,
+            flight_sql_cluster_dialect,
             pool_size,
         })
     }
@@ -244,6 +278,7 @@ pub struct AdbcAdapter {
     pub group_name: ClusterGroupName,
     pool: AdbcPool,
     engine_type: EngineType,
+    translation_dialect: queryflux_core::query::SqlDialect,
 }
 
 impl AdbcAdapter {
@@ -253,6 +288,7 @@ impl AdbcAdapter {
         config: AdbcConfig,
     ) -> Result<Self> {
         let engine_type = config.engine_type();
+        let translation_dialect = config.flight_sql_translation_dialect();
 
         let mut driver = ManagedDriver::load_from_name(
             &config.driver,
@@ -306,6 +342,7 @@ impl AdbcAdapter {
             group_name,
             pool,
             engine_type,
+            translation_dialect,
         })
     }
 
@@ -364,9 +401,9 @@ impl AdbcAdapter {
                     example: Some("{}"),
                 },
                 ConfigField {
-                    key: "flightSqlEngine",
-                    label: "FlightSQL target engine",
-                    description: "When driver is flightsql: backend dialect for SQL translation/transpilation. Flight SQL is transport only.",
+                    key: "flightSqlClusterDialect",
+                    label: "Cluster SQL dialect (Flight SQL)",
+                    description: "When driver is flightsql: which SQL dialect this cluster speaks, for translation. Flight SQL is only the wire protocol.",
                     field_type: FieldType::Text,
                     required: false,
                     example: Some("starrocks"),
@@ -461,6 +498,10 @@ impl SyncAdapter for AdbcAdapter {
 
     fn engine_type(&self) -> EngineType {
         self.engine_type.clone()
+    }
+
+    fn translation_target_dialect(&self) -> queryflux_core::query::SqlDialect {
+        self.translation_dialect.clone()
     }
 
     async fn fetch_running_query_count(&self) -> Option<u64> {
@@ -686,7 +727,7 @@ impl EngineAdapterFactory for AdbcFactory {
 mod tests {
     use super::AdbcConfig;
     use crate::EngineConfigParseable;
-    use queryflux_core::query::EngineType;
+    use queryflux_core::query::{EngineType, SqlDialect};
 
     #[test]
     fn trino_driver_maps_to_trino_engine_type() {
@@ -795,7 +836,7 @@ mod tests {
             "uri": "snowflake://acct/db"
         });
         let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
-        assert_eq!(cfg.engine_type(), EngineType::Adbc);
+        assert_eq!(cfg.engine_type(), EngineType::Snowflake);
     }
 
     #[test]
@@ -816,11 +857,22 @@ mod tests {
         });
         let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
         assert_eq!(cfg.engine_type(), EngineType::Adbc);
-        assert!(cfg.flight_sql_engine.is_none());
+        assert!(cfg.flight_sql_cluster_dialect.is_none());
     }
 
     #[test]
-    fn flightsql_with_trino_override_maps_to_trino() {
+    fn flightsql_with_trino_cluster_dialect_maps_to_trino() {
+        let json = serde_json::json!({
+            "driver": "flightsql",
+            "uri": "grpc://localhost:31337",
+            "flightSqlClusterDialect": "trino"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Trino);
+    }
+
+    #[test]
+    fn flightsql_legacy_flight_sql_engine_key_still_parsed() {
         let json = serde_json::json!({
             "driver": "flightsql",
             "uri": "grpc://localhost:31337",
@@ -831,25 +883,41 @@ mod tests {
     }
 
     #[test]
-    fn flight_sql_engine_override_is_case_insensitive() {
+    fn flight_sql_cluster_dialect_is_case_insensitive() {
         let json = serde_json::json!({
             "driver": "flightsql",
             "uri": "grpc://localhost:31337",
-            "flightSqlEngine": "StarRocks"
+            "flightSqlClusterDialect": "StarRocks"
         });
         let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
         assert_eq!(cfg.engine_type(), EngineType::StarRocks);
     }
 
     #[test]
-    fn unknown_flight_sql_engine_string_is_ignored() {
+    fn flight_sql_cluster_dialect_new_key_wins_over_legacy() {
         let json = serde_json::json!({
             "driver": "flightsql",
             "uri": "grpc://localhost:31337",
-            "flightSqlEngine": "not-a-known-engine"
+            "flightSqlClusterDialect": "trino",
+            "flightSqlEngine": "starrocks"
+        });
+        let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
+        assert_eq!(cfg.engine_type(), EngineType::Trino);
+    }
+
+    #[test]
+    fn flight_sql_arbitrary_dialect_maps_engine_to_adbc_but_translates_via_sqlglot() {
+        let json = serde_json::json!({
+            "driver": "flightsql",
+            "uri": "grpc://localhost:31337",
+            "flightSqlClusterDialect": "hive"
         });
         let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
         assert_eq!(cfg.engine_type(), EngineType::Adbc);
+        assert_eq!(
+            cfg.flight_sql_translation_dialect(),
+            SqlDialect::Sqlglot("hive".to_string())
+        );
     }
 
     #[test]
@@ -922,7 +990,7 @@ mod tests {
         let json = serde_json::json!({
             "driver": "flightsql",
             "uri": "grpc://h:9000",
-            "flightSqlEngine": "starrocks"
+            "flightSqlClusterDialect": "starrocks"
         });
         let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
         assert_eq!(cfg.engine_type(), EngineType::StarRocks);

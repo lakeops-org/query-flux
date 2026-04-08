@@ -171,8 +171,8 @@ impl AppState {
             let fp = rich_fingerprint(
                 &original_sql,
                 translated_sql_for_fp.as_deref(),
-                src_dialect,
-                tgt_dialect,
+                src_dialect.as_str(),
+                tgt_dialect.as_str(),
             );
             record.query_hash = Some(fp.query_hash as i64);
             record.query_parameterized_hash = Some(fp.query_parameterized_hash as i64);

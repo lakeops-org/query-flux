@@ -18,6 +18,8 @@ export const MANAGED_CONFIG_JSON_KEYS = new Set([
   "username",
   "password",
   "dbKwargs",
+  "flightSqlClusterDialect",
+  /** @deprecated Prefer flightSqlClusterDialect; stripped on save from Studio. */
   "flightSqlEngine",
   "authType",
   "authUsername",
@@ -110,7 +112,9 @@ export function persistedClusterConfigToFlat(
   flat.username = jsonScalarToString(config.username);
   flat.password = jsonScalarToString(config.password);
   flat.dbKwargs = jsonObjectToString(config.dbKwargs);
-  flat.flightSqlEngine = jsonScalarToString(config.flightSqlEngine);
+  flat.flightSqlClusterDialect =
+    jsonScalarToString(config.flightSqlClusterDialect) ||
+    jsonScalarToString(config.flightSqlEngine);
   flat.region = jsonScalarToString(config.region);
   flat.s3OutputLocation = jsonScalarToString(config.s3OutputLocation);
   flat.workgroup = jsonScalarToString(config.workgroup);
@@ -155,7 +159,9 @@ export function flatToPersistedConfig(flat: Record<string, string>): Record<stri
   }
   const dbKwargs = stripStudioDbKwargsMeta(parseJsonObjectString(flat.dbKwargs));
   if (dbKwargs !== undefined) cfg.dbKwargs = dbKwargs;
-  if (flat.flightSqlEngine?.trim()) cfg.flightSqlEngine = flat.flightSqlEngine.trim();
+  if (flat.flightSqlClusterDialect?.trim()) {
+    cfg.flightSqlClusterDialect = flat.flightSqlClusterDialect.trim();
+  }
   if (flat["auth.type"]) cfg.authType = flat["auth.type"] || null;
   if (flat["auth.username"]) cfg.authUsername = flat["auth.username"];
   if (flat["auth.password"]) cfg.authPassword = flat["auth.password"];
@@ -219,7 +225,12 @@ export function mergeClusterConfigFromFlat(
       else delete out.dbKwargs;
     }
   }
-  setOrDel("flightSqlEngine", flat.flightSqlEngine, "flightSqlEngine");
+  setOrDel(
+    "flightSqlClusterDialect",
+    flat.flightSqlClusterDialect,
+    "flightSqlClusterDialect",
+  );
+  delete out.flightSqlEngine;
   if (flat["auth.type"] !== undefined) {
     const t = flat["auth.type"].trim();
     if (t) out.authType = t;
@@ -291,7 +302,9 @@ export function buildValidateShape(flat: Record<string, string>): Record<string,
   }
   const dbKwargs = stripStudioDbKwargsMeta(parseJsonObjectString(flat.dbKwargs));
   if (dbKwargs !== undefined) o.dbKwargs = dbKwargs;
-  if (flat.flightSqlEngine) o.flightSqlEngine = flat.flightSqlEngine;
+  if (flat.flightSqlClusterDialect) {
+    o.flightSqlClusterDialect = flat.flightSqlClusterDialect;
+  }
   if (flat.s3OutputLocation) o.s3OutputLocation = flat.s3OutputLocation;
   if (flat.account) o.account = flat.account;
   if (flat.warehouse) o.warehouse = flat.warehouse;

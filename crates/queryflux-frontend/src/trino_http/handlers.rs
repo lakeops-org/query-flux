@@ -776,7 +776,7 @@ pub async fn get_executing_statement(
         cluster_config_id: executing.cluster_config_id,
         engine_type: adapter.engine_type(),
         src_dialect: FrontendProtocol::TrinoHttp.default_dialect(),
-        tgt_dialect: adapter.engine_type().dialect(),
+        tgt_dialect: adapter.translation_target_dialect(),
         was_translated,
         translated_sql: if was_translated {
             Some(executing.sql.clone())

@@ -1,16 +1,26 @@
 "use client";
 
 import type { ConfigField } from "@/lib/engine-registry";
+import { adbcDocsUrlForDriver } from "@/lib/adbc-driver-spec";
+import { SQLGLOT_WRITE_DIALECTS } from "@/lib/sqlglot-dialects";
 import { DbKwargsField } from "./db-kwargs-field";
+
+function formatSqlglotDialectLabel(value: string): string {
+  if (value === "tsql") return "TSQL";
+  if (value === "prql") return "PRQL";
+  return value.length
+    ? value[0].toUpperCase() + value.slice(1)
+    : value;
+}
 
 const ADBC_DRIVER_OPTIONS = [
   "trino",
   "duckdb",
   "clickhouse",
   "mysql",
+  "flightsql",
   "postgresql",
   "sqlite",
-  "flightsql",
   "snowflake",
   "bigquery",
   "databricks",
@@ -18,7 +28,26 @@ const ADBC_DRIVER_OPTIONS = [
   "redshift",
   "exasol",
   "singlestore",
+  "jdbc",
 ] as const;
+
+const ADBC_URI_EXAMPLES: Partial<Record<(typeof ADBC_DRIVER_OPTIONS)[number], string>> = {
+  trino: "http://trino-host:8080",
+  duckdb: "file:///tmp/queryflux.duckdb",
+  clickhouse: "http://clickhouse-host:8123/default",
+  mysql: "mysql://user:pass@mysql-host:3306/db",
+  postgresql: "postgresql://user:pass@localhost:5433/postgres",
+  sqlite: "file:///tmp/queryflux.sqlite",
+  flightsql: "grpc+tls://flightsql-host:32010",
+  snowflake: "user:pass@account/database/schema?warehouse=WH&role=ROLE",
+  bigquery: "bigquery://project-id",
+  databricks: "databricks://token:<token>@<workspace-host>?http_path=<http-path>",
+  mssql: "sqlserver://user:pass@mssql-host:1433?database=mydb",
+  redshift: "redshift://user:pass@redshift-host:5439/dev",
+  exasol: "exa://user:pass@exasol-host:8563/schema",
+  singlestore: "mysql://user:pass@singlestore-host:3306/db",
+  jdbc: "jdbc:postgresql://db-host:5432/postgres",
+};
 
 export function ConfigFieldRow({
   field,
@@ -114,15 +143,28 @@ export function ConfigFieldRow({
 
   if (field.key === "driver") {
     const hasCustomValue = !!value && !ADBC_DRIVER_OPTIONS.includes(value as never);
+    const docsUrl = adbcDocsUrlForDriver(value);
     return (
       <div>
-        <label
-          htmlFor={id}
-          className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5"
-        >
-          {field.label}
-          {field.required && <span className="text-red-500 ml-0.5">*</span>}
-        </label>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <label
+            htmlFor={id}
+            className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide"
+          >
+            {field.label}
+            {field.required && <span className="text-red-500 ml-0.5">*</span>}
+          </label>
+          {docsUrl && (
+            <a
+              href={docsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] font-medium text-indigo-700 hover:text-indigo-800 underline underline-offset-2"
+            >
+              Driver docs
+            </a>
+          )}
+        </div>
         <select
           id={id}
           value={value}
@@ -147,10 +189,11 @@ export function ConfigFieldRow({
     );
   }
 
-  if (field.key === "flightSqlEngine") {
+  if (field.key === "flightSqlClusterDialect") {
     if ((flat?.driver ?? "").trim().toLowerCase() !== "flightsql") return null;
-    const options = ["starrocks", "trino", "clickhouse", "duckdb"] as const;
-    const hasCustomValue = !!value && !options.includes(value as never);
+    const v = (value ?? "").trim().toLowerCase();
+    const hasCustomValue =
+      !!v && !SQLGLOT_WRITE_DIALECTS.includes(v);
     return (
       <div>
         <label
@@ -170,10 +213,10 @@ export function ConfigFieldRow({
               : "border-slate-200 bg-white"
           }`}
         >
-          <option value="">— Select target engine —</option>
-          {options.map((opt) => (
+          <option value="">— Select sqlglot dialect —</option>
+          {SQLGLOT_WRITE_DIALECTS.map((opt) => (
             <option key={opt} value={opt}>
-              {opt}
+              {formatSqlglotDialectLabel(opt)}
             </option>
           ))}
           {hasCustomValue && <option value={value}>Custom ({value})</option>}
@@ -210,9 +253,13 @@ export function ConfigFieldRow({
         : "text";
 
   const textPlaceholder =
-    field.key === "uri" &&
-    (flat?.driver ?? "").trim().toLowerCase() === "postgresql"
-      ? "postgresql://user:pass@localhost:5433/postgres"
+    field.key === "uri"
+      ? (() => {
+          const driver = (flat?.driver ?? "").trim().toLowerCase() as
+            | (typeof ADBC_DRIVER_OPTIONS)[number]
+            | "";
+          return ADBC_URI_EXAMPLES[driver] ?? field.example;
+        })()
       : field.example;
 
   return (

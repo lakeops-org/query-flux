@@ -30,7 +30,7 @@ fn maybe_trino_adbc_adapter() -> Option<AdbcAdapter> {
         username: None,
         password: None,
         db_kwargs: Vec::new(),
-        flight_sql_engine: None,
+        flight_sql_cluster_dialect: None,
         pool_size: 2,
     };
     match AdbcAdapter::new(

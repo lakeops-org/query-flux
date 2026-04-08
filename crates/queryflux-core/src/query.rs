@@ -158,6 +158,9 @@ pub enum SqlDialect {
     Redshift,
     Exasol,
     Generic,
+    /// Any other sqlglot `read` / `write` dialect name (e.g. `hive`, `spark`, `oracle`).
+    #[serde(rename = "sqlglot")]
+    Sqlglot(String),
 }
 
 impl SqlDialect {
@@ -172,9 +175,10 @@ impl SqlDialect {
             )
     }
 
-    /// The dialect name as sqlglot expects it.
+    /// The dialect name as sqlglot expects it (built-in variants only).
     pub fn sqlglot_name(&self) -> &'static str {
         match self {
+            SqlDialect::Sqlglot(_) => "",
             SqlDialect::Trino => "trino",
             SqlDialect::Athena => "athena",
             SqlDialect::DuckDb => "duckdb",
@@ -190,6 +194,17 @@ impl SqlDialect {
             SqlDialect::Redshift => "redshift",
             SqlDialect::Exasol => "exasol",
             SqlDialect::Generic => "",
+        }
+    }
+
+    /// sqlglot `read` / `write` string for `transpile` (includes [`SqlDialect::Sqlglot`]).
+    pub fn sqlglot_write_name(&self) -> String {
+        match self {
+            SqlDialect::Sqlglot(s) => s.clone(),
+            _ => {
+                let s = self.sqlglot_name();
+                s.to_string()
+            }
         }
     }
 }

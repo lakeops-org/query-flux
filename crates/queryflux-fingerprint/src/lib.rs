@@ -16,23 +16,24 @@ pub use rich::{rich_fingerprint, QueryFingerprint};
 /// Map a `SqlDialect` to the dialect name string polyglot-sql expects.
 /// Kept here — not in queryflux-core — because polyglot-sql is an implementation
 /// detail of this crate only.
-pub fn polyglot_dialect(dialect: &queryflux_core::query::SqlDialect) -> &'static str {
+pub fn polyglot_dialect(dialect: &queryflux_core::query::SqlDialect) -> String {
     use queryflux_core::query::SqlDialect;
     match dialect {
-        SqlDialect::Trino => "trino",
-        SqlDialect::Athena => "presto",
-        SqlDialect::DuckDb => "duckdb",
-        SqlDialect::StarRocks => "starrocks",
-        SqlDialect::ClickHouse => "clickhouse",
-        SqlDialect::MySql => "mysql",
-        SqlDialect::Postgres => "postgresql",
-        SqlDialect::Sqlite => "sqlite",
-        SqlDialect::Snowflake => "snowflake",
-        SqlDialect::BigQuery => "bigquery",
-        SqlDialect::Databricks => "databricks",
-        SqlDialect::MsSql => "tsql",
-        SqlDialect::Redshift => "redshift",
-        SqlDialect::Exasol => "exasol",
-        SqlDialect::Generic => "generic",
+        SqlDialect::Sqlglot(s) => s.clone(),
+        SqlDialect::Trino => "trino".to_string(),
+        SqlDialect::Athena => "presto".to_string(),
+        SqlDialect::DuckDb => "duckdb".to_string(),
+        SqlDialect::StarRocks => "starrocks".to_string(),
+        SqlDialect::ClickHouse => "clickhouse".to_string(),
+        SqlDialect::MySql => "mysql".to_string(),
+        SqlDialect::Postgres => "postgresql".to_string(),
+        SqlDialect::Sqlite => "sqlite".to_string(),
+        SqlDialect::Snowflake => "snowflake".to_string(),
+        SqlDialect::BigQuery => "bigquery".to_string(),
+        SqlDialect::Databricks => "databricks".to_string(),
+        SqlDialect::MsSql => "tsql".to_string(),
+        SqlDialect::Redshift => "redshift".to_string(),
+        SqlDialect::Exasol => "exasol".to_string(),
+        SqlDialect::Generic => "generic".to_string(),
     }
 }

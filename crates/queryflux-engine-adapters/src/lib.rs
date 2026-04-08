@@ -59,6 +59,10 @@ pub trait SyncAdapter: Send + Sync {
         tags: &queryflux_core::tags::QueryTags,
     ) -> Result<SyncExecution>;
     fn engine_type(&self) -> queryflux_core::query::EngineType;
+    /// Target dialect for SQL translation (may differ from `engine_type().dialect()`, e.g. Flight SQL + arbitrary sqlglot backend).
+    fn translation_target_dialect(&self) -> queryflux_core::query::SqlDialect {
+        self.engine_type().dialect()
+    }
     async fn health_check(&self) -> bool;
     async fn fetch_running_query_count(&self) -> Option<u64> {
         None
@@ -92,6 +96,9 @@ pub trait AsyncAdapter: Send + Sync {
     ) -> Result<queryflux_core::query::QueryPollResult>;
     async fn cancel_query(&self, backend_id: &queryflux_core::query::BackendQueryId) -> Result<()>;
     fn engine_type(&self) -> queryflux_core::query::EngineType;
+    fn translation_target_dialect(&self) -> queryflux_core::query::SqlDialect {
+        self.engine_type().dialect()
+    }
     fn base_url(&self) -> &str {
         ""
     }
@@ -151,6 +158,13 @@ impl AdapterKind {
         match self {
             Self::Sync(a) => a.engine_type(),
             Self::Async(a) => a.engine_type(),
+        }
+    }
+
+    pub fn translation_target_dialect(&self) -> queryflux_core::query::SqlDialect {
+        match self {
+            Self::Sync(a) => a.translation_target_dialect(),
+            Self::Async(a) => a.translation_target_dialect(),
         }
     }
 
