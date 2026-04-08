@@ -49,6 +49,12 @@ const ADBC_URI_EXAMPLES: Partial<Record<(typeof ADBC_DRIVER_OPTIONS)[number], st
   jdbc: "jdbc:postgresql://db-host:5432/postgres",
 };
 
+function isKnownAdbcDriver(
+  v: string,
+): v is (typeof ADBC_DRIVER_OPTIONS)[number] {
+  return ADBC_DRIVER_OPTIONS.includes(v as never);
+}
+
 export function ConfigFieldRow({
   field,
   value,
@@ -255,10 +261,9 @@ export function ConfigFieldRow({
   const textPlaceholder =
     field.key === "uri"
       ? (() => {
-          const driver = (flat?.driver ?? "").trim().toLowerCase() as
-            | (typeof ADBC_DRIVER_OPTIONS)[number]
-            | "";
-          return ADBC_URI_EXAMPLES[driver] ?? field.example;
+          const raw = (flat?.driver ?? "").trim().toLowerCase();
+          if (!isKnownAdbcDriver(raw)) return field.example;
+          return ADBC_URI_EXAMPLES[raw] ?? field.example;
         })()
       : field.example;
 
