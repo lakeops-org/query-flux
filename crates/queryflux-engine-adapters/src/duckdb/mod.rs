@@ -9,15 +9,13 @@ use queryflux_core::{
     catalog::TableSchema,
     config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
-    query::{
-        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
-    },
+    query::{ClusterGroupName, ClusterName, EngineType},
     session::SessionContext,
     tags::QueryTags,
 };
 use tracing::debug;
 
-use crate::EngineAdapterTrait;
+use crate::{AdapterKind, SyncAdapter, SyncExecution};
 use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
@@ -128,34 +126,7 @@ fn build_connection_string(
 }
 
 #[async_trait]
-impl EngineAdapterTrait for DuckDbAdapter {
-    /// Not used — DuckDB queries go through `execute_as_arrow`.
-    async fn submit_query(
-        &self,
-        _sql: &str,
-        _session: &SessionContext,
-        _credentials: &queryflux_auth::QueryCredentials,
-        _tags: &QueryTags,
-    ) -> Result<QueryExecution> {
-        Err(QueryFluxError::Engine(
-            "DuckDB requires execute_as_arrow; use the Arrow execution path".to_string(),
-        ))
-    }
-
-    async fn poll_query(
-        &self,
-        _backend_id: &BackendQueryId,
-        _next_uri: Option<&str>,
-    ) -> Result<QueryPollResult> {
-        Err(QueryFluxError::Engine(
-            "DuckDB does not support async polling".to_string(),
-        ))
-    }
-
-    async fn cancel_query(&self, _backend_id: &BackendQueryId) -> Result<()> {
-        Ok(())
-    }
-
+impl SyncAdapter for DuckDbAdapter {
     async fn health_check(&self) -> bool {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || {
@@ -170,17 +141,13 @@ impl EngineAdapterTrait for DuckDbAdapter {
         EngineType::DuckDb
     }
 
-    fn supports_async(&self) -> bool {
-        false
-    }
-
     async fn execute_as_arrow(
         &self,
         sql: &str,
         _session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         _tags: &QueryTags,
-    ) -> Result<crate::ArrowStream> {
+    ) -> Result<SyncExecution> {
         debug!(cluster = %self.cluster_name, "Executing DuckDB query as Arrow");
         let conn = Arc::clone(&self.conn);
         let sql = sql.to_string();
@@ -198,7 +165,12 @@ impl EngineAdapterTrait for DuckDbAdapter {
         .await
         .map_err(|e| QueryFluxError::Engine(format!("spawn_blocking failed: {e}")))??;
 
-        Ok(Box::pin(stream::iter(batches.into_iter().map(Ok))))
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        // DuckDB does not expose structured engine stats (CPU time, bytes scanned, etc.)
+        // via the query_arrow API — send None and establish the pattern for future use.
+        let _ = tx.send(None);
+        let stream = Box::pin(stream::iter(batches.into_iter().map(Ok)));
+        Ok(SyncExecution { stream, stats: rx })
     }
 
     // --- Catalog discovery ---
@@ -425,10 +397,14 @@ impl crate::EngineAdapterFactory for DuckDbFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+    ) -> Result<crate::AdapterKind> {
         use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
         let config = DuckDbConfig::from_json(json, &name)?;
-        Ok(Arc::new(DuckDbAdapter::new(cluster_name, group, config)?))
+        Ok(AdapterKind::Sync(Arc::new(DuckDbAdapter::new(
+            cluster_name,
+            group,
+            config,
+        )?)))
     }
 }

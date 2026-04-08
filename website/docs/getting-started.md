@@ -1,11 +1,12 @@
 ---
 sidebar_position: 1
-description: Run QueryFlux with Docker Compose examples, connect SQL clients, and verify multi-engine routing in minutes.
+sidebar_label: Getting started
+description: Run QueryFlux with Docker Compose, connect SQL clients, and verify routing in minutes.
 ---
 
 # Getting started
 
-The fastest way to run QueryFlux is one of the **Docker Compose examples** under [`examples/`](https://github.com/lakeops-org/queryflux/tree/main/examples) in the repository. Run commands **from inside the chosen example directory** so paths like `./config.yaml` resolve.
+The fastest path is a **Docker Compose** example under [`examples/`](https://github.com/lakeops-org/queryflux/tree/main/examples). Run commands **from that example directory** so paths like `./config.yaml` resolve.
 
 See the **[examples README](https://github.com/lakeops-org/queryflux/blob/main/examples/README.md)** for a comparison table, image/registry notes, and environment variables (`RUST_LOG`, `TPCH_SCALE` for the full stack).
 

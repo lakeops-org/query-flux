@@ -89,6 +89,8 @@ benchmark-run:
 ## Run E2E tests. Spins up Trino + StarRocks + Lakekeeper stack via Docker.
 ## CI runs the same compose + `cargo test -p queryflux-e2e-tests` steps explicitly (see `e2e` job).
 ## Requires reachable engines; see docker/docker-compose.test.yml.
+## Trino ADBC tests (`tests/trino_adbc_tests.rs`) need the Trino ADBC driver on the host (`dbc install trino`);
+## `TRINO_ADBC_URI` matches the compose Trino port (same as TRINO_URL).
 ## `--test-threads=1`: StarRocks Iceberg is slow; default parallel libtest + `#[serial]` makes
 ## every test report libtest's 60s "slow test" spam while threads wait on the serial lock.
 ## Iceberg/Lakekeeper tables are created by the e2e crate (no TPC-H loader).
@@ -102,6 +104,7 @@ test-e2e:
 	PYO3_PYTHON=$(shell pwd)/.venv/bin/python3 \
 	PYTHONPATH=$(PYTHONPATH_VENV) \
 	TRINO_URL=http://localhost:18081 \
+	TRINO_ADBC_URI=http://localhost:18081 \
 	STARROCKS_URL=mysql://root@localhost:9030 \
 	LAKEKEEPER_URL=http://localhost:18181 \
 	MINIO_ENDPOINT=localhost:19000 \

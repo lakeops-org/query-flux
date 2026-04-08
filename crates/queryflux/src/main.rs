@@ -15,7 +15,7 @@ use queryflux_core::query::{ClusterGroupName, ClusterName, EngineType};
 use queryflux_frontend::{
     admin::{
         build_frontends_status, AdminFrontend, RoutingConfigDto as AdminRoutingConfigDto,
-        SecurityConfigDto as AdminSecurityConfigDto,
+        SecurityConfigDto as AdminSecurityConfigDto, TestClusterFn,
     },
     flight_sql::FlightSqlFrontend,
     mysql_wire::MysqlWireFrontend,
@@ -325,7 +325,7 @@ async fn main() -> Result<()> {
     // Pass 1: iterate `config.clusters`, build one adapter per cluster name.
     // Pass 2: iterate `config.cluster_groups`, resolve members, build ClusterStates.
 
-    type AdapterMap = HashMap<String, Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>>;
+    type AdapterMap = HashMap<String, queryflux_engine_adapters::AdapterKind>;
     let mut adapters: AdapterMap = HashMap::new();
 
     // Pass 1 — one adapter per cluster.
@@ -338,15 +338,25 @@ async fn main() -> Result<()> {
             }
             let cluster_name = ClusterName(record.name.clone());
             let placeholder_group = ClusterGroupName("_".to_string());
-            let adapter = registered_engines::build_adapter_from_record(
+            match registered_engines::build_adapter_from_record(
                 cluster_name,
                 placeholder_group,
                 &record.engine_key,
                 &record.config,
             )
             .await
-            .with_context(|| format!("Failed to build adapter for cluster '{}'", record.name))?;
-            adapters.insert(record.name.clone(), adapter);
+            {
+                Ok(adapter) => {
+                    adapters.insert(record.name.clone(), adapter);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        cluster = %record.name,
+                        error = %e,
+                        "Failed to build engine adapter — cluster omitted from routing until config or environment is fixed"
+                    );
+                }
+            }
         }
     } else {
         for (cluster_name_str, cluster_cfg) in &config.clusters {
@@ -356,15 +366,25 @@ async fn main() -> Result<()> {
             }
             let cluster_name = ClusterName(cluster_name_str.clone());
             let placeholder_group = ClusterGroupName("_".to_string());
-            let adapter = registered_engines::build_adapter(
+            match registered_engines::build_adapter(
                 cluster_name,
                 placeholder_group,
                 cluster_cfg,
                 cluster_name_str,
             )
             .await
-            .with_context(|| format!("Failed to build adapter for cluster '{cluster_name_str}'"))?;
-            adapters.insert(cluster_name_str.clone(), adapter);
+            {
+                Ok(adapter) => {
+                    adapters.insert(cluster_name_str.clone(), adapter);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        cluster = %cluster_name_str,
+                        error = %e,
+                        "Failed to build engine adapter — cluster omitted from routing until config or environment is fixed"
+                    );
+                }
+            }
         }
     }
 
@@ -403,8 +423,11 @@ async fn main() -> Result<()> {
             ))?;
 
             if !adapters.contains_key(member_name.as_str()) {
-                // Cluster was disabled in Pass 1 — skip silently.
-                tracing::info!(group = %group_name, cluster = %member_name, "Skipping disabled cluster in group");
+                tracing::warn!(
+                    group = %group_name,
+                    cluster = %member_name,
+                    "Skipping cluster in group: disabled, or adapter failed to build at startup"
+                );
                 continue;
             }
 
@@ -744,6 +767,19 @@ async fn main() -> Result<()> {
         settings_store,
     ));
 
+    let test_cluster_fn: TestClusterFn = Arc::new(|engine_key, config_json| {
+        Box::pin(async move {
+            let adapter = registered_engines::build_adapter_from_record(
+                ClusterName("__test__".to_string()),
+                ClusterGroupName("__test__".to_string()),
+                &engine_key,
+                &config_json,
+            )
+            .await?;
+            Ok(adapter.health_check().await)
+        })
+    });
+
     let admin = AdminFrontend::new(
         prometheus,
         live.clone(),
@@ -755,6 +791,7 @@ async fn main() -> Result<()> {
         config_reload_notify.clone(),
         frontends_status,
         admin_creds,
+        test_cluster_fn,
     );
 
     // --- Start Trino HTTP frontend ---
@@ -1097,7 +1134,7 @@ fn max_running_queries_u64_from_db(cluster: &str, v: Option<i64>) -> Result<Opti
 /// reload fingerprint changes (`engine_key` + config JSON), so engine switches and
 /// endpoint/credential updates rebuild adapters.
 struct AdapterReloadCache {
-    adapters: HashMap<String, Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>>,
+    adapters: HashMap<String, queryflux_engine_adapters::AdapterKind>,
     config_json: HashMap<String, String>,
     /// Previous-generation cluster states keyed by cluster name.
     /// Preserved across reloads so that health status and running-query counters
@@ -1111,11 +1148,8 @@ struct AdapterReloadCache {
 
 fn health_targets_from_groups(
     group_states: &GroupStatesMap,
-    adapters: &HashMap<String, Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>>,
-) -> Vec<(
-    Arc<dyn queryflux_engine_adapters::EngineAdapterTrait>,
-    Arc<ClusterState>,
-)> {
+    adapters: &HashMap<String, queryflux_engine_adapters::AdapterKind>,
+) -> Vec<(queryflux_engine_adapters::AdapterKind, Arc<ClusterState>)> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for (states, _) in group_states.values() {
@@ -1204,7 +1238,11 @@ async fn build_live_config(
         {
             Ok(a) => a,
             Err(e) => {
-                tracing::warn!(cluster = %cluster_name_str, "Reload: adapter build failed: {e:#}");
+                tracing::error!(
+                    cluster = %cluster_name_str,
+                    error = %e,
+                    "Reload: failed to build engine adapter — cluster omitted until fixed"
+                );
                 continue;
             }
         };

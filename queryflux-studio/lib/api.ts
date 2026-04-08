@@ -11,6 +11,7 @@ import {
   SESSION_COOKIE_NAME,
   basicAuthFromCookieValue,
 } from "./admin-session-codec";
+import { normalizeClusterConfigRecord } from "./cluster-config-helpers";
 import { normalizeClusterGroupRecord } from "./group-config-helpers";
 
 const ADMIN_DIRECT = process.env.ADMIN_API_URL ?? "http://localhost:9000";
@@ -215,28 +216,37 @@ export async function getGroupStats(hours = 24): Promise<GroupStatRow[]> {
 // ---------------------------------------------------------------------------
 
 export async function listClusterConfigs(): Promise<import("./api-types").ClusterConfigRecord[]> {
-  return apiFetch("/admin/config/clusters");
+  const raw = await apiFetch<unknown[]>("/admin/config/clusters");
+  return Array.isArray(raw) ? raw.map(normalizeClusterConfigRecord) : [];
 }
 
 export async function getClusterConfig(name: string): Promise<import("./api-types").ClusterConfigRecord> {
-  return apiFetch(`/admin/config/clusters/${encodeURIComponent(name)}`);
+  const raw = await apiFetch<unknown>(
+    `/admin/config/clusters/${encodeURIComponent(name)}`,
+  );
+  return normalizeClusterConfigRecord(raw);
 }
 
 export async function upsertClusterConfig(
   name: string,
   body: import("./api-types").UpsertClusterConfig,
 ): Promise<import("./api-types").ClusterConfigRecord> {
-  return apiPut(`/admin/config/clusters/${encodeURIComponent(name)}`, body);
+  const raw = await apiPut<unknown>(
+    `/admin/config/clusters/${encodeURIComponent(name)}`,
+    body,
+  );
+  return normalizeClusterConfigRecord(raw);
 }
 
 export async function renameClusterConfig(
   currentName: string,
   body: import("./api-types").RenameConfigRequest,
 ): Promise<import("./api-types").ClusterConfigRecord> {
-  return apiPatch<import("./api-types").ClusterConfigRecord>(
+  const raw = await apiPatch<unknown>(
     `/admin/config/clusters/${encodeURIComponent(currentName)}`,
     body,
   );
+  return normalizeClusterConfigRecord(raw);
 }
 
 export async function deleteClusterConfig(name: string): Promise<void> {
@@ -338,6 +348,22 @@ export async function putSecurityConfig(body: import("./api-types").UpsertSecuri
 
 export async function putRoutingConfig(body: import("./api-types").UpsertRoutingConfig): Promise<void> {
   return apiPutNoContent("/admin/config/routing", body);
+}
+
+// ---------------------------------------------------------------------------
+// Test connection
+// ---------------------------------------------------------------------------
+
+export interface TestClusterConfigResponse {
+  ok: boolean;
+  message: string;
+}
+
+export async function testClusterConfig(
+  engineKey: string,
+  config: Record<string, unknown>,
+): Promise<TestClusterConfigResponse> {
+  return apiPost("/admin/config/clusters/test", { engine_key: engineKey, config });
 }
 
 // ---------------------------------------------------------------------------

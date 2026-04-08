@@ -152,6 +152,11 @@ jobs:
           echo "PYO3_PYTHON=${GITHUB_WORKSPACE}/.venv/bin/python3" >> "$GITHUB_ENV"
           echo "PYTHONPATH=$(.venv/bin/python3 -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
 
+      - name: Install Trino ADBC driver (dbc)
+        run: |
+          bash scripts/install-adbc-trino-driver.sh
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
       # Same stack as `make test-e2e`, but split so "Engine logs" / `compose down` still run if `cargo test` fails.
       - name: Start e2e Docker stack (Trino + StarRocks + sentinel)
         run: |
@@ -160,6 +165,7 @@ jobs:
       - name: E2E tests (queryflux-e2e-tests)
         env:
           TRINO_URL: http://localhost:18081
+          TRINO_ADBC_URI: http://localhost:18081
           STARROCKS_URL: mysql://root@localhost:9030
           LAKEKEEPER_URL: http://localhost:18181
           MINIO_ENDPOINT: localhost:19000

@@ -9,44 +9,73 @@ type OptionItem = {
   to: string;
   body: string;
   cta: string;
+  icon: ReactNode;
 };
 
 const options: OptionItem[] = [
   {
+    title: 'Getting started',
+    to: '/docs/getting-started',
+    body:
+      'Docker Compose examples, ports, and a one-line curl to verify Trino HTTP through QueryFlux.',
+    cta: 'Run your first stack',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+        <polyline points="9 22 9 12 15 12 15 22"/>
+      </svg>
+    ),
+  },
+  {
+    title: 'Configuration',
+    to: '/docs/configuration',
+    body:
+      'Full YAML reference: frontends, cluster groups, routing rules, admin API, and persistence.',
+    cta: 'Open the YAML reference',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+    ),
+  },
+  {
     title: 'Architecture',
-    to: '/docs/intro#how-does-it-work',
+    to: '/docs/architecture/overview',
     body:
-      'How queries move through QueryFlux: protocol ingestion, routing rules, cluster groups, dialect translation, and dispatch.',
-    cta: 'See how queries flow',
-  },
-  {
-    title: 'Motivation and goals',
-    to: '/docs/intro#what-is-queryflux',
-    body:
-      'Why a universal SQL proxy matters: fragmented engines, N×M integrations, and QueryFlux as the compute interoperability layer.',
-    cta: 'Understand the problem space',
-  },
-  {
-    title: 'Configuration reference',
-    to: '/docs/intro#next-steps',
-    body:
-      'Start from the intro’s next steps: Docker Compose, architecture deep-dives, full YAML reference, and roadmap links.',
-    cta: 'Follow the documentation map',
+      'How components fit together: frontends, router, cluster groups, translation, observability.',
+    cta: 'Read the system overview',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1"/>
+        <rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="14" y="14" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/>
+      </svg>
+    ),
   },
   {
     title: 'Roadmap',
     to: '/docs/roadmap',
     body:
-      'What is shipped, in progress, and planned — engines, routing features, and integrations.',
-    cta: "See what's shipped and what's next",
+      'What is shipped, in progress, and planned — engines, routing, and integrations.',
+    cta: "See what's next",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <line x1="12" y1="20" x2="12" y2="10"/>
+        <line x1="18" y1="20" x2="18" y2="4"/>
+        <line x1="6" y1="20" x2="6" y2="16"/>
+      </svg>
+    ),
   },
 ];
 
-function OptionCard({title, to, body, cta}: OptionItem): ReactNode {
+function OptionCard({title, to, body, cta, icon}: OptionItem): ReactNode {
   return (
     <article className={styles.optionCol}>
       <Link className={styles.optionCard} to={to}>
         <div className={styles.cardAccent} aria-hidden />
+        <div className={styles.optionIconWrap} aria-hidden="true">{icon}</div>
         <Heading as="h3" className={styles.optionTitle}>
           {title}
         </Heading>
@@ -62,28 +91,28 @@ export default function HomepageNextSteps(): ReactNode {
     <section className={styles.section} aria-labelledby="homepage-getting-started-heading">
       <div className={clsx('container', styles.grid)}>
         <h2 id="homepage-getting-started-heading" className={styles.sectionHeading}>
-          Getting started
+          Documentation
         </h2>
         <p className={styles.sectionSub}>
-          Start fast, then dive deeper by track.
+          Quick guides and reference — same layout as the sidebar.
         </p>
 
         <section className={styles.primaryCta} aria-label="Quick start with Docker Compose">
           <div className={styles.cardAccent} aria-hidden />
-          <p className={styles.primaryEyebrow}>Quick start</p>
+          <p className={styles.primaryEyebrow}>Overview</p>
           <Heading as="h3" className={styles.primaryTitle}>
-            Run with Docker Compose
+            What QueryFlux does
           </Heading>
           <p className={styles.primaryText}>
-            The fastest path is a Docker Compose example under <code>examples/</code> in the
-            repository — then read the intro for how routing and protocols fit together.
+            Read the documentation home for quick guides, how routing works, and links into the
+            reference manual — then open Getting started when you are ready to run a stack.
           </p>
           <div className={styles.primaryActions}>
-            <Link className={clsx('button button--lg', styles.primaryButton)} to="/docs/getting-started">
-              Open getting started guide
+            <Link className={clsx('button button--lg', styles.primaryButton)} to="/docs/intro">
+              Open documentation overview
             </Link>
-            <Link className={styles.secondaryLink} to="/docs/intro#what-is-queryflux">
-              Read the project overview
+            <Link className={styles.secondaryLink} to="/docs/getting-started">
+              Skip to Docker Compose
             </Link>
           </div>
         </section>
@@ -97,4 +126,3 @@ export default function HomepageNextSteps(): ReactNode {
     </section>
   );
 }
-

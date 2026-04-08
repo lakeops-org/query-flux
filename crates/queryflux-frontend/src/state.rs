@@ -13,7 +13,8 @@ use queryflux_core::{
     session::SessionContext,
     tags::QueryTags,
 };
-use queryflux_engine_adapters::EngineAdapterTrait;
+use queryflux_engine_adapters::AdapterKind;
+use queryflux_fingerprint::{polyglot_dialect, rich_fingerprint};
 use queryflux_metrics::{MetricsStore, QueryRecord};
 use queryflux_persistence::Persistence;
 use queryflux_routing::chain::{RouterChain, RoutingTrace};
@@ -28,10 +29,10 @@ pub struct LiveConfig {
     pub router_chain: RouterChain,
     pub cluster_manager: Arc<dyn ClusterGroupManager>,
     /// cluster_name → adapter (one adapter per physical cluster, shared across groups).
-    pub adapters: HashMap<String, Arc<dyn EngineAdapterTrait>>,
+    pub adapters: HashMap<String, AdapterKind>,
     /// One `(adapter, ClusterState)` per physical cluster (first group membership wins).
     /// Used by background health / reconcile tasks so they track the **current** reload generation.
-    pub health_check_targets: Vec<(Arc<dyn EngineAdapterTrait>, Arc<ClusterState>)>,
+    pub health_check_targets: Vec<(AdapterKind, Arc<ClusterState>)>,
     /// Cluster configs keyed by cluster name — used by `BackendIdentityResolver` to
     /// look up `queryAuth` after a cluster is selected.
     pub cluster_configs: HashMap<String, ClusterConfig>,
@@ -70,21 +71,19 @@ pub struct AppState {
 /// Stable per-query metadata that does not change across the query's lifecycle.
 /// Built once (after cluster selection and SQL translation) and passed to every
 /// `record_query` call within the same dispatch function.
-pub struct QueryContext<'a> {
-    pub query_id: &'a ProxyQueryId,
-    /// Original SQL as submitted by the client (pre-translation).
-    pub sql: &'a str,
-    pub session: &'a SessionContext,
+pub struct QueryContext {
+    pub query_id: ProxyQueryId,
+    pub sql: String,
+    pub session: SessionContext,
     pub protocol: FrontendProtocol,
-    pub group: &'a ClusterGroupName,
-    pub cluster: &'a ClusterName,
+    pub group: ClusterGroupName,
+    pub cluster: ClusterName,
     pub cluster_group_config_id: Option<i64>,
     pub cluster_config_id: Option<i64>,
     pub engine_type: EngineType,
     pub src_dialect: SqlDialect,
     pub tgt_dialect: SqlDialect,
     pub was_translated: bool,
-    /// The translated SQL sent to the backend, when translation occurred.
     pub translated_sql: Option<String>,
     pub query_tags: QueryTags,
 }
@@ -102,7 +101,7 @@ pub struct QueryOutcome {
 }
 
 impl AppState {
-    pub async fn adapter(&self, cluster: &str) -> Option<Arc<dyn EngineAdapterTrait>> {
+    pub async fn adapter(&self, cluster: &str) -> Option<AdapterKind> {
         self.live.read().await.adapters.get(cluster).cloned()
     }
 
@@ -116,20 +115,23 @@ impl AppState {
         live.group_members
             .get(group)
             .map(|members| {
-                members.iter().any(|name| {
-                    live.adapters
-                        .get(name)
-                        .map(|a| a.supports_async())
-                        .unwrap_or(false)
-                })
+                members
+                    .iter()
+                    .any(|name| matches!(live.adapters.get(name), Some(AdapterKind::Async(_))))
             })
             .unwrap_or(false)
     }
 
     /// Fire-and-forget: build a `QueryRecord` and write it to the metrics store asynchronously.
     /// Called once per query at completion (success, failure, or cancellation).
-    pub fn record_query(&self, ctx: &QueryContext<'_>, outcome: QueryOutcome) {
-        let record = QueryRecord {
+    pub fn record_query(&self, ctx: &QueryContext, outcome: QueryOutcome) {
+        // Capture what we need for rich fingerprinting before moving into the spawn.
+        let original_sql = ctx.sql.to_owned();
+        let translated_sql_for_fp = ctx.translated_sql.clone();
+        let src_dialect = polyglot_dialect(&ctx.src_dialect);
+        let tgt_dialect = polyglot_dialect(&ctx.tgt_dialect);
+
+        let mut record = QueryRecord {
             proxy_query_id: ctx.query_id.0.clone(),
             backend_query_id: outcome.backend_query_id,
             cluster_group: ctx.group.clone(),
@@ -158,9 +160,25 @@ impl AppState {
             created_at: Utc::now(),
             engine_stats: outcome.engine_stats,
             query_tags: ctx.query_tags.clone(),
+            query_hash: None,
+            query_parameterized_hash: None,
+            translated_query_hash: None,
+            digest_text: None,
+            translated_digest_text: None,
         };
         let metrics = self.metrics.clone();
         tokio::spawn(async move {
+            let fp = rich_fingerprint(
+                &original_sql,
+                translated_sql_for_fp.as_deref(),
+                src_dialect.as_str(),
+                tgt_dialect.as_str(),
+            );
+            record.query_hash = Some(fp.query_hash as i64);
+            record.query_parameterized_hash = Some(fp.query_parameterized_hash as i64);
+            record.translated_query_hash = fp.translated_query_hash.map(|h| h as i64);
+            record.digest_text = Some(fp.digest_text);
+            record.translated_digest_text = fp.translated_digest_text;
             let _ = metrics.record_query(record).await;
         });
     }

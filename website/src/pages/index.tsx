@@ -11,6 +11,7 @@ import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import HomepageUseCases from '@site/src/components/HomepageUseCases';
 import HomepageBenefits from '@site/src/components/HomepageBenefits';
 import HomepageNextSteps from '@site/src/components/HomepageNextSteps';
+import StatsStrip from '@site/src/components/StatsStrip';
 import styles from './index.module.css';
 
 function HomepageHeader(): ReactNode {
@@ -72,6 +73,7 @@ export default function Home(): ReactNode {
     <Layout title={HOME_PAGE_TITLE} description={HOME_DESCRIPTION}>
       <HomepageHeader />
       <main className={styles.mainBelowFold}>
+        <StatsStrip />
         <HomepageFeatures />
         <HomepageUseCases />
         <HomepageBenefits />

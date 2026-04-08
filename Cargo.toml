@@ -14,6 +14,7 @@ members = [
     "crates/queryflux-cluster-manager",
     "crates/queryflux-config",
     "crates/queryflux-metrics",
+    "crates/queryflux-fingerprint",
 ]
 
 [workspace.package]
@@ -68,6 +69,7 @@ queryflux-frontend = { path = "crates/queryflux-frontend" }
 queryflux-cluster-manager = { path = "crates/queryflux-cluster-manager" }
 queryflux-config = { path = "crates/queryflux-config" }
 queryflux-metrics = { path = "crates/queryflux-metrics" }
+queryflux-fingerprint = { path = "crates/queryflux-fingerprint" }
 
 # Arrow ecosystem — version must match what duckdb uses (bundled duckdb crate pins arrow)
 arrow = { version = "58.1.0", features = ["ipc"] }

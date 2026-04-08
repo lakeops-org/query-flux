@@ -1,5 +1,6 @@
 ---
-sidebar_position: 2
+sidebar_position: 1
+sidebar_label: YAML reference
 description: Complete reference for config.yaml — frontends, cluster groups, routing rules, concurrency limits, and observability settings.
 ---
 

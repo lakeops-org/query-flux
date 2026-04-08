@@ -12,16 +12,14 @@ use queryflux_core::{
     catalog::TableSchema,
     config::ClusterConfig,
     error::{QueryFluxError, Result},
-    query::{
-        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
-    },
+    query::{ClusterGroupName, ClusterName, EngineType},
     session::SessionContext,
     tags::QueryTags,
 };
 use reqwest::Client;
 use tracing::debug;
 
-use crate::{ArrowStream, EngineAdapterTrait};
+use crate::{AdapterKind, SyncAdapter, SyncExecution};
 use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
@@ -229,33 +227,7 @@ impl DuckDbHttpAdapter {
 }
 
 #[async_trait]
-impl EngineAdapterTrait for DuckDbHttpAdapter {
-    async fn submit_query(
-        &self,
-        _sql: &str,
-        _session: &SessionContext,
-        _credentials: &QueryCredentials,
-        _tags: &QueryTags,
-    ) -> Result<QueryExecution> {
-        Err(QueryFluxError::Engine(
-            "DuckDB HTTP requires execute_as_arrow; use the Arrow execution path".to_string(),
-        ))
-    }
-
-    async fn poll_query(
-        &self,
-        _backend_id: &BackendQueryId,
-        _next_uri: Option<&str>,
-    ) -> Result<QueryPollResult> {
-        Err(QueryFluxError::Engine(
-            "DuckDB HTTP does not support async polling".to_string(),
-        ))
-    }
-
-    async fn cancel_query(&self, _backend_id: &BackendQueryId) -> Result<()> {
-        Ok(())
-    }
-
+impl SyncAdapter for DuckDbHttpAdapter {
     async fn health_check(&self) -> bool {
         self.run_query("SELECT 1").await.is_ok()
     }
@@ -264,25 +236,20 @@ impl EngineAdapterTrait for DuckDbHttpAdapter {
         EngineType::DuckDbHttp
     }
 
-    fn supports_async(&self) -> bool {
-        false
-    }
-
-    fn base_url(&self) -> &str {
-        &self.endpoint
-    }
-
     async fn execute_as_arrow(
         &self,
         sql: &str,
         _session: &SessionContext,
         _credentials: &QueryCredentials,
         _tags: &QueryTags,
-    ) -> Result<ArrowStream> {
+    ) -> Result<SyncExecution> {
         debug!(cluster = %self.cluster_name, "Executing DuckDB HTTP query");
         let response = self.run_query(sql).await?;
         let batch = response_to_record_batch(response)?;
-        Ok(Box::pin(stream::iter(vec![Ok(batch)])))
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(None);
+        let stream = Box::pin(stream::iter(vec![Ok(batch)]));
+        Ok(SyncExecution { stream, stats: rx })
     }
 
     async fn list_catalogs(&self) -> Result<Vec<String>> {
@@ -599,14 +566,14 @@ impl crate::EngineAdapterFactory for DuckDbHttpFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+    ) -> Result<crate::AdapterKind> {
         use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
         let config = DuckDbHttpConfig::from_json(json, &name)?;
-        Ok(Arc::new(DuckDbHttpAdapter::new(
+        Ok(AdapterKind::Sync(Arc::new(DuckDbHttpAdapter::new(
             cluster_name,
             group,
             config,
-        )?))
+        )?)))
     }
 }

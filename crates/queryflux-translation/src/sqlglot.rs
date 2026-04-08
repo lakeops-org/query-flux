@@ -52,8 +52,8 @@ impl TranslatorTrait for SqlglotTranslator {
 
     async fn translate(&self, sql: &str, schema_context: &SchemaContext) -> Result<String> {
         let sql = sql.to_string();
-        let src = self.source.sqlglot_name().to_string();
-        let tgt = self.target.sqlglot_name().to_string();
+        let src = self.source.sqlglot_write_name();
+        let tgt = self.target.sqlglot_write_name();
         let schema_context = schema_context.clone();
         let python_scripts = self.python_scripts.clone();
 

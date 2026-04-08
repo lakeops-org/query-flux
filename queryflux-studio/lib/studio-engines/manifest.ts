@@ -1,3 +1,4 @@
+import { adbcStudioEngine } from "@/lib/studio-engines/engines/adbc";
 import { athenaStudioEngine } from "@/lib/studio-engines/engines/athena";
 import { clickHouseStudioEngine } from "@/lib/studio-engines/engines/clickhouse";
 import { duckDbStudioEngine } from "@/lib/studio-engines/engines/duckdb";
@@ -20,6 +21,7 @@ import type { StudioEngineModule } from "@/lib/studio-engines/types";
  *  5. If persisted `config` uses new JSON keys, extend `lib/cluster-persist-form.ts` (`MANAGED_CONFIG_JSON_KEYS` + mappers).
  */
 export const STUDIO_ENGINE_MODULES: StudioEngineModule[] = [
+  adbcStudioEngine,
   trinoStudioEngine,
   duckDbStudioEngine,
   duckDbHttpStudioEngine,

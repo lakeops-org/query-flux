@@ -152,17 +152,19 @@ const config: Config = {
         {
           title: 'Documentation',
           items: [
-            {label: 'Introduction', to: '/docs/intro'},
+            {label: 'Overview', to: '/docs/intro'},
             {label: 'Getting started', to: '/docs/getting-started'},
+            {label: 'Studio', to: '/docs/studio'},
+            {label: 'Configuration', to: '/docs/configuration'},
             {label: 'Architecture', to: '/docs/architecture/overview'},
           ],
         },
         {
           title: 'Project',
           items: [
-            {label: 'Configuration', to: '/docs/configuration'},
             {label: 'Development', to: '/docs/development'},
             {label: 'Contribute', to: '/docs/contribute'},
+            {label: 'Roadmap', to: '/docs/roadmap'},
           ],
         },
         {

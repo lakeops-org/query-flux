@@ -13,6 +13,14 @@ export { validateEngineSpecific } from "@/lib/studio-engines/validate-flat";
 export const MANAGED_CONFIG_JSON_KEYS = new Set([
   "endpoint",
   "databasePath",
+  "driver",
+  "uri",
+  "username",
+  "password",
+  "dbKwargs",
+  "flightSqlClusterDialect",
+  /** @deprecated Prefer flightSqlClusterDialect; stripped on save from Studio. */
+  "flightSqlEngine",
   "authType",
   "authUsername",
   "authPassword",
@@ -36,6 +44,50 @@ function jsonScalarToString(v: unknown): string {
   return "";
 }
 
+function jsonObjectToString(v: unknown): string {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "";
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return "";
+  }
+}
+
+function parseJsonObjectString(s: string | undefined): Record<string, string> | undefined {
+  if (s === undefined) return undefined;
+  const t = s.trim();
+  if (!t) return undefined;
+  try {
+    const parsed = JSON.parse(t) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "string") out[k] = v;
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Remove Studio UI-only keys from dbKwargs before persisting to the API (ADBC drivers must not see them). */
+function stripStudioDbKwargsMeta(
+  o: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!o) return undefined;
+  const next: Record<string, string> = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (k.startsWith("__qf_")) continue;
+    next[k] = v;
+  }
+  return Object.keys(next).length ? next : undefined;
+}
+
+/** PostgreSQL ADBC uses userinfo in the URI; separate username/password fields are not used. */
+export function isAdbcPostgresqlDriver(flat: Record<string, string>): boolean {
+  return flat.driver?.trim().toLowerCase() === "postgresql";
+}
+
 /** Positive integer only; rejects floats, NaN, and non-integer `number` values. */
 export function parsePositiveIntString(s: string | undefined): number | undefined {
   if (s === undefined) return undefined;
@@ -55,6 +107,14 @@ export function persistedClusterConfigToFlat(
 
   flat.endpoint = jsonScalarToString(config.endpoint);
   flat.databasePath = jsonScalarToString(config.databasePath);
+  flat.driver = jsonScalarToString(config.driver);
+  flat.uri = jsonScalarToString(config.uri);
+  flat.username = jsonScalarToString(config.username);
+  flat.password = jsonScalarToString(config.password);
+  flat.dbKwargs = jsonObjectToString(config.dbKwargs);
+  flat.flightSqlClusterDialect =
+    jsonScalarToString(config.flightSqlClusterDialect) ||
+    jsonScalarToString(config.flightSqlEngine);
   flat.region = jsonScalarToString(config.region);
   flat.s3OutputLocation = jsonScalarToString(config.s3OutputLocation);
   flat.workgroup = jsonScalarToString(config.workgroup);
@@ -90,6 +150,17 @@ export function flatToPersistedConfig(flat: Record<string, string>): Record<stri
   if (flat.endpoint) cfg.endpoint = flat.endpoint;
   if (flat.databasePath !== undefined && flat.databasePath !== "") {
     cfg.databasePath = flat.databasePath || null;
+  }
+  if (flat.driver?.trim()) cfg.driver = flat.driver.trim();
+  if (flat.uri?.trim()) cfg.uri = flat.uri.trim();
+  if (!isAdbcPostgresqlDriver(flat)) {
+    if (flat.username) cfg.username = flat.username;
+    if (flat.password) cfg.password = flat.password;
+  }
+  const dbKwargs = stripStudioDbKwargsMeta(parseJsonObjectString(flat.dbKwargs));
+  if (dbKwargs !== undefined) cfg.dbKwargs = dbKwargs;
+  if (flat.flightSqlClusterDialect?.trim()) {
+    cfg.flightSqlClusterDialect = flat.flightSqlClusterDialect.trim();
   }
   if (flat["auth.type"]) cfg.authType = flat["auth.type"] || null;
   if (flat["auth.username"]) cfg.authUsername = flat["auth.username"];
@@ -133,6 +204,33 @@ export function mergeClusterConfigFromFlat(
     if (t) out.databasePath = t;
     else delete out.databasePath;
   }
+  setOrDel("driver", flat.driver, "driver");
+  setOrDel("uri", flat.uri, "uri");
+  if (!isAdbcPostgresqlDriver(flat)) {
+    setOrDel("username", flat.username, "username");
+    if (flat.password !== undefined && flat.password !== "") {
+      out.password = flat.password;
+    }
+  } else {
+    delete out.username;
+    delete out.password;
+  }
+  if (flat.dbKwargs !== undefined) {
+    const t = flat.dbKwargs.trim();
+    if (t === "") {
+      delete out.dbKwargs;
+    } else {
+      const parsed = stripStudioDbKwargsMeta(parseJsonObjectString(flat.dbKwargs));
+      if (parsed !== undefined) out.dbKwargs = parsed;
+      else delete out.dbKwargs;
+    }
+  }
+  setOrDel(
+    "flightSqlClusterDialect",
+    flat.flightSqlClusterDialect,
+    "flightSqlClusterDialect",
+  );
+  delete out.flightSqlEngine;
   if (flat["auth.type"] !== undefined) {
     const t = flat["auth.type"].trim();
     if (t) out.authType = t;
@@ -196,6 +294,17 @@ export function buildValidateShape(flat: Record<string, string>): Record<string,
     o.databasePath = flat.databasePath;
   }
   if (flat.region) o.region = flat.region;
+  if (flat.driver) o.driver = flat.driver;
+  if (flat.uri) o.uri = flat.uri;
+  if (!isAdbcPostgresqlDriver(flat)) {
+    if (flat.username) o.username = flat.username;
+    if (flat.password) o.password = flat.password;
+  }
+  const dbKwargs = stripStudioDbKwargsMeta(parseJsonObjectString(flat.dbKwargs));
+  if (dbKwargs !== undefined) o.dbKwargs = dbKwargs;
+  if (flat.flightSqlClusterDialect) {
+    o.flightSqlClusterDialect = flat.flightSqlClusterDialect;
+  }
   if (flat.s3OutputLocation) o.s3OutputLocation = flat.s3OutputLocation;
   if (flat.account) o.account = flat.account;
   if (flat.warehouse) o.warehouse = flat.warehouse;

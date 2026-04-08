@@ -17,14 +17,12 @@ use queryflux_core::{
     catalog::TableSchema,
     config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
-    query::{
-        BackendQueryId, ClusterGroupName, ClusterName, EngineType, QueryExecution, QueryPollResult,
-    },
+    query::{ClusterGroupName, ClusterName, EngineType},
     session::SessionContext,
     tags::{tags_to_json, QueryTags},
 };
 
-use crate::EngineAdapterTrait;
+use crate::{AdapterKind, SyncAdapter, SyncExecution};
 use queryflux_core::engine_registry::{
     AuthType, ConfigField, ConnectionType, EngineDescriptor, FieldType,
 };
@@ -136,7 +134,6 @@ pub struct StarRocksAdapter {
     pool: Pool,
     /// Dedicated 1×1 pool for `health_check` so probes do not compete with query traffic.
     control_pool: Pool,
-    endpoint: String,
 }
 
 impl StarRocksAdapter {
@@ -190,7 +187,6 @@ impl StarRocksAdapter {
             group_name,
             pool,
             control_pool,
-            endpoint: config.endpoint,
         })
     }
 
@@ -247,34 +243,7 @@ impl StarRocksAdapter {
 }
 
 #[async_trait]
-impl EngineAdapterTrait for StarRocksAdapter {
-    /// Not used — StarRocks queries go through `execute_as_arrow`.
-    async fn submit_query(
-        &self,
-        _sql: &str,
-        _session: &SessionContext,
-        _credentials: &queryflux_auth::QueryCredentials,
-        _tags: &QueryTags,
-    ) -> Result<QueryExecution> {
-        Err(QueryFluxError::Engine(
-            "StarRocks requires execute_as_arrow; use the Arrow execution path".to_string(),
-        ))
-    }
-
-    async fn poll_query(
-        &self,
-        _backend_id: &BackendQueryId,
-        _next_uri: Option<&str>,
-    ) -> Result<QueryPollResult> {
-        Err(QueryFluxError::Engine(
-            "StarRocks does not support async polling".to_string(),
-        ))
-    }
-
-    async fn cancel_query(&self, _backend_id: &BackendQueryId) -> Result<()> {
-        Ok(())
-    }
-
+impl SyncAdapter for StarRocksAdapter {
     async fn health_check(&self) -> bool {
         use mysql_async::prelude::Queryable;
         match self.acquire_control_conn().await {
@@ -319,21 +288,13 @@ impl EngineAdapterTrait for StarRocksAdapter {
         EngineType::StarRocks
     }
 
-    fn supports_async(&self) -> bool {
-        false
-    }
-
-    fn base_url(&self) -> &str {
-        &self.endpoint
-    }
-
     async fn execute_as_arrow(
         &self,
         sql: &str,
         session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         tags: &QueryTags,
-    ) -> Result<crate::ArrowStream> {
+    ) -> Result<SyncExecution> {
         let mut conn = self.acquire_conn().await?;
 
         if let Some(db) = session.database() {
@@ -360,8 +321,16 @@ impl EngineAdapterTrait for StarRocksAdapter {
             .await
             .map_err(|e| QueryFluxError::Engine(format!("StarRocks query failed: {e}")))?;
 
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
         if rows.is_empty() {
-            return Ok(Box::pin(stream::empty()));
+            // StarRocks does not expose structured execution stats (CPU, bytes, etc.)
+            // via the MySQL protocol — send None and establish the pattern for future use.
+            let _ = tx.send(None);
+            return Ok(SyncExecution {
+                stream: Box::pin(stream::empty()),
+                stats: rx,
+            });
         }
 
         // Build Arrow schema from first row's column metadata.
@@ -391,7 +360,11 @@ impl EngineAdapterTrait for StarRocksAdapter {
         let batch = RecordBatch::try_new(schema, columns)
             .map_err(|e| QueryFluxError::Engine(format!("StarRocks RecordBatch failed: {e}")))?;
 
-        Ok(Box::pin(stream::iter(std::iter::once(Ok(batch)))))
+        let _ = tx.send(None);
+        Ok(SyncExecution {
+            stream: Box::pin(stream::iter(std::iter::once(Ok(batch)))),
+            stats: rx,
+        })
     }
 
     // --- Catalog discovery ---
@@ -735,14 +708,14 @@ impl crate::EngineAdapterFactory for StarRocksFactory {
         cluster_name: ClusterName,
         group: ClusterGroupName,
         json: &serde_json::Value,
-    ) -> Result<Arc<dyn crate::EngineAdapterTrait>> {
+    ) -> Result<crate::AdapterKind> {
         use crate::EngineConfigParseable;
         let name = cluster_name.0.clone();
         let config = StarRocksConfig::from_json(json, &name)?;
-        Ok(Arc::new(StarRocksAdapter::new(
+        Ok(AdapterKind::Sync(Arc::new(StarRocksAdapter::new(
             cluster_name,
             group,
             config,
-        )?))
+        )?)))
     }
 }

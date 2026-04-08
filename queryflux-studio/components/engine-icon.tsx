@@ -1,6 +1,22 @@
 import * as si from "simple-icons";
 import type { EngineDef } from "./engine-catalog";
 
+const CUSTOM_LOGO_BY_ENGINE_KEY: Record<string, string> = {
+  athena: "/logos/athena.svg",
+  starRocks: "/logos/starrocks.svg",
+};
+
+const CUSTOM_LOGO_BY_ENGINE_NAME: Record<string, string> = {
+  athena: "/logos/athena.svg",
+  starrocks: "/logos/starrocks.svg",
+  bigquery: "/logos/bigquery.svg",
+  redshift: "/logos/redshift.svg",
+};
+
+function normalizeEngineName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "");
+}
+
 interface EngineIconProps {
   engine: EngineDef;
   /** Icon container size in px (default 32) */
@@ -13,6 +29,25 @@ interface EngineIconProps {
  */
 export function EngineIcon({ engine, size = 32 }: EngineIconProps) {
   const iconSvgSize = Math.round(size * 0.55);
+  const customLogoSrc =
+    (engine.engineKey ? CUSTOM_LOGO_BY_ENGINE_KEY[engine.engineKey] : undefined) ??
+    CUSTOM_LOGO_BY_ENGINE_NAME[normalizeEngineName(engine.name)];
+
+  if (customLogoSrc) {
+    return (
+      <div
+        className="rounded-xl flex items-center justify-center flex-shrink-0 bg-white border border-slate-200"
+        style={{ width: size, height: size }}
+      >
+        <img
+          src={customLogoSrc}
+          alt={`${engine.name} logo`}
+          width={iconSvgSize}
+          height={iconSvgSize}
+        />
+      </div>
+    );
+  }
 
   if (engine.simpleIconSlug) {
     const icon = (si as Record<string, si.SimpleIcon>)[engine.simpleIconSlug];

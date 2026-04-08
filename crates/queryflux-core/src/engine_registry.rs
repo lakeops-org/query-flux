@@ -35,6 +35,8 @@ pub enum ConnectionType {
     Embedded,
     /// SDK or cloud-managed — endpoint is implicit (e.g. Athena, BigQuery, Databricks)
     ManagedApi,
+    /// Runtime-loaded shared library driver (ADBC)
+    Driver,
 }
 
 /// Authentication mechanisms the engine supports.
@@ -71,7 +73,7 @@ pub struct ConfigField {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", tag = "type")]
 pub enum FieldType {
     /// Plain text input
     Text,
@@ -85,6 +87,8 @@ pub enum FieldType {
     Boolean,
     /// Unsigned integer
     Number,
+    /// Dropdown with a fixed list of allowed values
+    Select { options: Vec<&'static str> },
 }
 
 /// Full descriptor for one supported backend engine.
@@ -262,6 +266,7 @@ pub fn engine_key(engine: &EngineConfig) -> &'static str {
         EngineConfig::StarRocks => "starRocks",
         EngineConfig::ClickHouse => "clickHouse",
         EngineConfig::Athena => "athena",
+        EngineConfig::Adbc => "adbc",
     }
 }
 
@@ -274,6 +279,7 @@ pub fn parse_engine_key(s: &str) -> Result<EngineConfig, String> {
         "starRocks" => Ok(EngineConfig::StarRocks),
         "clickHouse" => Ok(EngineConfig::ClickHouse),
         "athena" => Ok(EngineConfig::Athena),
+        "adbc" => Ok(EngineConfig::Adbc),
         other => Err(format!("Unknown engine key: '{other}'")),
     }
 }
@@ -287,6 +293,7 @@ impl From<&EngineConfig> for EngineType {
             EngineConfig::StarRocks => EngineType::StarRocks,
             EngineConfig::ClickHouse => EngineType::ClickHouse,
             EngineConfig::Athena => EngineType::Athena,
+            EngineConfig::Adbc => EngineType::Adbc,
         }
     }
 }

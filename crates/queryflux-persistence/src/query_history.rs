@@ -50,6 +50,15 @@ pub struct QuerySummary {
     #[schema(value_type = Option<Object>)]
     #[serde(default)]
     pub query_tags: Option<serde_json::Value>,
+    /// xxHash-64 of the normalized original SQL (as signed i64 / BIGINT).
+    #[serde(default)]
+    pub query_hash: Option<i64>,
+    /// xxHash-64 of the parameterized original SQL.
+    #[serde(default)]
+    pub query_parameterized_hash: Option<i64>,
+    /// xxHash-64 of the parameterized translated SQL. None when no translation occurred.
+    #[serde(default)]
+    pub translated_query_hash: Option<i64>,
 }
 
 /// Aggregated stats for the last hour, shown on the dashboard.

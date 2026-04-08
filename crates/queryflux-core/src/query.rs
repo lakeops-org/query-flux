@@ -93,6 +93,28 @@ pub enum EngineType {
     ClickHouse,
     /// Amazon Athena (Presto/Trino-compatible SQL over S3).
     Athena,
+    /// Generic ADBC adapter — dialect depends on the configured driver.
+    Adbc,
+    /// ADBC adapter backed by a PostgreSQL driver.
+    Postgres,
+    /// ADBC adapter backed by a MySQL driver.
+    MySql,
+    /// ADBC adapter backed by a SQLite driver.
+    Sqlite,
+    /// ADBC adapter backed by a Snowflake driver.
+    Snowflake,
+    /// ADBC adapter backed by a BigQuery driver.
+    BigQuery,
+    /// ADBC adapter backed by a Databricks driver.
+    Databricks,
+    /// ADBC adapter backed by a SQL Server (MSSQL) driver.
+    MsSql,
+    /// ADBC adapter backed by an Amazon Redshift driver.
+    Redshift,
+    /// ADBC adapter backed by an Exasol driver.
+    Exasol,
+    /// ADBC adapter backed by a SingleStore driver (MySQL-compatible dialect).
+    SingleStore,
 }
 
 impl EngineType {
@@ -103,6 +125,17 @@ impl EngineType {
             EngineType::DuckDb | EngineType::DuckDbHttp => SqlDialect::DuckDb,
             EngineType::StarRocks => SqlDialect::StarRocks,
             EngineType::ClickHouse => SqlDialect::ClickHouse,
+            EngineType::Adbc => SqlDialect::Generic,
+            EngineType::Postgres => SqlDialect::Postgres,
+            EngineType::MySql => SqlDialect::MySql,
+            EngineType::Sqlite => SqlDialect::Sqlite,
+            EngineType::Snowflake => SqlDialect::Snowflake,
+            EngineType::BigQuery => SqlDialect::BigQuery,
+            EngineType::Databricks => SqlDialect::Databricks,
+            EngineType::MsSql => SqlDialect::MsSql,
+            EngineType::Redshift => SqlDialect::Redshift,
+            EngineType::Exasol => SqlDialect::Exasol,
+            EngineType::SingleStore => SqlDialect::MySql,
         }
     }
 }
@@ -117,7 +150,17 @@ pub enum SqlDialect {
     ClickHouse,
     MySql,
     Postgres,
+    Sqlite,
+    Snowflake,
+    BigQuery,
+    Databricks,
+    MsSql,
+    Redshift,
+    Exasol,
     Generic,
+    /// Any other sqlglot `read` / `write` dialect name (e.g. `hive`, `spark`, `oracle`).
+    #[serde(rename = "sqlglot")]
+    Sqlglot(String),
 }
 
 impl SqlDialect {
@@ -132,9 +175,10 @@ impl SqlDialect {
             )
     }
 
-    /// The dialect name as sqlglot expects it.
+    /// The dialect name as sqlglot expects it (built-in variants only).
     pub fn sqlglot_name(&self) -> &'static str {
         match self {
+            SqlDialect::Sqlglot(_) => "",
             SqlDialect::Trino => "trino",
             SqlDialect::Athena => "athena",
             SqlDialect::DuckDb => "duckdb",
@@ -142,7 +186,25 @@ impl SqlDialect {
             SqlDialect::ClickHouse => "clickhouse",
             SqlDialect::MySql => "mysql",
             SqlDialect::Postgres => "postgres",
+            SqlDialect::Sqlite => "sqlite",
+            SqlDialect::Snowflake => "snowflake",
+            SqlDialect::BigQuery => "bigquery",
+            SqlDialect::Databricks => "databricks",
+            SqlDialect::MsSql => "tsql",
+            SqlDialect::Redshift => "redshift",
+            SqlDialect::Exasol => "exasol",
             SqlDialect::Generic => "",
+        }
+    }
+
+    /// sqlglot `read` / `write` string for `transpile` (includes [`SqlDialect::Sqlglot`]).
+    pub fn sqlglot_write_name(&self) -> String {
+        match self {
+            SqlDialect::Sqlglot(s) => s.clone(),
+            _ => {
+                let s = self.sqlglot_name();
+                s.to_string()
+            }
         }
     }
 }

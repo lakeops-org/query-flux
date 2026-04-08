@@ -95,7 +95,7 @@ impl QueryHistoryStore for PostgresStore {
                       qr.rows_returned, qr.error_message, qr.routing_trace, qr.created_at,
                       qr.engine_elapsed_time_ms, qr.cpu_time_ms, qr.processed_rows, qr.processed_bytes,
                       qr.physical_input_bytes, qr.peak_memory_bytes, qr.spilled_bytes, qr.total_splits,
-                      qr.query_tags
+                      qr.query_tags, qr.query_hash, qr.query_parameterized_hash, qr.translated_query_hash
                FROM query_records qr
                LEFT JOIN cluster_group_configs cg ON cg.id = qr.cluster_group_id
                LEFT JOIN cluster_configs cc ON cc.id = qr.cluster_id
@@ -1118,9 +1118,10 @@ impl MetricsStore for PostgresStore {
                  queue_duration_ms, execution_duration_ms, rows_returned, error_message,
                  created_at, engine_elapsed_time_ms, cpu_time_ms, processed_rows, processed_bytes,
                  physical_input_bytes, peak_memory_bytes, spilled_bytes, total_splits,
-                 cluster_group_id, cluster_id, query_tags)
+                 cluster_group_id, cluster_id, query_tags,
+                 query_hash, query_parameterized_hash, translated_query_hash)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)"#,
+                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)"#,
         )
         .bind(&r.proxy_query_id)
         .bind(&r.backend_query_id)
@@ -1154,9 +1155,46 @@ impl MetricsStore for PostgresStore {
         .bind(r.cluster_group_config_id)
         .bind(r.cluster_config_id)
         .bind(query_tags_json)
+        .bind(r.query_hash)
+        .bind(r.query_parameterized_hash)
+        .bind(r.translated_query_hash)
         .execute(&self.pool)
         .await
         .map_err(|e| QueryFluxError::Persistence(format!("Insert query_records: {e}")))?;
+
+        // Upsert into query_digest_stats.
+        if let Some(phash) = r.query_parameterized_hash {
+            let rows = r.rows_returned.map(|v| v as i64).unwrap_or(0);
+            let exec_ms = r.execution_duration_ms as i64;
+            sqlx::query(
+                r#"INSERT INTO query_digest_stats
+                    (query_parameterized_hash, digest_text,
+                     translated_query_hash, translated_digest_text,
+                     first_seen, last_seen, call_count, sum_execution_ms, sum_rows_returned,
+                     cluster_group)
+                   VALUES ($1,$2,$3,$4,$5,$5,1,$6,$7,$8)
+                   ON CONFLICT (query_parameterized_hash) DO UPDATE SET
+                     last_seen = EXCLUDED.last_seen,
+                     call_count = query_digest_stats.call_count + 1,
+                     sum_execution_ms = query_digest_stats.sum_execution_ms + EXCLUDED.sum_execution_ms,
+                     sum_rows_returned = query_digest_stats.sum_rows_returned + EXCLUDED.sum_rows_returned,
+                     cluster_group = EXCLUDED.cluster_group,
+                     digest_text = CASE WHEN query_digest_stats.digest_text = '' THEN EXCLUDED.digest_text ELSE query_digest_stats.digest_text END,
+                     translated_digest_text = COALESCE(query_digest_stats.translated_digest_text, EXCLUDED.translated_digest_text)"#,
+            )
+            .bind(phash)
+            .bind(r.digest_text.as_deref().unwrap_or(""))
+            .bind(r.translated_query_hash)
+            .bind(r.translated_digest_text.as_deref())
+            .bind(r.created_at)
+            .bind(exec_ms)
+            .bind(rows)
+            .bind(&r.cluster_group.0)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| QueryFluxError::Persistence(format!("Upsert query_digest_stats: {e}")))?;
+        }
+
         Ok(())
     }
 

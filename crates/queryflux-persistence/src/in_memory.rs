@@ -108,6 +108,9 @@ impl InMemoryPersistence {
             spilled_bytes: stats.and_then(|s| s.spilled_bytes).map(|v| v as i64),
             total_splits: stats.and_then(|s| s.total_splits).map(|v| v as i32),
             query_tags: Some(queryflux_core::tags::tags_to_json(&record.query_tags)),
+            query_hash: record.query_hash,
+            query_parameterized_hash: record.query_parameterized_hash,
+            translated_query_hash: record.translated_query_hash,
         }
     }
 }

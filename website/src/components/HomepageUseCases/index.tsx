@@ -54,11 +54,14 @@ const useCases: UseCase[] = [
   },
 ];
 
-function UseCaseCard({title, body}: UseCase): ReactNode {
+function UseCaseCard({title, body, index}: UseCase & {index: number}): ReactNode {
   return (
     <article className={styles.cardCol}>
       <div className={styles.card}>
         <div className={styles.cardAccent} aria-hidden />
+        <div className={styles.cardBadge} aria-hidden="true">
+          {String(index + 1).padStart(2, '0')}
+        </div>
         <Heading as="h3" className={styles.cardTitle}>
           {title}
         </Heading>
@@ -80,8 +83,8 @@ export default function HomepageUseCases(): ReactNode {
           stack per engine.
         </p>
         <div className={styles.cardRow}>
-          {useCases.map((item) => (
-            <UseCaseCard key={item.title} {...item} />
+          {useCases.map((item, idx) => (
+            <UseCaseCard key={item.title} index={idx} {...item} />
           ))}
         </div>
       </div>

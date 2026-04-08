@@ -1,27 +1,27 @@
-# Multi-stage build for the QueryFlux **server only** (no Studio UI).
-# For server + Studio and multi-arch releases, use ../queryflux-unified/Dockerfile.
+# syntax=docker/dockerfile:1
 #
-# Multi-stage build for queryflux with cargo-chef (fast rebuilds when only code changes).
+# Canonical QueryFlux Docker build (server + optional Studio). Edit this file only.
 #
-# PyO3/sqlglot: builder + runtime both python:3.12.13-slim-trixie (bookworm has no python3.12 apt).
-# Rust: rustup 1.91.1 on top of that image.
-# DuckDB: DUCKDB_DOWNLOAD_LIB downloads a prebuilt libduckdb; the linked .so is copied into the runtime image (see LD_LIBRARY_PATH).
+# Targets (use --target for non-default):
+#   runtime-server   — Rust server + Python venv + DuckDB + ADBC drivers (default final stage)
+#   runtime-unified  — server + bundled QueryFlux Studio (Next.js)
 #
-# Build (context MUST be this repo root so Cargo.toml + Cargo.lock match):
-#   cd /path/to/queryflux && docker build -f docker/queryflux/Dockerfile -t queryflux:local .
+# Examples (repo root as context):
+#   docker build -f docker/queryflux/Dockerfile -t queryflux:local .
+#   docker build -f docker/queryflux/Dockerfile --target runtime-unified -t queryflux:unified .
+#   docker buildx build --platform linux/amd64,linux/arm64 -f docker/queryflux/Dockerfile \
+#     --target runtime-unified -t queryflux:unified --push .
 #
-# Lockfile (matches rust:1.91.1 in this image):
-#   rustup run 1.91.1 cargo generate-lockfile
+# PyO3/sqlglot: builder + runtime use python:3.12.13-slim-trixie.
+# Rust: rustup 1.91.1. DuckDB: DUCKDB_DOWNLOAD_LIB links a prebuilt libduckdb.
 #
-# Final `cargo build` has no `--locked` (stub vs full crate sources can make `cargo --locked` fail);
-# `cargo chef cook` uses `--locked` so deps match Cargo.lock.
+# Final `cargo build` has no `--locked` (stub vs full crate sources); `cargo chef cook` uses `--locked`.
 
 # =============================================================================
-# Stage 1: Chef base — same Python as runtime + Rust toolchains via rustup
+# Chef base — Python + Rust (rustup, cargo-chef)
 # =============================================================================
 FROM python:3.12.13-slim-trixie AS chef
 
-# Prefer /usr/local Python 3.12 over Debian /usr/bin/python3 (often 3.11 on trixie slim).
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/bin:/usr/local/cargo/bin:$PATH
@@ -52,7 +52,7 @@ RUN cargo install cargo-chef --locked
 WORKDIR /build
 
 # =============================================================================
-# Stage 2: Planner
+# Planner (cargo-chef recipe)
 # =============================================================================
 FROM chef AS planner
 
@@ -62,11 +62,11 @@ COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
 # =============================================================================
-# Stage 3: Builder — cook dependencies (cached), then full build
+# Builder — cook deps + release binary (multi-arch cache ids; mold on amd64/arm64)
 # =============================================================================
 FROM chef AS builder
 
-# If unset, Docker passes "" and Cargo errors: "Number of parallel jobs should be `default` or a number."
+ARG TARGETARCH=amd64
 ARG CARGO_BUILD_JOBS=default
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
@@ -78,14 +78,12 @@ RUN /usr/local/bin/python3 -m venv /opt/venv && \
 
 ENV PYO3_PYTHON=/opt/venv/bin/python3
 ENV PYTHONPATH=/opt/venv/site-packages
-ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 ENV DUCKDB_DOWNLOAD_LIB=1
-ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:/usr/lib/arm-linux-gnueabihf:/usr/lib/i386-linux-gnu
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY --from=planner /build/recipe.json recipe.json
 
-# Strip sources for cook; cargo-chef needs member manifests + stub .rs (workspace layout).
 COPY crates ./crates
 RUN set -eu && find crates -type f -name '*.rs' -delete && \
     for c in queryflux-core queryflux-auth queryflux-persistence queryflux-routing \
@@ -96,17 +94,20 @@ RUN set -eu && find crates -type f -name '*.rs' -delete && \
     mkdir -p crates/queryflux/src crates/queryflux-bench/src && \
     printf 'fn main() {}\n' | tee crates/queryflux/src/main.rs > crates/queryflux-bench/src/main.rs
 
-# id=… avoids reusing target/ from older images (e.g. Bookworm PyO3 linking -lpython3.11).
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=queryflux-registry \
-    --mount=type=cache,target=/build/target,id=queryflux-target-py312 \
-    bash -o pipefail -c 'rm -rf target/release/build/pyo3-* target/release/build/pyo3_ffi-* 2>/dev/null || true; \
+    --mount=type=cache,target=/build/target,id=queryflux-target-${TARGETARCH} \
+    bash -o pipefail -c 'set -eu; \
+    if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then export RUSTFLAGS="-C link-arg=-fuse-ld=mold"; fi; \
+    rm -rf target/release/build/pyo3-* target/release/build/pyo3_ffi-* 2>/dev/null || true; \
     cargo chef cook --release --locked --recipe-path recipe.json --package queryflux'
 
 COPY crates ./crates
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=queryflux-registry \
-    --mount=type=cache,target=/build/target,id=queryflux-target-py312 \
-    bash -o pipefail -c 'rm -rf target/release/build/pyo3-* target/release/build/pyo3_ffi-* \
+    --mount=type=cache,target=/build/target,id=queryflux-target-${TARGETARCH} \
+    bash -o pipefail -c 'set -eu; \
+    if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then export RUSTFLAGS="-C link-arg=-fuse-ld=mold"; fi; \
+    rm -rf target/release/build/pyo3-* target/release/build/pyo3_ffi-* \
       target/release/deps/libpyo3_ffi-* \
       target/release/.fingerprint/pyo3-* target/release/.fingerprint/pyo3_ffi-* 2>/dev/null || true; \
     cargo build --release -p queryflux --bin queryflux && \
@@ -114,9 +115,99 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=queryflux-registry \
     cp target/release/deps/libduckdb.so /queryflux-libduckdb.so'
 
 # =============================================================================
-# Stage 4: Runtime
+# ADBC drivers (dbc CLI → ~/.config/adbc/drivers on Linux)
 # =============================================================================
-FROM python:3.12.13-slim-trixie
+FROM debian:trixie-slim AS adbc-drivers
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://dbc.columnar.tech/install.sh | sh
+
+ENV PATH="/root/.local/bin:/root/.cargo/bin:${PATH}"
+
+RUN set -eu; command -v dbc; dbc install trino \
+ && dbc install postgresql \
+ && dbc install duckdb \
+ && dbc install snowflake \
+ && dbc install mysql \
+ && dbc install databricks \
+ && dbc install bigquery
+
+# =============================================================================
+# QueryFlux Studio (Next.js standalone) — used by runtime-unified only
+# =============================================================================
+FROM node:20-bookworm-slim AS studio-deps
+WORKDIR /studio
+COPY queryflux-studio/package.json queryflux-studio/package-lock.json ./
+RUN npm ci
+
+FROM node:20-bookworm-slim AS studio-builder
+WORKDIR /studio
+COPY --from=studio-deps /studio/node_modules ./node_modules
+COPY queryflux-studio/ .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# =============================================================================
+# Runtime: server + Studio + Node (bundled UI)
+# =============================================================================
+FROM python:3.12.13-slim-trixie AS runtime-unified
+
+ARG NODE_VERSION=20.18.1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    xz-utils \
+    tini \
+    && DPKG_ARCH=$(dpkg --print-architecture) \
+    && case "$DPKG_ARCH" in \
+         amd64) NODE_ARCH=x64 ;; \
+         arm64) NODE_ARCH=arm64 ;; \
+         armhf) NODE_ARCH=armv7l ;; \
+         i386)  NODE_ARCH=x86 ;; \
+         *) echo "unsupported arch=$DPKG_ARCH"; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+         | tar -xJf - -C /usr/local --strip-components=1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1000 queryflux \
+    && mkdir -p /app/studio \
+    && chown -R queryflux:queryflux /app
+
+COPY requirements.txt /tmp/requirements.txt
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+
+COPY --from=builder /queryflux-binary /app/queryflux
+COPY --from=builder /queryflux-libduckdb.so /usr/local/lib/libduckdb.so
+COPY --from=adbc-drivers /root/.config/adbc/drivers/ /usr/local/lib/adbc/
+COPY --from=studio-builder /studio/public /app/studio/public
+COPY --from=studio-builder --chown=queryflux:queryflux /studio/.next/standalone /app/studio
+COPY --from=studio-builder --chown=queryflux:queryflux /studio/.next/static /app/studio/.next/static
+
+COPY docker/queryflux-unified/entrypoint-unified.sh /app/entrypoint-unified.sh
+RUN chmod +x /app/queryflux /app/entrypoint-unified.sh
+
+ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV ADBC_DRIVER_PATH=/usr/local/lib/adbc
+ENV PYO3_PYTHON=/opt/venv/bin/python3
+WORKDIR /app
+USER queryflux
+
+EXPOSE 3000 8080 9000
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint-unified.sh"]
+CMD ["--config", "/etc/queryflux/config.yaml"]
+
+# =============================================================================
+# Runtime: server only (default `docker build` final stage)
+# =============================================================================
+FROM python:3.12.13-slim-trixie AS runtime-server
 
 RUN apt-get update && apt-get install --no-install-recommends -y \
     ca-certificates \
@@ -132,11 +223,12 @@ RUN python3 -m venv /opt/venv && \
 
 COPY --from=builder /queryflux-binary /app/queryflux
 COPY --from=builder /queryflux-libduckdb.so /usr/local/lib/libduckdb.so
+COPY --from=adbc-drivers /root/.config/adbc/drivers/ /usr/local/lib/adbc/
 COPY docker/queryflux/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/queryflux /app/entrypoint.sh
 
-# Prebuilt libduckdb (DUCKDB_DOWNLOAD_LIB) is dynamically linked; loader search path must include it.
 ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV ADBC_DRIVER_PATH=/usr/local/lib/adbc
 ENV PYO3_PYTHON=/opt/venv/bin/python3
 WORKDIR /app
 USER queryflux

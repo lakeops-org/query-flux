@@ -11,7 +11,7 @@ export type FieldType =
   | "boolean"
   | "number";
 
-export type ConnectionType = "http" | "mysqlWire" | "embedded";
+export type ConnectionType = "http" | "mysqlWire" | "embedded" | "driver";
 
 export type AuthType =
   | "basic"

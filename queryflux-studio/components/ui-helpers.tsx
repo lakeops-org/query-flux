@@ -1,4 +1,5 @@
-import { ENGINE_CATALOG } from "./engine-catalog";
+import type { ClusterConfigRecord } from "@/lib/api-types";
+import { resolveEngineDefForBadge } from "@/lib/engine-badge-def";
 import { EngineIcon } from "./engine-icon";
 
 export function StatusBadge({ status }: { status: string }) {
@@ -22,16 +23,21 @@ export function StatusBadge({ status }: { status: string }) {
   );
 }
 
-const normalize = (s: string) => s.toLowerCase().replace(/[\s-_]/g, "");
-
-export function EngineBadge({ engine }: { engine: string }) {
-  const def = ENGINE_CATALOG.find((e) => normalize(e.name) === normalize(engine));
+export function EngineBadge({
+  engine,
+  clusterConfig,
+}: {
+  engine: string;
+  clusterConfig?: ClusterConfigRecord | null;
+}) {
+  const def = resolveEngineDefForBadge(engine, clusterConfig);
+  const label = def?.name ?? engine;
 
   if (def) {
     return (
       <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-700 whitespace-nowrap">
         <EngineIcon engine={def} size={16} />
-        {engine}
+        {label}
       </span>
     );
   }

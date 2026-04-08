@@ -1,27 +1,31 @@
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 
+/**
+ * Layout inspired by clear doc hubs (e.g. ProxySQL): Overview → Guides → Reference → deep dives.
+ */
 const sidebars: SidebarsConfig = {
   docsSidebar: [
-    'intro',
+    {
+      type: 'doc',
+      id: 'intro',
+      label: 'Overview',
+    },
     {
       type: 'category',
-      label: 'Guide',
+      label: 'Guides',
       collapsed: false,
-      items: [
-        'getting-started',
-        'configuration',
-        'studio',
-        'project-structure',
-        'benchmarks',
-        'development',
-        'contribute',
-        'roadmap',
-      ],
+      items: ['getting-started', 'studio'],
+    },
+    {
+      type: 'category',
+      label: 'Reference',
+      collapsed: false,
+      items: ['configuration'],
     },
     {
       type: 'category',
       label: 'Architecture',
-      collapsed: false,
+      collapsed: true,
       items: [
         'architecture/overview',
         'architecture/motivation-and-goals',
@@ -32,6 +36,40 @@ const sidebars: SidebarsConfig = {
         'architecture/observability',
         'architecture/adding-engine-support',
         'architecture/auth-authz-design',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Frontends',
+      collapsed: true,
+      items: [
+        'architecture/frontends/overview',
+        'architecture/frontends/trino-http',
+        'architecture/frontends/postgres-wire',
+        'architecture/frontends/mysql-wire',
+        'architecture/frontends/flight-sql',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Extending QueryFlux',
+      collapsed: true,
+      items: [
+        'architecture/adding-support/overview',
+        'architecture/adding-support/frontend',
+        'architecture/adding-support/backend',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Project',
+      collapsed: true,
+      items: [
+        'development',
+        'contribute',
+        'benchmarks',
+        'project-structure',
+        'roadmap',
       ],
     },
   ],

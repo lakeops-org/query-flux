@@ -1,5 +1,5 @@
 import { getClusters, listClusterConfigs, listGroupConfigs } from "@/lib/api";
-import type { ClusterDisplayRow } from "@/lib/api-types";
+import type { ClusterConfigRecord, ClusterDisplayRow } from "@/lib/api-types";
 import { mergeLiveAndPersistedClusters } from "@/lib/merge-clusters-display";
 import { ClustersGrid } from "./clusters-grid";
 import { ClustersHeaderActions } from "./clusters-header-actions";
@@ -10,7 +10,7 @@ export const revalidate = 10;
 export default async function ClustersPage() {
   const [live, persisted, groups] = await Promise.all([
     getClusters().catch(() => []),
-    listClusterConfigs().catch(() => []),
+    listClusterConfigs().catch(() => [] as ClusterConfigRecord[]),
     listGroupConfigs().catch(() => []),
   ]);
   const clusters: ClusterDisplayRow[] = mergeLiveAndPersistedClusters(live, persisted, groups);
@@ -63,7 +63,7 @@ export default async function ClustersPage() {
         </div>
       </div>
 
-      <ClustersGrid clusters={clusters} />
+      <ClustersGrid clusters={clusters} clusterConfigs={persisted} />
     </div>
   );
 }
