@@ -115,6 +115,7 @@ const config: Config = {
     // New visitors start in dark; do not follow OS prefers-color-scheme.
     colorMode: {
       defaultMode: 'dark',
+      disableSwitch: true,
       respectPrefersColorScheme: false,
     },
     navbar: {
