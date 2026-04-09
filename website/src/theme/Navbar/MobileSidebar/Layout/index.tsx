@@ -5,18 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import React, {version, useRef, type ReactNode} from 'react';
+import React, {version, type ReactNode} from 'react';
 import clsx from 'clsx';
 import {
-  useNavbarMobileSidebar,
   useNavbarSecondaryMenu,
 } from '@docusaurus/theme-common/internal';
 import {ThemeClassNames} from '@docusaurus/theme-common';
 import type {Props} from '@theme/Navbar/MobileSidebar/Layout';
-import {
-  clearNavbarMenuCloseTimer,
-  scheduleNavbarMenuClose,
-} from '../../navbarMenuHoverTimer';
 
 // TODO Docusaurus v4: remove temporary inert workaround
 //  See https://github.com/facebook/react/issues/17157
@@ -54,20 +49,13 @@ export default function NavbarMobileSidebarLayout({
   secondaryMenu,
 }: Props): ReactNode {
   const {shown: secondaryMenuShown} = useNavbarSecondaryMenu();
-  const {toggle, shown} = useNavbarMobileSidebar();
-  const shownRef = useRef(shown);
-  shownRef.current = shown;
 
   return (
     <div
       className={clsx(
         ThemeClassNames.layout.navbar.mobileSidebar.container,
         'navbar-sidebar',
-      )}
-      onMouseEnter={clearNavbarMenuCloseTimer}
-      onMouseLeave={() =>
-        scheduleNavbarMenuClose(() => shownRef.current, toggle)
-      }>
+      )}>
       {header}
       <div
         className={clsx('navbar-sidebar__items', {
