@@ -14,11 +14,13 @@ import {
 } from '@docusaurus/theme-common';
 import {
   splitNavbarItems,
+  useNavbarMobileSidebar,
 } from '@docusaurus/theme-common/internal';
 import NavbarItem, {type Props as NavbarItemConfig} from '@theme/NavbarItem';
 import SearchBar from '@theme/SearchBar';
 import NavbarLogo from '@theme/Navbar/Logo';
 import NavbarSearch from '@theme/Navbar/Search';
+import NavbarMobileSidebarToggle from '@theme/Navbar/MobileSidebar/Toggle';
 
 import './styles.module.css';
 
@@ -75,6 +77,7 @@ function NavbarContentLayout({
 }
 
 export default function NavbarContent(): ReactNode {
+  const mobileSidebar = useNavbarMobileSidebar();
   const items = useNavbarItems();
   const [leftItems, rightItems] = splitNavbarItems(items);
 
@@ -97,7 +100,12 @@ export default function NavbarContent(): ReactNode {
           )}
         </>
       }
-      right={<NavbarItems items={rightItemsWithoutSearch} />}
+      right={
+        <>
+          <NavbarItems items={rightItemsWithoutSearch} />
+          {!mobileSidebar.disabled && <NavbarMobileSidebarToggle />}
+        </>
+      }
     />
   );
 }

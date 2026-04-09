@@ -244,6 +244,16 @@ html[data-theme='dark'] .navbar {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
 }
 
+/*
+ * backdrop-filter creates a new containing block, which turns the sidebar's
+ * position:fixed into position:absolute relative to <nav>. Disable it while
+ * the mobile drawer is open so the sidebar can overlay the full viewport.
+ */
+.navbar.navbar-sidebar--show {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .navbar__brand {
   display: flex;
   align-items: center;
@@ -326,6 +336,10 @@ html[data-theme='dark'] .navbar__link:hover {
     display: flex;
     align-items: center;
     padding: 0;
+  }
+
+  .qf-mobile-toggle-wrap {
+    display: none;
   }
 }
 
@@ -494,7 +508,7 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
 }
 
 /* ==========================================================================
-   Mobile header — single authoritative block (no hamburger, no collapse)
+   Mobile header — hamburger + logo + search; nav items collapse into drawer
    ========================================================================== */
 @media (max-width: 996px) {
   :root {
@@ -502,10 +516,8 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
     --qf-navbar-pad-y: 0.5625rem;
   }
 
-  .navbar .navbar__inner .navbar__item {
-    display: inline-flex !important;
-    align-items: center !important;
-    min-width: 0;
+  .navbar .navbar__item {
+    display: none !important;
   }
 
   .navbar__inner {
@@ -550,17 +562,6 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
     white-space: nowrap !important;
   }
 
-  .navbar__item.navbar-item-docs-mobile,
-  .navbar__item.navbar-item-docs-mobile .navbar__link {
-    flex-shrink: 0 !important;
-    overflow: visible !important;
-  }
-
-  .navbar__item.navbar-item-collapse-mobile {
-    display: inline-flex !important;
-    align-items: center;
-  }
-
   .navbar__items--right {
     display: inline-flex !important;
     position: static !important;
@@ -580,13 +581,6 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
     flex-wrap: nowrap !important;
   }
 
-  .navbar__items--right > * {
-    display: inline-flex !important;
-    align-items: center !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-  }
-
   .navbar__items--right > div:has(> button.clean-btn),
   .navbar__items--right > div:has(> button.clean-btn) button.clean-btn {
     width: 2.5rem !important;
@@ -596,35 +590,28 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
     opacity: 1 !important;
   }
 
-  .navbar__link.navbar-link-github {
-    width: 2.5rem !important;
-    height: 2.5rem !important;
+  .qf-mobile-toggle-wrap,
+  .qf-mobile-toggle-wrap .navbar__toggle {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex-shrink: 0;
   }
 
-  /* Search: stay in-flow in the left group, never go absolute */
+  /* Search: stay in-flow in the left group, constrained width */
   .navbar__inner .dsla-search-wrapper,
   .navbar__inner [class*='navbarSearchContainer'] {
     position: static !important;
     right: auto !important;
     flex: 0 1 auto !important;
     min-width: 4.75rem !important;
-    max-width: clamp(4.75rem, 17vw, 7.8rem) !important;
+    max-width: clamp(4.75rem, 22vw, 10rem) !important;
     width: auto !important;
     margin: 0 !important;
   }
 
-  .navbar .navbar__item .navbar__link {
-    padding-left: 0.42rem !important;
-    padding-right: 0.42rem !important;
-  }
-
-  /* Hide hamburger/sidebar UI entirely */
-  .qf-mobile-toggle-wrap,
-  .navbar__toggle,
-  .navbar-sidebar,
-  .navbar-sidebar__backdrop {
-    display: none !important;
-  }
 }
 
 @media (max-width: 560px) {
@@ -632,25 +619,20 @@ html[data-theme='dark'] .navbar__items--right > div:has(> button.clean-btn) butt
     margin-right: 0.4rem !important;
   }
 
-  .navbar .navbar__item .navbar__link {
-    font-size: 0.88rem !important;
-    padding-left: 0.3rem !important;
-    padding-right: 0.3rem !important;
-  }
-
   .navbar__items--right {
     gap: 0.14rem !important;
-  }
-
-  .navbar__link.navbar-link-github {
-    width: 2.25rem !important;
-    height: 2.25rem !important;
   }
 
   .navbar__items--right > div:has(> button.clean-btn),
   .navbar__items--right > div:has(> button.clean-btn) button.clean-btn {
     width: 2.25rem !important;
     height: 2.25rem !important;
+  }
+
+  .qf-mobile-toggle-wrap,
+  .qf-mobile-toggle-wrap .navbar__toggle {
+    width: 2.25rem;
+    height: 2.25rem;
   }
 }
 
