@@ -5,10 +5,6 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-.colorModeToggle {
-  flex-shrink: 0;
-}
-
 :global(.navbar__items--right) > :last-child {
   padding-right: 0;
 }

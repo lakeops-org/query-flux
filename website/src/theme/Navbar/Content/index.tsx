@@ -16,12 +16,11 @@ import {
   splitNavbarItems,
 } from '@docusaurus/theme-common/internal';
 import NavbarItem, {type Props as NavbarItemConfig} from '@theme/NavbarItem';
-import NavbarColorModeToggle from '@theme/Navbar/ColorModeToggle';
 import SearchBar from '@theme/SearchBar';
 import NavbarLogo from '@theme/Navbar/Logo';
 import NavbarSearch from '@theme/Navbar/Search';
 
-import styles from './styles.module.css';
+import './styles.module.css';
 
 function useNavbarItems() {
   return useThemeConfig().navbar.items as NavbarItemConfig[];
@@ -98,16 +97,7 @@ export default function NavbarContent(): ReactNode {
           )}
         </>
       }
-      right={
-        <>
-          {/* Theme toggle before GitHub so narrow viewports clip the repo link first, not the toggle */}
-          <NavbarColorModeToggle
-            className={styles.colorModeToggle}
-            aria-label="Toggle light and dark theme"
-          />
-          <NavbarItems items={rightItemsWithoutSearch} />
-        </>
-      }
+      right={<NavbarItems items={rightItemsWithoutSearch} />}
     />
   );
 }

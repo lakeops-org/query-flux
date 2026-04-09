@@ -1,7 +1,26 @@
 # <p align="center"><big>QueryFlux</big></p>
 
 <p align="center">
-  <img src="website/static/img/queryflux-hero-cover.png" alt="QueryFlux — multi-engine SQL query proxy and router in Rust" width="720" />
+  <a href="https://queryflux.dev/" title="QueryFlux documentation">
+    <img
+      src="website/static/img/queryflux-hero-banner.svg"
+      alt="QueryFlux — One query, any engine. Rust mascot with fiber cables connecting Trino, DuckDB, Snowflake, DataFusion, Databricks, Presto, Spark, and ClickHouse"
+      width="800"
+    />
+  </a>
+</p>
+<p align="center"><strong>One query. Any engine.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/lakeops-org/queryflux/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/lakeops-org/queryflux/ci.yml?branch=main&amp;label=build&amp;style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="CI status on main" /></a>
+  <a href="https://github.com/lakeops-org/queryflux/releases"><img src="https://img.shields.io/github/downloads/lakeops-org/queryflux/total?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;label=downloads" alt="GitHub release downloads" /></a>
+  <a href="https://github.com/lakeops-org/queryflux/releases/latest"><img src="https://img.shields.io/github/v/release/lakeops-org/queryflux?sort=semver&amp;style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;label=release" alt="Latest release" /></a>
+  <a href="https://github.com/lakeops-org/queryflux/commits/main/"><img src="https://img.shields.io/github/last-commit/lakeops-org/queryflux?style=for-the-badge&amp;logo=git&amp;logoColor=white&amp;label=last%20commit" alt="Last commit" /></a>
+</p>
+<p align="center">
+  <a href="https://github.com/lakeops-org/queryflux/blob/main/LICENSE"><img src="https://img.shields.io/github/license/lakeops-org/queryflux?style=for-the-badge&amp;logo=apache&amp;logoColor=white" alt="License" /></a>
+  <a href="https://github.com/lakeops-org/queryflux/issues"><img src="https://img.shields.io/github/issues/lakeops-org/queryflux?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;label=issues" alt="Open issues" /></a>
+  <a href="https://github.com/lakeops-org/queryflux/stargazers"><img src="https://img.shields.io/github/stars/lakeops-org/queryflux?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;label=stars" alt="GitHub stars" /></a>
 </p>
 
 # <p align="center"><big>Universal SQL multi-engine query router and proxy in Rust</big></p>

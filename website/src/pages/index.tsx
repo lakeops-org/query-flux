@@ -25,7 +25,7 @@ function HomepageHeader(): ReactNode {
           className={styles.heroImage}
           sources={{
             light: useBaseUrl('/img/queryflux-hero-cover-light.png'),
-            dark: useBaseUrl('/img/queryflux-hero-cover.png'),
+            dark: useBaseUrl('/img/queryflux-hero-banner.svg'),
           }}
           alt="QueryFlux — multi-engine SQL routing in Rust, connecting clients to Trino, DuckDB, StarRocks, Snowflake, Databricks, and more"
           width={1024}
