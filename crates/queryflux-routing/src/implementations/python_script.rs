@@ -72,6 +72,7 @@ fn protocol_camel(p: FrontendProtocol) -> &'static str {
         FrontendProtocol::MySqlWire => "mysqlWire",
         FrontendProtocol::ClickHouseHttp => "clickHouseHttp",
         FrontendProtocol::FlightSql => "flightSql",
+        FrontendProtocol::Mcp => "mcp",
     }
 }
 
@@ -154,6 +155,14 @@ fn build_routing_ctx<'py>(
         } => {
             ctx.set_item("headers", str_str_dict(py, headers)?)?;
             ctx.set_item("queryParams", str_str_dict(py, query_params)?)?;
+        }
+        SessionContext::Mcp { user, agent_id, .. } => {
+            ctx.set_item(
+                "headers",
+                str_str_dict(py, &std::collections::HashMap::new())?,
+            )?;
+            set_opt_str(&ctx, py, "user", user)?;
+            set_opt_str(&ctx, py, "agentId", agent_id)?;
         }
     }
 

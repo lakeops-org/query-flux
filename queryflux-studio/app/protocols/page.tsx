@@ -2,6 +2,7 @@ import { getFrontendsStatus } from "@/lib/api";
 import type { ProtocolFrontendDto } from "@/lib/api-types";
 import {
   AlertCircle,
+  Bot,
   Cylinder,
   Globe2,
   LayoutGrid,
@@ -19,6 +20,7 @@ const PROTOCOL_ICONS: Record<string, LucideIcon> = {
   postgres_wire: Cylinder,
   clickhouse_http: LayoutGrid,
   flight_sql: Plane,
+  mcp: Bot,
 };
 
 export default async function ProtocolsPage() {

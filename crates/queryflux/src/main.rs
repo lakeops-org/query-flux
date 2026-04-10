@@ -18,6 +18,7 @@ use queryflux_frontend::{
         SecurityConfigDto as AdminSecurityConfigDto, TestClusterFn,
     },
     flight_sql::FlightSqlFrontend,
+    mcp::McpFrontend,
     mysql_wire::MysqlWireFrontend,
     postgres_wire::PostgresWireFrontend,
     state::LiveConfig,
@@ -487,6 +488,7 @@ async fn main() -> Result<()> {
                 mysql_wire,
                 clickhouse_http,
                 flight_sql,
+                mcp,
             } => {
                 routers.push(Box::new(ProtocolBasedRouter {
                     trino_http: trino_http.as_ref().map(|s| ClusterGroupName(s.clone())),
@@ -496,6 +498,7 @@ async fn main() -> Result<()> {
                         .as_ref()
                         .map(|s| ClusterGroupName(s.clone())),
                     flight_sql: flight_sql.as_ref().map(|s| ClusterGroupName(s.clone())),
+                    mcp: mcp.as_ref().map(|s| ClusterGroupName(s.clone())),
                 }));
             }
             RouterConfig::Header {
@@ -1094,12 +1097,24 @@ async fn main() -> Result<()> {
         }
     };
 
+    let mcp_future = async {
+        match &config.queryflux.frontends.mcp {
+            Some(cfg) if cfg.enabled => {
+                McpFrontend::new(app_state.clone(), cfg.port)
+                    .listen()
+                    .await
+            }
+            _ => std::future::pending::<queryflux_core::error::Result<()>>().await,
+        }
+    };
+
     tokio::select! {
         r = frontend.listen()   => r.map_err(|e| anyhow::anyhow!("{e}"))?,
         r = admin.listen()      => r.map_err(|e| anyhow::anyhow!("{e}"))?,
         r = mysql_future        => r.map_err(|e| anyhow::anyhow!("{e}"))?,
         r = postgres_future     => r.map_err(|e| anyhow::anyhow!("{e}"))?,
         r = flight_sql_future   => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = mcp_future          => r.map_err(|e| anyhow::anyhow!("{e}"))?,
     }
 
     Ok(())
@@ -1394,6 +1409,7 @@ async fn build_live_config(
                 mysql_wire,
                 clickhouse_http,
                 flight_sql,
+                mcp,
             } => {
                 routers.push(Box::new(
                     queryflux_routing::implementations::protocol_based::ProtocolBasedRouter {
@@ -1404,6 +1420,7 @@ async fn build_live_config(
                             .as_ref()
                             .map(|s| ClusterGroupName(s.clone())),
                         flight_sql: flight_sql.as_ref().map(|s| ClusterGroupName(s.clone())),
+                        mcp: mcp.as_ref().map(|s| ClusterGroupName(s.clone())),
                     },
                 ));
             }

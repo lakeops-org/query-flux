@@ -67,6 +67,7 @@ pub enum FrontendProtocol {
     MySqlWire,
     ClickHouseHttp,
     FlightSql,
+    Mcp,
 }
 
 impl FrontendProtocol {
@@ -78,6 +79,7 @@ impl FrontendProtocol {
             FrontendProtocol::MySqlWire => SqlDialect::MySql,
             FrontendProtocol::ClickHouseHttp => SqlDialect::ClickHouse,
             FrontendProtocol::FlightSql => SqlDialect::Generic,
+            FrontendProtocol::Mcp => SqlDialect::Generic,
         }
     }
 }

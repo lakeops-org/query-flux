@@ -46,6 +46,16 @@ pub enum SessionContext {
         /// Query tags extracted from X-QueryFlux-Tags header or query_tags param at request time.
         tags: QueryTags,
     },
+    Mcp {
+        /// Authenticated user extracted from the MCP request (via bearer token lookup).
+        user: Option<String>,
+        /// Stable agent identifier forwarded in the `X-Agent-Id` header.
+        agent_id: Option<String>,
+        /// Conversation or session identifier forwarded in the `X-Conversation-Id` header.
+        conversation_id: Option<String>,
+        /// Query tags (MCP clients may forward `X-QueryFlux-Tags`).
+        tags: QueryTags,
+    },
 }
 
 impl SessionContext {
@@ -56,6 +66,7 @@ impl SessionContext {
             SessionContext::PostgresWire { tags, .. } => tags,
             SessionContext::MySqlWire { tags, .. } => tags,
             SessionContext::ClickHouseHttp { tags, .. } => tags,
+            SessionContext::Mcp { tags, .. } => tags,
         }
     }
 
@@ -70,6 +81,7 @@ impl SessionContext {
             SessionContext::ClickHouseHttp { query_params, .. } => {
                 query_params.get("user").map(|s| s.as_str())
             }
+            SessionContext::Mcp { user, .. } => user.as_deref(),
         }
     }
 
@@ -84,6 +96,7 @@ impl SessionContext {
             SessionContext::ClickHouseHttp { query_params, .. } => {
                 query_params.get("database").map(|s| s.as_str())
             }
+            SessionContext::Mcp { .. } => None,
         }
     }
 
@@ -102,6 +115,7 @@ impl SessionContext {
             SessionContext::ClickHouseHttp { query_params, .. } => {
                 query_params.get("client_name").map(|s| s.as_str())
             }
+            SessionContext::Mcp { agent_id, .. } => agent_id.as_deref(),
         }
     }
 }

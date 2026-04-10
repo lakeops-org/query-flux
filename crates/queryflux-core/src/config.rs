@@ -325,6 +325,8 @@ pub struct FrontendsConfig {
     pub clickhouse_http: Option<FrontendConfig>,
     #[serde(default)]
     pub flight_sql: Option<FrontendConfig>,
+    #[serde(default)]
+    pub mcp: Option<FrontendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -678,6 +680,8 @@ pub enum RouterConfig {
         clickhouse_http: Option<String>,
         #[serde(default)]
         flight_sql: Option<String>,
+        #[serde(default)]
+        mcp: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Header {

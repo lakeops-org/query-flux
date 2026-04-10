@@ -9,7 +9,7 @@
       "type": "category",
       "label": "Guides",
       "collapsed": false,
-      "items": ["getting-started", "studio"]
+      "items": ["getting-started", "studio", "guides/agent-integration"]
     },
     {
       "type": "category",

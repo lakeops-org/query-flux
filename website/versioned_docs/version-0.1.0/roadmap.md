@@ -100,6 +100,46 @@ The current persistence options are in-memory (single instance) and PostgreSQL (
 
 ---
 
+## Agentic workloads
+
+AI agents are a first-class use case for QueryFlux. The MCP frontend is already shipped (see [AI Agent Integration](/docs/guides/agent-integration)). The following capabilities extend that foundation.
+
+### Adaptive routing from query history
+
+QueryFlux records query duration per engine per query shape (already in Postgres). The next step is a feedback loop: after a query template has been executed enough times on multiple engines, the router automatically promotes it to the fastest engine. No config changes required — the routing table updates itself from observed performance.
+
+Implementation: `parameterized_hash` (xxHash-64 of SQL with literals replaced by `?`) as the key; minimum observation threshold before any decision is made; confidence gap required before switching engines.
+
+### LLM-assisted routing
+
+For query templates that haven't accumulated enough history, a small LLM (Claude Haiku) can make a one-time routing decision based on query structure, available engine capabilities, and schema hints. The decision is cached by `parameterized_hash` — the LLM is called once per unique query shape, never on repeat executions.
+
+This fills the cold-start gap in the adaptive router without adding per-query LLM latency.
+
+### Semantic router
+
+Operator-defined routing rules expressed in natural language rather than regex. Each rule is a plain English description of a workload type paired with a target group. An embedded model (local, no external calls) scores incoming queries against these descriptions and routes to the best match.
+
+Useful when query patterns don't have a clean regex representation but a human could describe them clearly.
+
+### Query result caching
+
+A cache layer in the proxy that intercepts repeated queries (same SQL template + same literal values) and serves results from a short-lived store. Keys are derived from `parameterized_hash` XOR a hash of the literal values — the same fingerprint infrastructure used by routing decisions. TTL-based invalidation initially; Iceberg snapshot-aware invalidation on the roadmap.
+
+Particularly useful for dashboard refresh patterns and agent re-runs on unchanged data.
+
+### Natural language to SQL
+
+Agents and analysts describe what they want in plain English; QueryFlux translates to SQL and executes it. The translation uses a context layer — metric definitions, table preferences, business rules, entity definitions — to produce SQL that matches your schema and terminology.
+
+New MCP tools: `ask_question` (natural language → SQL → results), `search_context` (inspect business context), `add_context` (agents teach QueryFlux new definitions). The context layer auto-populates from dbt manifests and query history.
+
+### Query guardrails
+
+A configurable chain of pre-execution checks: read-only enforcement, row limit injection, cost estimation (via `EXPLAIN`), PII masking, and human-approval gates for destructive statements. Guardrails are already supported by the architecture; the above router and caching items ship first.
+
+---
+
 ## Longer-term
 
 ### Federated query planning
@@ -108,11 +148,11 @@ When a query joins data that spans two engines — e.g. a Trino-managed Iceberg 
 
 ### Query result caching
 
-A cache layer in the proxy that intercepts repeated identical queries (same SQL, same session parameters) and serves results from a short-lived store (Redis or in-process). Particularly useful for dashboard refresh patterns where dozens of users hit the same aggregation query within the same time window. Cache invalidation would be TTL-based initially, with Iceberg snapshot-aware invalidation on the roadmap.
+Covered in the **Agentic workloads** section above with more detail on the implementation approach.
 
 ### ML-driven routing
 
-The `pythonScript` router already allows arbitrary routing logic. The longer-term vision is a feedback loop: QueryFlux records actual query duration and resource cost per engine per query shape (query history is already in Postgres). A lightweight model trained on that history could predict, for a new query, which engine will be fastest or cheapest — and the routing layer acts on that prediction. Initial form: a simple decision tree or lookup table; eventual form: a continuously updated model served alongside the proxy.
+Superseded by the adaptive routing and LLM-assisted routing items in the **Agentic workloads** section above, which take the same idea further.
 
 ### Query budget enforcement
 

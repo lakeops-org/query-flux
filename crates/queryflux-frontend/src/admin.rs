@@ -264,6 +264,12 @@ pub fn build_frontends_status(
             "Arrow Flight SQL / gRPC-style access (driver-dependent).",
             frontends.flight_sql.as_ref(),
         ),
+        opt_fe(
+            "mcp",
+            "MCP",
+            "Model Context Protocol endpoint for agent tool integrations.",
+            frontends.mcp.as_ref(),
+        ),
     ];
 
     FrontendsStatusDto {

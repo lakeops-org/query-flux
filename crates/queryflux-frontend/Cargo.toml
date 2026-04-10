@@ -17,6 +17,7 @@ queryflux-fingerprint = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
+tokio-util = "0.7"
 serde = { workspace = true }
 serde_json = { workspace = true }
 axum = { workspace = true }
@@ -39,3 +40,5 @@ uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 flate2 = "1"
 anyhow = { workspace = true }
+rmcp = { version = "1.3", features = ["server", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
+schemars = "1"
