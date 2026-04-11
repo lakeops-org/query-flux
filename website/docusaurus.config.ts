@@ -11,7 +11,7 @@ const socialPreviewDescription =
 const config: Config = {
   title: 'QueryFlux',
   tagline: 'Universal SQL query proxy and router in Rust',
-  favicon: 'img/queryflux-hero-cover.png',
+  favicon: 'img/queryflux-hero-banner.png',
 
   url: siteUrl,
   baseUrl: '/',
@@ -110,8 +110,8 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Default og/twitter image (homepage hero cover); width/height in metadata below.
-    image: 'img/queryflux-hero-cover.png',
+    // Default og/twitter image (homepage hero banner); width/height in metadata below.
+    image: 'img/queryflux-hero-banner.png',
     // New visitors start in dark; do not follow OS prefers-color-scheme.
     colorMode: {
       defaultMode: 'dark',

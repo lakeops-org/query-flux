@@ -87,7 +87,7 @@ html[data-theme='dark'] .heroTitleFlux {
 }
 
 .heroTagline {
-  font-size: clamp(1.14rem, 2.2vw, 1.34rem);
+  font-size: clamp(1.28rem, 2.5vw, 1.52rem);
   font-weight: 650;
   color: #334155;
   margin: 0 0 1rem;
@@ -100,7 +100,7 @@ html[data-theme='dark'] .heroTagline {
 }
 
 .heroLeadin {
-  font-size: 1.02rem;
+  font-size: 1.14rem;
   line-height: 1.65;
   color: #475569;
   margin: 0 auto 1.75rem;
