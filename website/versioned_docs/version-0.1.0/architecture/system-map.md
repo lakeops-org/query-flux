@@ -48,6 +48,8 @@ Client (Trino CLI / psql / mysql / DBI)
 
 The frontend never knows which engine it's talking to. The engine adapter never knows which client protocol was used. The dispatch layer in the middle is the only place that bridges them.
 
+When the backend's connection format matches the frontend protocol (e.g. `mysql_async` backend → MySQL wire client), dispatch takes a **native path** that skips Arrow entirely — driver values are text-encoded directly into the client's wire format with no columnar allocation in between.
+
 ---
 
 ## Workspace Layout
@@ -178,13 +180,14 @@ pub trait RouterTrait: Send + Sync {
 
 ### Engine Adapters
 
-| Engine | Status | Execution model |
-|---|---|---|
-| Trino | **Done** | Async HTTP — transparent `nextUri` proxying |
-| DuckDB | **Done** | Sync embedded — `spawn_blocking` + Arrow result set |
-| StarRocks | **Done** | MySQL protocol — sync Arrow path via `execute_as_arrow` |
-| Athena | **Done** | Async AWS SDK — `StartQueryExecution` → poll → `GetQueryResults` |
-| ClickHouse | Planned | — |
+| Engine | Status | `ConnectionFormat` | Execution model |
+|---|---|---|---|
+| Trino (HTTP) | **Done** | `TrinoHttp` | Async — transparent `nextUri` proxying; raw bytes, zero copy |
+| Trino (ADBC) | **Done** | `Arrow` | Sync — ADBC driver, Arrow result set |
+| DuckDB | **Done** | `Arrow` | Sync embedded — `spawn_blocking` + Arrow result set |
+| StarRocks | **Done** | `MysqlWire` | Sync — `mysql_async` pool; native path (zero Arrow) for MySQL wire clients |
+| Athena | **Done** | `Arrow` | Async AWS SDK — `StartQueryExecution` → poll → `GetQueryResults` |
+| ClickHouse | Planned | `MysqlWire` / `Arrow` / `ClickHouseHttp` | Depends on configured connection type |
 
 ### Routers
 

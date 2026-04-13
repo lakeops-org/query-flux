@@ -288,6 +288,21 @@ impl SyncAdapter for StarRocksAdapter {
         EngineType::StarRocks
     }
 
+    fn connection_format(&self) -> crate::ConnectionFormat {
+        crate::ConnectionFormat::MysqlWire
+    }
+
+    async fn execute_native(
+        &self,
+        _protocol: &queryflux_core::query::FrontendProtocol,
+        sql: &str,
+        session: &SessionContext,
+        credentials: &queryflux_auth::QueryCredentials,
+        tags: &QueryTags,
+    ) -> crate::Result<crate::NativeExecution> {
+        crate::mysql_native::execute(&self.pool, sql, session, credentials, tags).await
+    }
+
     async fn execute_as_arrow(
         &self,
         sql: &str,

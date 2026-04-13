@@ -44,12 +44,30 @@ Client  ──(native protocol)──►  Frontend Listener
 
 ### Dispatch paths
 
-The dispatch layer offers two execution models:
+The dispatch layer offers three execution paths:
 
 | Path | Used by | Behavior |
 |------|---------|----------|
-| **`dispatch_query`** | Trino HTTP (async-capable groups) | Submit to engine, persist handle, return polling URL. Client follows `nextUri` to stream pages. |
-| **`execute_to_sink`** | All other frontends + Trino HTTP sync fallback | Wait for cluster capacity (backoff), execute query to completion, stream Arrow batches through a `ResultSink` that encodes the native protocol response. |
+| **`dispatch_query`** | Trino HTTP (async-capable groups) | Submit to engine, persist handle, return polling URL. Client follows `nextUri` to stream pages. Falls back to `execute_to_sink` when a sync adapter is selected from a mixed-engine group. |
+| **`execute_to_sink` — native** | MySQL wire ↔ `MysqlWire` backend; Postgres wire ↔ `PostgresWire` backend | Wait for cluster capacity, call `execute_native` on the adapter, stream `NativeResultChunk`s directly to the sink. **Zero Arrow allocation.** |
+| **`execute_to_sink` — Arrow** | All other frontend/backend combinations | Wait for cluster capacity, call `execute_as_arrow`, stream `RecordBatch`es through a `ResultSink` that re-encodes to the native protocol response. |
+
+#### Protocol matching (`ConnectionFormat`)
+
+Each adapter declares the wire format it natively produces via `connection_format()`. Dispatch compares this against the incoming frontend protocol — when they match, the native (zero-serialization) path is taken; otherwise the Arrow path is used as a universal fallback.
+
+```
+Adapter declares:            Frontend needs:         Dispatch:
+Arrow (ADBC/DuckDB)      ↔  FlightSql       → match  → Arrow passthrough (optimal)
+MysqlWire (mysql_async)  ↔  MySqlWire       → match  → native NativeResultChunk path
+PostgresWire (tokio-pg)  ↔  PostgresWire    → match  → native NativeResultChunk path
+TrinoHttp                ↔  TrinoHttp       → match  → Raw bytes passthrough
+
+MysqlWire                ↔  FlightSql       → no match → Arrow conversion
+Arrow                    ↔  MySqlWire       → no match → Arrow conversion
+```
+
+The `ConnectionFormat` declaration is the only thing an adapter needs to change to opt into the native path — dispatch and frontends require no per-engine changes.
 
 ### SessionContext
 

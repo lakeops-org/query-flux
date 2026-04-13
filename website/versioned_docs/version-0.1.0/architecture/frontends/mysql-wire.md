@@ -50,6 +50,18 @@ Queries execute **synchronously** via `execute_to_sink`. Results stream as MySQL
 3. Row data packets (text values).
 4. EOF / OK packet.
 
+### Native path vs. Arrow fallback
+
+The dispatch layer chooses between two result-encoding paths based on the backend's `ConnectionFormat`:
+
+| Backend | `ConnectionFormat` | Path |
+|---------|-------------------|------|
+| StarRocks, ClickHouse (`mysql_async` pool) | `MysqlWire` | **Native** — driver values encoded directly to `NativeResultChunk`; no Arrow allocation |
+| DuckDB, ADBC engines (Snowflake, Databricks) | `Arrow` | **Arrow fallback** — `RecordBatch` stream re-encoded to MySQL text protocol |
+| Trino (HTTP async) | `TrinoHttp` | **Arrow fallback** — internal submit+poll loop returns Arrow |
+
+When backend and frontend formats match (`MysqlWire` ↔ `MySqlWire`), the entire Arrow columnar allocation is skipped. This also preserves type precision for `DECIMAL`, `DATETIME(6)`, and unsigned integers that would otherwise be approximated through the Arrow type system.
+
 ## Built-in query handling
 
 The MySQL frontend intercepts several common queries that clients and drivers send during connection setup:

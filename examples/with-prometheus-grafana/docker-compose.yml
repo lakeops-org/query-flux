@@ -44,6 +44,7 @@ services:
     ports:
       - "8080:8080"
       - "9000:9000"
+      - "8085:3000"  # Studio UI
     volumes:
       - ./config.yaml:/etc/queryflux/config.yaml:ro
     environment:
