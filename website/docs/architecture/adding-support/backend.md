@@ -49,13 +49,35 @@ Add top-level fields on **`ClusterConfig`** only if **YAML** users need them and
 
 ### Step 3 — Adapter module (`queryflux-engine-adapters`)
 
+Adapters implement one of two traits depending on their execution model:
+
+| Trait | Used when | Examples |
+|-------|-----------|---------|
+| `SyncAdapter` | Engine returns results synchronously (single round-trip or blocking call) | DuckDB, StarRocks, ADBC engines |
+| `AsyncAdapter` | Engine uses a submit-then-poll lifecycle across multiple HTTP requests | Trino, Athena |
+
+**Steps:**
+
 1. Add `src/your_engine/mod.rs` (or similar).
-2. Implement **`EngineAdapterTrait`** (`submit_query`, `poll_query`, `cancel_query`, `health_check`, `engine_type`, `supports_async`, plus optional methods like `execute_as_arrow`, `base_url`, catalog helpers — copy the shape from Trino or StarRocks).
-3. Implement **`descriptor() -> EngineDescriptor`**: `engine_key`, `display_name`, `connection_type`, `supported_auth`, **`config_fields`** (this is the schema for forms and `/admin/engine-registry`), `implemented: true` once wired.
-4. Implement **`try_from_config_json(..., json: &serde_json::Value, ...)`** for the DB path. Use **`queryflux_core::engine_registry`**: `json_str`, `json_bool`, **`parse_auth_from_config_json`** where auth matches existing patterns.
-5. Implement **`try_from_cluster_config(..., cfg: &ClusterConfig, ...)`** for YAML.
-6. Add **`YourEngineFactory`** (empty struct) and **`impl EngineAdapterFactory`** in the same module: `engine_key()`, `descriptor()`, `build_from_config_json` delegating to `try_from_config_json` and returning `Arc<dyn EngineAdapterTrait>`. For async construction (Athena-style), `try_from_config_json` is `async`; the trait is `async_trait`-based.
-7. Export the module from `crates/queryflux-engine-adapters/src/lib.rs` and add **Cargo.toml** dependencies for any new client libraries.
+2. Implement **`SyncAdapter`** or **`AsyncAdapter`** — pick the one that matches your engine's execution model. Copy the shape from StarRocks (`SyncAdapter`) or Trino (`AsyncAdapter`).
+   - Required methods: `execute_as_arrow` / `submit_query` + `poll_query` + `cancel_query`, `health_check`, `engine_type`, catalog helpers (`list_catalogs`, `list_databases`, `list_tables`, `describe_table`).
+3. **Declare `connection_format()`** — this is how dispatch knows which result-encoding path to use:
+
+   ```rust
+   fn connection_format(&self) -> ConnectionFormat {
+       ConnectionFormat::MysqlWire   // for mysql_async-backed engines
+       // ConnectionFormat::Arrow    // default — ADBC, DuckDB, in-process
+       // ConnectionFormat::PostgresWire // for tokio_postgres-backed engines
+   }
+   ```
+
+   If you return anything other than the default `Arrow`, you **must** also override **`execute_native`** to produce a `NativeExecution` stream. The shared helpers in `queryflux-engine-adapters::mysql_native` (for `mysql_async`) and `queryflux-engine-adapters::pg_native` (for `tokio_postgres`) cover the common cases — delegate to them rather than implementing row conversion yourself.
+
+4. Implement **`descriptor() -> EngineDescriptor`**: `engine_key`, `display_name`, `connection_type`, `supported_auth`, **`config_fields`** (this is the schema for forms and `/admin/engine-registry`), `implemented: true` once wired.
+5. Implement **`try_from_config_json(..., json: &serde_json::Value, ...)`** for the DB path. Use **`queryflux_core::engine_registry`**: `json_str`, `json_bool`, **`parse_auth_from_config_json`** where auth matches existing patterns.
+6. Implement **`try_from_cluster_config(..., cfg: &ClusterConfig, ...)`** for YAML.
+7. Add **`YourEngineFactory`** (empty struct) and **`impl EngineAdapterFactory`** in the same module: `engine_key()`, `descriptor()`, `build_from_config_json` delegating to `try_from_config_json` and returning `AdapterKind::Sync(...)` or `AdapterKind::Async(...)`. For async construction (Athena-style), `try_from_config_json` is `async`; the trait is `async_trait`-based.
+8. Export the module from `crates/queryflux-engine-adapters/src/lib.rs` and add **Cargo.toml** dependencies for any new client libraries.
 
 Use **`QueryFluxError::Engine(format!(...))`** and include the **`cluster_name_str`** argument in messages so logs show which cluster failed.
 
@@ -74,7 +96,7 @@ You normally **do not** edit `queryflux-persistence` for engine-specific JSON ke
 
 ### Step 6 — Frontends and tests
 
-- **`queryflux-frontend`**: Most engines need **no** change; execution goes through **`dispatch_query`** / **`execute_to_sink`**. Only add branches if you need a special path (like Trino raw HTTP).
+- **`queryflux-frontend`**: Most engines need **no** change; execution goes through **`dispatch_query`** / **`execute_to_sink`**. The native path (zero Arrow) is activated purely by returning the right `ConnectionFormat` in your adapter — no frontend changes required.
 - **E2E**: Add tests under **`crates/queryflux-e2e-tests`** if you can run the engine in Docker; see **`docker/test/docker-compose.test.yml`**.
 - Update **[system-map.md](../system-map.md)** if you maintain a supported-engines list there.
 
@@ -111,8 +133,8 @@ Studio lives in **`queryflux-studio/`** at the repo root (Next.js). It talks to 
 ### Rust
 
 - [ ] `EngineConfig` + `EngineType` + `engine_key` / `parse_engine_key` / `From<&EngineConfig> for EngineType` + `dialect()` if needed
-- [ ] `EngineAdapterTrait` + `descriptor()` + `try_from_config_json` + `try_from_cluster_config`
-- [ ] `YourEngineFactory` + `EngineAdapterFactory`
+- [ ] `SyncAdapter` or `AsyncAdapter` + `connection_format()` (+ `execute_native` if non-Arrow) + `descriptor()` + `try_from_config_json` + `try_from_cluster_config`
+- [ ] `YourEngineFactory` + `EngineAdapterFactory` returning `AdapterKind::Sync` or `AdapterKind::Async`
 - [ ] `registered_engines.rs`: `all_factories()` + `build_adapter` YAML arm
 - [ ] `cargo build -p queryflux` and smoke-test Postgres + YAML cluster load
 
@@ -137,6 +159,6 @@ Studio lives in **`queryflux-studio/`** at the repo root (Next.js). It talks to 
 **Key Rust files**
 
 - [`crates/queryflux/src/registered_engines.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux/src/registered_engines.rs) — `all_factories`, `build_adapter`, `build_adapter_from_record`
-- [`crates/queryflux-engine-adapters/src/lib.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/lib.rs) — `EngineAdapterFactory`, `EngineAdapterTrait`
+- [`crates/queryflux-engine-adapters/src/lib.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-engine-adapters/src/lib.rs) — `EngineAdapterFactory`, `SyncAdapter`, `AsyncAdapter`, `ConnectionFormat`, `AdapterKind`
 - [`crates/queryflux-core/src/engine_registry.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-core/src/engine_registry.rs) — `engine_key`, `parse_engine_key`, `parse_auth_from_config_json`
 - [`crates/queryflux-persistence/src/cluster_config.rs`](https://github.com/lakeops-org/queryflux/blob/main/crates/queryflux-persistence/src/cluster_config.rs) — row types; engine config stored as JSONB

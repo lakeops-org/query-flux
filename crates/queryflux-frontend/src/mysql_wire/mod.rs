@@ -4,8 +4,18 @@
 //! DBeaver, mysql CLI, JDBC, etc.) and dispatches queries through the normal
 //! QueryFlux routing/dispatch pipeline.
 //!
-//! All backends (DuckDB, StarRocks, Trino) are supported. Results are streamed
-//! as Arrow RecordBatches and serialised to MySQL text protocol on the fly.
+//! # Execution paths
+//!
+//! Results reach the client via one of two paths, chosen by dispatch:
+//!
+//! **Native path** (zero serialization) — when the backend adapter declares
+//! `ConnectionFormat::MysqlWire` (e.g. StarRocks, ClickHouse via `mysql_async`):
+//! driver values are text-encoded directly into `NativeResultChunk`s and written
+//! as MySQL text-protocol packets with no Arrow allocation in between.
+//!
+//! **Arrow fallback** — all other backends (DuckDB, Trino, ADBC engines):
+//! results arrive as Arrow `RecordBatch`es and are serialised to MySQL text
+//! protocol on the fly via `on_schema` / `on_batch`.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -23,6 +33,7 @@ use tracing::{debug, info, warn};
 use queryflux_auth::Credentials;
 use queryflux_core::{
     error::{QueryFluxError, Result},
+    native_result::{NativeColumn, NativeResultChunk, NativeTypeKind},
     query::{FrontendProtocol, QueryStats},
     session::SessionContext,
     tags::{parse_query_tags, QueryTags},
@@ -51,7 +62,10 @@ const MYSQL_TYPE_DOUBLE: u8 = 5;
 const MYSQL_TYPE_TIMESTAMP: u8 = 7;
 const MYSQL_TYPE_LONGLONG: u8 = 8;
 const MYSQL_TYPE_DATE: u8 = 10;
+const MYSQL_TYPE_TIME: u8 = 11;
 const MYSQL_TYPE_DATETIME: u8 = 12;
+const MYSQL_TYPE_NEWDECIMAL: u8 = 246;
+const MYSQL_TYPE_JSON: u8 = 245;
 const MYSQL_TYPE_BLOB: u8 = 252;
 const MYSQL_TYPE_VAR_STRING: u8 = 253;
 
@@ -632,6 +646,78 @@ impl ResultSink for MysqlResultSink {
         self.encode_and_send(build_err(1105, message));
         Ok(())
     }
+
+    async fn on_native_chunk(&mut self, chunk: &NativeResultChunk) -> Result<()> {
+        // On the first chunk, send column count + column definition packets + EOF.
+        if let Some(columns) = &chunk.columns {
+            let mut count_pkt = Vec::new();
+            write_lenenc_int(&mut count_pkt, columns.len() as u64);
+            self.encode_and_send(count_pkt);
+
+            for col in columns {
+                self.encode_and_send(build_column_def_from_native(col));
+            }
+
+            self.encode_and_send(build_eof());
+        }
+
+        // Encode each row as a MySQL text-protocol row data packet.
+        for row in &chunk.rows {
+            let mut row_pkt = Vec::new();
+            for value in &row.0 {
+                match value {
+                    None => row_pkt.push(0xfb), // NULL marker
+                    Some(bytes) => write_lenenc_str(&mut row_pkt, bytes),
+                }
+            }
+            self.encode_and_send(row_pkt);
+        }
+        Ok(())
+    }
+}
+
+// ── Native type helpers ───────────────────────────────────────────────────────
+
+fn native_type_to_mysql_type(kind: &NativeTypeKind) -> u8 {
+    match kind {
+        NativeTypeKind::Boolean | NativeTypeKind::TinyInt => MYSQL_TYPE_TINY,
+        NativeTypeKind::SmallInt => MYSQL_TYPE_SHORT,
+        NativeTypeKind::Int => MYSQL_TYPE_LONG,
+        NativeTypeKind::BigInt => MYSQL_TYPE_LONGLONG,
+        NativeTypeKind::Float => MYSQL_TYPE_FLOAT,
+        NativeTypeKind::Double => MYSQL_TYPE_DOUBLE,
+        NativeTypeKind::Decimal => MYSQL_TYPE_NEWDECIMAL,
+        NativeTypeKind::Date => MYSQL_TYPE_DATE,
+        NativeTypeKind::Time => MYSQL_TYPE_TIME,
+        NativeTypeKind::DateTime => MYSQL_TYPE_DATETIME,
+        NativeTypeKind::Timestamp => MYSQL_TYPE_TIMESTAMP,
+        NativeTypeKind::Binary | NativeTypeKind::Blob | NativeTypeKind::Text => MYSQL_TYPE_BLOB,
+        NativeTypeKind::Json => MYSQL_TYPE_JSON,
+        _ => MYSQL_TYPE_VAR_STRING, // Char, Varchar, Unknown
+    }
+}
+
+/// Build a MySQL ColumnDefinition41 packet from a `NativeColumn`.
+fn build_column_def_from_native(col: &NativeColumn) -> Vec<u8> {
+    let mut pkt = Vec::new();
+    write_lenenc_str(&mut pkt, b"def"); // catalog
+    write_lenenc_str(&mut pkt, b""); // schema
+    write_lenenc_str(&mut pkt, b""); // table
+    write_lenenc_str(&mut pkt, b""); // org_table
+    write_lenenc_str(&mut pkt, col.name.as_bytes()); // name
+    write_lenenc_str(&mut pkt, col.name.as_bytes()); // org_name
+    pkt.push(0x0c); // fixed-length block = 12
+    pkt.extend_from_slice(&0x21u16.to_le_bytes()); // charset: utf8mb4 (33)
+    pkt.extend_from_slice(&0xffffu32.to_le_bytes()); // max column length
+    pkt.push(native_type_to_mysql_type(&col.type_info.kind)); // type byte
+    let mut flags: u16 = if col.nullable { 0 } else { 0x0001 }; // NOT_NULL_FLAG
+    if col.type_info.unsigned {
+        flags |= 0x0020;
+    } // UNSIGNED_FLAG
+    pkt.extend_from_slice(&flags.to_le_bytes());
+    pkt.push(col.type_info.scale.unwrap_or(0)); // decimals
+    pkt.extend_from_slice(&[0, 0]); // filler
+    pkt
 }
 
 // ── Arrow type helpers ────────────────────────────────────────────────────────
@@ -1159,4 +1245,222 @@ fn read_nul_str(payload: &[u8], pos: &mut usize) -> String {
         *pos += 1; // consume NUL terminator
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use queryflux_core::native_result::{NativeColumn, NativeTypeInfo, NativeTypeKind};
+
+    // ── native_type_to_mysql_type ─────────────────────────────────────────────
+
+    #[test]
+    fn tinyint_maps_to_mysql_tiny() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::TinyInt),
+            MYSQL_TYPE_TINY
+        );
+    }
+
+    #[test]
+    fn bigint_maps_to_mysql_longlong() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::BigInt),
+            MYSQL_TYPE_LONGLONG
+        );
+    }
+
+    #[test]
+    fn decimal_maps_to_mysql_newdecimal() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::Decimal),
+            MYSQL_TYPE_NEWDECIMAL
+        );
+    }
+
+    #[test]
+    fn date_maps_to_mysql_date() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::Date),
+            MYSQL_TYPE_DATE
+        );
+    }
+
+    #[test]
+    fn time_maps_to_mysql_time() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::Time),
+            MYSQL_TYPE_TIME
+        );
+    }
+
+    #[test]
+    fn datetime_maps_to_mysql_datetime() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::DateTime),
+            MYSQL_TYPE_DATETIME
+        );
+    }
+
+    #[test]
+    fn timestamp_maps_to_mysql_timestamp() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::Timestamp),
+            MYSQL_TYPE_TIMESTAMP
+        );
+    }
+
+    #[test]
+    fn json_maps_to_mysql_json() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::Json),
+            MYSQL_TYPE_JSON
+        );
+    }
+
+    #[test]
+    fn text_maps_to_mysql_blob() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::Text),
+            MYSQL_TYPE_BLOB
+        );
+    }
+
+    #[test]
+    fn varchar_maps_to_mysql_var_string() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::Varchar),
+            MYSQL_TYPE_VAR_STRING
+        );
+    }
+
+    #[test]
+    fn unknown_maps_to_mysql_var_string() {
+        assert_eq!(
+            native_type_to_mysql_type(&NativeTypeKind::Unknown),
+            MYSQL_TYPE_VAR_STRING
+        );
+    }
+
+    // ── build_column_def_from_native — packet structure ───────────────────────
+    //
+    // ColumnDefinition41 layout for a column named "id" (2 bytes):
+    //   4  bytes: lenenc "def"       (1 len + 3 data)
+    //   1  byte:  lenenc ""          (schema)
+    //   1  byte:  lenenc ""          (table)
+    //   1  byte:  lenenc ""          (org_table)
+    //   3  bytes: lenenc "id"        (1 len + 2 data)
+    //   3  bytes: lenenc "id"        (org_name)
+    //   1  byte:  0x0c               (fixed-length-fields marker)
+    //   2  bytes: charset            (0x21 = utf8mb4)
+    //   4  bytes: max col len        (0xffff)
+    //   1  byte:  type
+    //   2  bytes: flags
+    //   1  byte:  decimals
+    //   2  bytes: filler             (0x00 0x00)
+    //
+    //  total = 26 bytes for name "id"
+
+    fn make_col(name: &str, kind: NativeTypeKind, nullable: bool, unsigned: bool) -> NativeColumn {
+        NativeColumn {
+            name: name.to_string(),
+            type_info: NativeTypeInfo {
+                kind,
+                precision: None,
+                scale: None,
+                unsigned,
+            },
+            nullable,
+        }
+    }
+
+    // Compute type-byte offset for a given column name length.
+    fn type_byte_offset(name_len: usize) -> usize {
+        4               // lenenc "def"
+        + 1             // lenenc ""  (schema)
+        + 1             // lenenc ""  (table)
+        + 1             // lenenc ""  (org_table)
+        + 1 + name_len  // lenenc name
+        + 1 + name_len  // lenenc org_name
+        + 1             // 0x0c marker
+        + 2             // charset
+        + 4 // max col len
+    }
+
+    #[test]
+    fn bigint_column_type_byte_is_longlong() {
+        let col = make_col("id", NativeTypeKind::BigInt, true, false);
+        let pkt = build_column_def_from_native(&col);
+        let type_pos = type_byte_offset("id".len());
+        assert_eq!(
+            pkt[type_pos], MYSQL_TYPE_LONGLONG,
+            "type byte should be LONGLONG"
+        );
+    }
+
+    #[test]
+    fn decimal_column_type_byte_is_newdecimal() {
+        let col = make_col("price", NativeTypeKind::Decimal, true, false);
+        let pkt = build_column_def_from_native(&col);
+        let type_pos = type_byte_offset("price".len());
+        assert_eq!(pkt[type_pos], MYSQL_TYPE_NEWDECIMAL);
+    }
+
+    #[test]
+    fn not_null_column_sets_not_null_flag() {
+        let col = make_col("id", NativeTypeKind::BigInt, false, false);
+        let pkt = build_column_def_from_native(&col);
+        let flags_pos = type_byte_offset("id".len()) + 1;
+        let flags = u16::from_le_bytes([pkt[flags_pos], pkt[flags_pos + 1]]);
+        assert_ne!(flags & 0x0001, 0, "NOT_NULL_FLAG should be set");
+    }
+
+    #[test]
+    fn nullable_column_clears_not_null_flag() {
+        let col = make_col("id", NativeTypeKind::BigInt, true, false);
+        let pkt = build_column_def_from_native(&col);
+        let flags_pos = type_byte_offset("id".len()) + 1;
+        let flags = u16::from_le_bytes([pkt[flags_pos], pkt[flags_pos + 1]]);
+        assert_eq!(
+            flags & 0x0001,
+            0,
+            "NOT_NULL_FLAG should be clear for nullable"
+        );
+    }
+
+    #[test]
+    fn unsigned_column_sets_unsigned_flag() {
+        let col = make_col("cnt", NativeTypeKind::BigInt, true, true);
+        let pkt = build_column_def_from_native(&col);
+        let flags_pos = type_byte_offset("cnt".len()) + 1;
+        let flags = u16::from_le_bytes([pkt[flags_pos], pkt[flags_pos + 1]]);
+        assert_ne!(flags & 0x0020, 0, "UNSIGNED_FLAG should be set");
+    }
+
+    #[test]
+    fn charset_is_utf8mb4() {
+        let col = make_col("s", NativeTypeKind::Varchar, true, false);
+        let pkt = build_column_def_from_native(&col);
+        // scan for the 0x0c fixed-length-fields marker and read the 2 charset bytes after it
+        let marker_pos = pkt.iter().position(|&b| b == 0x0c).expect("0x0c marker");
+        let charset = u16::from_le_bytes([pkt[marker_pos + 1], pkt[marker_pos + 2]]);
+        assert_eq!(charset, 0x21, "charset should be utf8mb4 (33 / 0x21)");
+    }
+
+    #[test]
+    fn packet_ends_with_zero_filler() {
+        let col = make_col("x", NativeTypeKind::Int, true, false);
+        let pkt = build_column_def_from_native(&col);
+        assert_eq!(pkt[pkt.len() - 2], 0, "penultimate filler byte should be 0");
+        assert_eq!(pkt[pkt.len() - 1], 0, "last filler byte should be 0");
+    }
+
+    #[test]
+    fn column_name_appears_in_packet() {
+        let col = make_col("my_column", NativeTypeKind::Varchar, true, false);
+        let pkt = build_column_def_from_native(&col);
+        let name_bytes = b"my_column";
+        let found = pkt.windows(name_bytes.len()).any(|w| w == name_bytes);
+        assert!(found, "column name bytes should appear in packet");
+    }
 }

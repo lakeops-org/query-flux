@@ -1,6 +1,7 @@
 pub mod adbc;
 pub mod athena;
 pub mod duckdb;
+pub mod mysql_native;
 pub mod starrocks;
 pub mod trino;
 
@@ -14,7 +15,8 @@ use queryflux_core::{
     config::ClusterConfig,
     engine_registry::EngineDescriptor,
     error::Result,
-    query::{ClusterGroupName, ClusterName},
+    native_result::NativeResultChunk,
+    query::{ClusterGroupName, ClusterName, FrontendProtocol},
 };
 
 /// Implemented by each engine's typed config struct.
@@ -47,6 +49,124 @@ pub struct SyncExecution {
     pub stats: tokio::sync::oneshot::Receiver<Option<queryflux_core::query::QueryEngineStats>>,
 }
 
+/// What wire format this adapter natively produces, determined by its connection type.
+///
+/// The adapter declares one value based on how it is configured (which driver/pool it uses).
+/// Dispatch compares this against the incoming frontend protocol — a match means the
+/// Arrow intermediate can be skipped entirely.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionFormat {
+    /// Arrow `RecordBatch` stream — ADBC, DuckDB, in-process engines.
+    Arrow,
+    /// MySQL wire protocol via `mysql_async` pool — StarRocks, ClickHouse MySQL iface.
+    MysqlWire,
+    /// PostgreSQL wire protocol via `tokio_postgres` pool.
+    PostgresWire,
+    /// Trino HTTP JSON (opaque bytes, async submit-poll).
+    TrinoHttp,
+    /// ClickHouse HTTP (opaque bytes).
+    ClickHouseHttp,
+}
+
+impl ConnectionFormat {
+    /// Returns `true` if this backend format directly satisfies the given frontend protocol
+    /// without any Arrow conversion.
+    pub fn matches_frontend(&self, protocol: &FrontendProtocol) -> bool {
+        matches!(
+            (self, protocol),
+            (ConnectionFormat::MysqlWire, FrontendProtocol::MySqlWire)
+                | (
+                    ConnectionFormat::PostgresWire,
+                    FrontendProtocol::PostgresWire
+                )
+                | (ConnectionFormat::Arrow, FrontendProtocol::FlightSql)
+                | (ConnectionFormat::TrinoHttp, FrontendProtocol::TrinoHttp)
+                | (
+                    ConnectionFormat::ClickHouseHttp,
+                    FrontendProtocol::ClickHouseHttp
+                )
+        )
+    }
+}
+
+#[cfg(test)]
+mod connection_format_tests {
+    use super::*;
+    use queryflux_core::query::FrontendProtocol;
+
+    // ── matches (native path taken) ───────────────────────────────────────────
+
+    #[test]
+    fn mysql_wire_matches_mysql_wire() {
+        assert!(ConnectionFormat::MysqlWire.matches_frontend(&FrontendProtocol::MySqlWire));
+    }
+
+    #[test]
+    fn postgres_wire_matches_postgres_wire() {
+        assert!(ConnectionFormat::PostgresWire.matches_frontend(&FrontendProtocol::PostgresWire));
+    }
+
+    #[test]
+    fn arrow_matches_flight_sql() {
+        assert!(ConnectionFormat::Arrow.matches_frontend(&FrontendProtocol::FlightSql));
+    }
+
+    #[test]
+    fn trino_http_matches_trino_http() {
+        assert!(ConnectionFormat::TrinoHttp.matches_frontend(&FrontendProtocol::TrinoHttp));
+    }
+
+    #[test]
+    fn clickhouse_http_matches_clickhouse_http() {
+        assert!(
+            ConnectionFormat::ClickHouseHttp.matches_frontend(&FrontendProtocol::ClickHouseHttp)
+        );
+    }
+
+    // ── no match (Arrow fallback taken) ──────────────────────────────────────
+
+    #[test]
+    fn mysql_wire_does_not_match_postgres_wire() {
+        assert!(!ConnectionFormat::MysqlWire.matches_frontend(&FrontendProtocol::PostgresWire));
+    }
+
+    #[test]
+    fn mysql_wire_does_not_match_flight_sql() {
+        assert!(!ConnectionFormat::MysqlWire.matches_frontend(&FrontendProtocol::FlightSql));
+    }
+
+    #[test]
+    fn mysql_wire_does_not_match_trino_http() {
+        assert!(!ConnectionFormat::MysqlWire.matches_frontend(&FrontendProtocol::TrinoHttp));
+    }
+
+    #[test]
+    fn arrow_does_not_match_mysql_wire() {
+        assert!(!ConnectionFormat::Arrow.matches_frontend(&FrontendProtocol::MySqlWire));
+    }
+
+    #[test]
+    fn arrow_does_not_match_postgres_wire() {
+        assert!(!ConnectionFormat::Arrow.matches_frontend(&FrontendProtocol::PostgresWire));
+    }
+
+    #[test]
+    fn trino_http_does_not_match_mysql_wire() {
+        assert!(!ConnectionFormat::TrinoHttp.matches_frontend(&FrontendProtocol::MySqlWire));
+    }
+
+    #[test]
+    fn postgres_wire_does_not_match_mysql_wire() {
+        assert!(!ConnectionFormat::PostgresWire.matches_frontend(&FrontendProtocol::MySqlWire));
+    }
+}
+
+/// Returned by `SyncAdapter::execute_native` — a stream of protocol-agnostic row chunks.
+pub struct NativeExecution {
+    pub stream: Pin<Box<dyn Stream<Item = Result<NativeResultChunk>> + Send>>,
+    pub stats: tokio::sync::oneshot::Receiver<Option<queryflux_core::query::QueryEngineStats>>,
+}
+
 /// Sync engines: execute to completion, stream Arrow results.
 /// Used by DuckDB (embedded + HTTP) and StarRocks.
 #[async_trait]
@@ -63,6 +183,31 @@ pub trait SyncAdapter: Send + Sync {
     fn translation_target_dialect(&self) -> queryflux_core::query::SqlDialect {
         self.engine_type().dialect()
     }
+    /// The wire format this adapter natively produces based on its connection type.
+    ///
+    /// Default: `Arrow` — the universal fallback path. Adapters that use a non-Arrow
+    /// driver (e.g. `mysql_async`) override this to enable the zero-serialization path.
+    fn connection_format(&self) -> ConnectionFormat {
+        ConnectionFormat::Arrow
+    }
+
+    /// Execute a query and stream results as `NativeResultChunk`s, bypassing Arrow.
+    ///
+    /// Only called by dispatch when `connection_format().matches_frontend(protocol)` is true.
+    /// Default returns `Err` — adapters that override `connection_format` must also override this.
+    async fn execute_native(
+        &self,
+        _protocol: &FrontendProtocol,
+        _sql: &str,
+        _session: &queryflux_core::session::SessionContext,
+        _credentials: &queryflux_auth::QueryCredentials,
+        _tags: &queryflux_core::tags::QueryTags,
+    ) -> Result<NativeExecution> {
+        Err(queryflux_core::error::QueryFluxError::Engine(
+            "execute_native not implemented for this adapter".to_string(),
+        ))
+    }
+
     async fn health_check(&self) -> bool;
     async fn fetch_running_query_count(&self) -> Option<u64> {
         None
@@ -122,6 +267,15 @@ pub trait AsyncAdapter: Send + Sync {
     /// Called by dispatch when the engine returns a terminal state on the initial POST
     /// (no `nextUri`). The body is the raw bytes returned by `submit_query`. Engines that
     /// embed stats in their response (e.g. Trino) override this; others return `None`.
+    /// The wire format this adapter natively produces.
+    ///
+    /// Async adapters that use HTTP passthrough (e.g. Trino → `TrinoHttp`,
+    /// ClickHouse → `ClickHouseHttp`) override this so dispatch can document
+    /// and validate the native path. Default: `Arrow`.
+    fn connection_format(&self) -> ConnectionFormat {
+        ConnectionFormat::Arrow
+    }
+
     fn terminal_stats_from_body(
         &self,
         _body: &bytes::Bytes,

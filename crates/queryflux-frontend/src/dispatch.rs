@@ -9,6 +9,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use queryflux_auth::{AuthContext, QueryCredentials};
 use queryflux_cluster_manager::ClusterGroupManager;
+use queryflux_core::native_result::NativeResultChunk;
 use queryflux_core::tags::{merge_tags, QueryTags};
 use queryflux_core::{
     error::{QueryFluxError, Result},
@@ -19,7 +20,7 @@ use queryflux_core::{
     session::SessionContext,
 };
 use queryflux_engine_adapters::trino::api::TrinoResponse;
-use queryflux_engine_adapters::{AdapterKind, AsyncAdapter, SyncAdapter};
+use queryflux_engine_adapters::{AdapterKind, AsyncAdapter, ConnectionFormat, SyncAdapter};
 use queryflux_metrics::MetricsStore;
 use queryflux_translation::SchemaContext;
 
@@ -45,6 +46,18 @@ pub trait ResultSink: Send {
     async fn on_batch(&mut self, batch: &RecordBatch) -> Result<()>;
     async fn on_complete(&mut self, stats: &QueryStats) -> Result<()>;
     async fn on_error(&mut self, message: &str) -> Result<()>;
+
+    /// Receive a native result chunk (non-Arrow path).
+    ///
+    /// Called by `execute_native_to_sink` only when
+    /// `adapter.connection_format().matches_frontend(protocol)` is true — i.e. only for
+    /// sinks whose frontend protocol matches the backend's connection format.
+    /// The default returns `Err` to surface misconfiguration during development.
+    async fn on_native_chunk(&mut self, _chunk: &NativeResultChunk) -> Result<()> {
+        Err(queryflux_core::error::QueryFluxError::Engine(
+            "on_native_chunk not implemented for this sink".to_string(),
+        ))
+    }
 }
 
 /// Protocol-agnostic result of dispatching a query to an async (Trino) backend.
@@ -164,7 +177,7 @@ pub async fn dispatch_query(
         Some(AdapterKind::Sync(_)) => {
             state.metrics.on_query_finished(&group.0, &cluster_name.0);
             let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
-            return Err(QueryFluxError::Engine(format!(
+            return Err(QueryFluxError::SyncEngineRequired(format!(
                 "Sync engine on async dispatch path: {cluster_name}"
             )));
         }
@@ -571,6 +584,13 @@ impl DispatchAdapter {
             Self::Async(a) => a.translation_target_dialect(),
         }
     }
+
+    fn connection_format(&self) -> ConnectionFormat {
+        match self {
+            Self::Sync(a) => a.connection_format(),
+            Self::Async(a) => a.connection_format(),
+        }
+    }
 }
 
 /// Everything resolved before execution begins on the sync path.
@@ -905,6 +925,120 @@ async fn execute_stream(
     (outcome, sink.on_complete(&stats).await)
 }
 
+/// Execute a query via the native (non-Arrow) path and stream `NativeResultChunk`s to `sink`.
+///
+/// Only called when `adapter.connection_format().matches_frontend(protocol)` is true.
+/// Mirrors the structure of `execute_stream` so metrics, error handling, and stats are identical.
+async fn execute_native_to_sink(
+    setup: &SyncQuerySetup,
+    protocol: &FrontendProtocol,
+    sink: &mut impl ResultSink,
+) -> (SyncOutcome, Result<()>) {
+    let elapsed = || setup.start.elapsed().as_millis() as u64;
+
+    // Native execution is only available on SyncAdapters — AsyncAdapters use their own
+    // Raw-bytes passthrough in dispatch_query and never reach execute_to_sink.
+    let sync_adapter = match &setup.adapter {
+        DispatchAdapter::Sync(a) => a,
+        DispatchAdapter::Async(_) => {
+            // Should never happen: async adapters don't match MysqlWire/PostgresWire formats.
+            // Fall through to a clear error rather than silently producing wrong results.
+            let msg = "execute_native_to_sink called for an async adapter — this is a bug";
+            warn!(id = %setup.ctx.query_id, "{msg}");
+            let outcome = SyncOutcome {
+                status: QueryStatus::Failed,
+                rows: None,
+                error: Some(msg.to_string()),
+                elapsed_ms: elapsed(),
+                engine_stats: None,
+            };
+            return (outcome, sink.on_error(msg).await);
+        }
+    };
+
+    let execution = match sync_adapter
+        .execute_native(
+            protocol,
+            &setup.translated,
+            &setup.ctx.session,
+            &setup.credentials,
+            &setup.ctx.query_tags,
+        )
+        .await
+    {
+        Ok(e) => e,
+        Err(e) => {
+            let msg = e.to_string();
+            warn!(
+                id = %setup.ctx.query_id,
+                cluster = %setup.ctx.cluster,
+                "execute_native failed: {msg}"
+            );
+            let outcome = SyncOutcome {
+                status: QueryStatus::Failed,
+                rows: None,
+                error: Some(msg.clone()),
+                elapsed_ms: elapsed(),
+                engine_stats: None,
+            };
+            return (outcome, sink.on_error(&msg).await);
+        }
+    };
+
+    let mut stream = execution.stream;
+    let mut stats_rx = execution.stats;
+    let mut rows_returned: u64 = 0;
+
+    while let Some(result) = stream.next().await {
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                let outcome = SyncOutcome {
+                    status: QueryStatus::Failed,
+                    rows: None,
+                    error: Some(msg.clone()),
+                    elapsed_ms: elapsed(),
+                    engine_stats: None,
+                };
+                return (outcome, sink.on_error(&msg).await);
+            }
+            Ok(chunk) => {
+                rows_returned += chunk.rows.len() as u64;
+                if let Err(e) = sink.on_native_chunk(&chunk).await {
+                    let msg = e.to_string();
+                    let outcome = SyncOutcome {
+                        status: QueryStatus::Failed,
+                        rows: Some(rows_returned),
+                        error: Some(msg.clone()),
+                        elapsed_ms: elapsed(),
+                        engine_stats: None,
+                    };
+                    return (outcome, Err(e));
+                }
+            }
+        }
+    }
+
+    let elapsed_ms = elapsed();
+    let engine_stats = stats_rx.try_recv().ok().flatten();
+
+    let stats = QueryStats {
+        execution_duration_ms: elapsed_ms,
+        rows_returned,
+        ..Default::default()
+    };
+
+    let outcome = SyncOutcome {
+        status: QueryStatus::Success,
+        rows: Some(rows_returned),
+        error: None,
+        elapsed_ms,
+        engine_stats,
+    };
+
+    (outcome, sink.on_complete(&stats).await)
+}
+
 /// Execute a query against any backend and stream RecordBatches to `sink`.
 ///
 /// Used by all non-Trino-HTTP frontends (MySQL wire, Postgres wire, Flight SQL).
@@ -930,14 +1064,26 @@ pub async fn execute_to_sink(
         return sink.on_error(&msg).await;
     }
 
-    let mut setup = match setup_sync_query(state, sql, session, protocol, group, auth_ctx).await {
-        Ok(s) => s,
-        // Setup failed (no adapter, or translation error already recorded inside).
-        // No slot is held at this point — just notify the sink.
-        Err(e) => return sink.on_error(&e.to_string()).await,
-    };
+    let mut setup =
+        match setup_sync_query(state, sql, session, protocol.clone(), group, auth_ctx).await {
+            Ok(s) => s,
+            // Setup failed (no adapter, or translation error already recorded inside).
+            // No slot is held at this point — just notify the sink.
+            Err(e) => return sink.on_error(&e.to_string()).await,
+        };
 
-    let (outcome, sink_result) = execute_stream(&setup, sink).await;
+    // Native path: skip Arrow when backend connection format matches frontend protocol.
+    // All other guarantees (slot release, record_query) are upheld by this function's
+    // outer structure — only the inner execution subroutine is swapped.
+    let (outcome, sink_result) = if setup
+        .adapter
+        .connection_format()
+        .matches_frontend(&protocol)
+    {
+        execute_native_to_sink(&setup, &protocol, sink).await
+    } else {
+        execute_stream(&setup, sink).await
+    };
 
     // Guaranteed single exit: release slot, then record.
     // slot.release() is idempotent and sets released=true so Drop is a no-op.
