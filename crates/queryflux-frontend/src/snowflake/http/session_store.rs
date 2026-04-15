@@ -105,7 +105,11 @@ impl SnowflakeSessionStore {
         });
         // Spawn a background task to evict sessions that were abandoned (client never
         // logged out). Without this, the DashMap grows monotonically.
-        if store.policy.max_session_age.is_some() || store.policy.idle_timeout.is_some() {
+        // Only spawns when a Tokio runtime is active (production / async tests).
+        // Plain `#[test]` functions have no reactor; the GC is simply skipped there.
+        if (store.policy.max_session_age.is_some() || store.policy.idle_timeout.is_some())
+            && tokio::runtime::Handle::try_current().is_ok()
+        {
             let weak = Arc::downgrade(&store);
             tokio::spawn(async move {
                 // Sweep every 5 minutes. Fine-grained enough to bound memory growth
