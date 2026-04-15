@@ -28,7 +28,7 @@ services:
       retries: 10
 
   queryflux:
-    image: ghcr.io/lakeops-org/queryflux:latest-main
+    image: ghcr.io/lakeops-org/queryflux:latest
     ports:
       - "3000:3000"  # Studio UI
       - "9000:9000"  # Admin API

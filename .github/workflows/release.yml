@@ -126,9 +126,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest-slim-main
+            type=raw,value=latest-slim
             type=raw,value=${{ needs.docker_tag_base.outputs.base }}-slim,enable=${{ needs.release_please.outputs.releases_created == 'true' }}
-            type=raw,value=latest-slim,enable=${{ needs.release_please.outputs.releases_created == 'true' }}
 
       - name: Create and push manifest
         working-directory: /tmp/digests
@@ -220,9 +219,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest-main
+            type=raw,value=latest
             type=raw,value=${{ needs.docker_tag_base.outputs.base }},enable=${{ needs.release_please.outputs.releases_created == 'true' }}
-            type=raw,value=latest,enable=${{ needs.release_please.outputs.releases_created == 'true' }}
 
       - name: Create and push manifest
         working-directory: /tmp/digests
