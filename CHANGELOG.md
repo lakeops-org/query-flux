@@ -40,8 +40,17 @@
 
 * release 0.1.2 ([#58](https://github.com/lakeops-org/queryflux/issues/58)) ([4c9f924](https://github.com/lakeops-org/queryflux/commit/4c9f924404a324863bdff6d7555a09e36c1ce7f6))
 
-## [0.1.1](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.0...queryflux-v1.0.0) (2026-04-15)
+## [0.1.2](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.1...queryflux-v0.1.2) (2026-04-15)
 
+### Features
+
+* query parameters end-to-end and Snowflake-compatible APIs ([#56](https://github.com/lakeops-org/queryflux/issues/56)) ([998f29c](https://github.com/lakeops-org/queryflux/commit/998f29c28e8239ddd32541910d77ce8d3197ed25))
+
+### Miscellaneous Chores
+
+* release 0.1.2 ([#58](https://github.com/lakeops-org/queryflux/pull/58)) ([4c9f924](https://github.com/lakeops-org/queryflux/commit/4c9f924404a324863bdff6d7555a09e36c1ce7f6))
+
+## [0.1.1](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.0...queryflux-v0.1.1) (2026-04-15)
 
 ### Features
 
@@ -52,7 +61,6 @@
 * Custom domain ([#10](https://github.com/lakeops-org/queryflux/issues/10)) ([1518c40](https://github.com/lakeops-org/queryflux/commit/1518c40052d050bfc73e085ccc4a3184b5a2dc08))
 * initial 0.1.0 release ([712a135](https://github.com/lakeops-org/queryflux/commit/712a1352be2c577c8d3bf9ab5a46124befda7d26))
 * Light mode ([#12](https://github.com/lakeops-org/queryflux/issues/12)) ([9d49e00](https://github.com/lakeops-org/queryflux/commit/9d49e0020ae85a303dbd480b0fb92625649b0513))
-* query parameters end-to-end and Snowflake-compatible APIs ([#56](https://github.com/lakeops-org/queryflux/issues/56)) ([998f29c](https://github.com/lakeops-org/queryflux/commit/998f29c28e8239ddd32541910d77ce8d3197ed25))
 * Website changes  ([#8](https://github.com/lakeops-org/queryflux/issues/8)) ([4145829](https://github.com/lakeops-org/queryflux/commit/4145829d705c94ce0384de0cd70d82dd38e4b597))
 
 
