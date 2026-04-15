@@ -31,6 +31,19 @@ jobs:
           config-file: release-please/release-please-config.json
           manifest-file: release-please/.release-please-manifest.json
 
+  # Release Please uses tags like queryflux-v0.1.2; Docker uses v0.1.2 (unified) and v0.1.2-slim (server-only).
+  docker_tag_base:
+    name: Docker image version base
+    needs: [release_please]
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.compute.outputs.base }}
+    steps:
+      - id: compute
+        run: |
+          raw="${{ needs.release_please.outputs.tag_name }}"
+          echo "base=${raw#queryflux-}" >> "$GITHUB_OUTPUT"
+
   build-slim:
     name: Build server-only (${{ matrix.suffix }})
     needs: [release_please]
@@ -87,7 +100,7 @@ jobs:
 
   manifest-slim:
     name: Manifest server-only image
-    needs: [release_please, build-slim]
+    needs: [release_please, build-slim, docker_tag_base]
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -114,7 +127,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest-slim-main
-            type=raw,value=${{ needs.release_please.outputs.tag_name }},enable=${{ needs.release_please.outputs.releases_created == 'true' }}
+            type=raw,value=${{ needs.docker_tag_base.outputs.base }}-slim,enable=${{ needs.release_please.outputs.releases_created == 'true' }}
             type=raw,value=latest-slim,enable=${{ needs.release_please.outputs.releases_created == 'true' }}
 
       - name: Create and push manifest
@@ -181,7 +194,7 @@ jobs:
 
   manifest-full:
     name: Manifest server + Studio image
-    needs: [release_please, build-full]
+    needs: [release_please, build-full, docker_tag_base]
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -208,7 +221,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest-main
-            type=raw,value=${{ needs.release_please.outputs.tag_name }}-full,enable=${{ needs.release_please.outputs.releases_created == 'true' }}
+            type=raw,value=${{ needs.docker_tag_base.outputs.base }},enable=${{ needs.release_please.outputs.releases_created == 'true' }}
             type=raw,value=latest,enable=${{ needs.release_please.outputs.releases_created == 'true' }}
 
       - name: Create and push manifest
@@ -220,7 +233,7 @@ jobs:
 
   publish:
     name: GitHub Release summary
-    needs: [release_please, manifest-slim, manifest-full]
+    needs: [release_please, manifest-slim, manifest-full, docker_tag_base]
     if: ${{ needs.release_please.outputs.releases_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -230,5 +243,5 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Variant | Tags |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---------|------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Server only | \`:${{ needs.release_please.outputs.tag_name }}\`, \`:latest-slim\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Server + Studio | \`:${{ needs.release_please.outputs.tag_name }}-full\`, \`:latest\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Server only | \`:${{ needs.docker_tag_base.outputs.base }}-slim\`, \`:latest-slim\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Server + Studio | \`:${{ needs.docker_tag_base.outputs.base }}\`, \`:latest\` |" >> "$GITHUB_STEP_SUMMARY"
