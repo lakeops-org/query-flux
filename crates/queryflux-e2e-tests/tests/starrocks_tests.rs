@@ -113,11 +113,13 @@ async fn starrocks_session_user_recorded_in_metrics() {
 
     let record = harness()
         .wait_for_record(|r| {
-            r.user.as_deref() == Some("alice")
-                && r.cluster_group.0 == GROUP_STARROCKS
+            r.user.as_deref() == Some("alice") && r.cluster_group.0 == GROUP_STARROCKS
         })
         .await;
-    assert!(record.is_some(), "expected QueryRecord with user=alice on starrocks");
+    assert!(
+        record.is_some(),
+        "expected QueryRecord with user=alice on starrocks"
+    );
 }
 
 /// `X-Trino-Catalog` must appear as `catalog` in the QueryRecord.
