@@ -201,7 +201,9 @@ fn to_sf_array(arr: &ArrayRef) -> ArrayRef {
         DataType::Timestamp(unit, _tz) => timestamp_to_sf_struct(arr, unit),
         DataType::Time64(unit) => {
             let ns = match unit {
-                TimeUnit::Nanosecond => arr.clone(),
+                TimeUnit::Nanosecond => {
+                    arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone())
+                }
                 TimeUnit::Microsecond => {
                     let cast =
                         arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone());
@@ -332,37 +334,27 @@ fn timestamp_to_sf_struct(arr: &ArrayRef, unit: &TimeUnit) -> ArrayRef {
 // Arrow IPC stream → base64
 // ---------------------------------------------------------------------------
 
-pub fn batches_to_arrow_base64(schema: &Arc<Schema>, batches: &[RecordBatch]) -> String {
+pub fn batches_to_arrow_base64(
+    schema: &Arc<Schema>,
+    batches: &[RecordBatch],
+) -> Result<String, arrow::error::ArrowError> {
     let sf_schema = Arc::new(sf_arrow_schema(schema));
 
     let sf_batches: Vec<RecordBatch> = batches
         .iter()
-        .filter_map(|batch| {
+        .map(|batch| {
             let sf_columns: Vec<ArrayRef> = batch.columns().iter().map(to_sf_array).collect();
-            match RecordBatch::try_new(sf_schema.clone(), sf_columns) {
-                Ok(b) => Some(b),
-                Err(e) => {
-                    tracing::warn!(
-                        "Dropping Arrow batch: failed to convert to Snowflake format: {e}"
-                    );
-                    None
-                }
-            }
+            RecordBatch::try_new(sf_schema.clone(), sf_columns)
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
 
     let mut buf = Vec::new();
-    if let Ok(mut writer) = StreamWriter::try_new(&mut buf, &sf_schema) {
-        for (i, batch) in sf_batches.iter().enumerate() {
-            if let Err(e) = writer.write(batch) {
-                tracing::warn!("Failed to write Arrow batch {i} to IPC stream: {e}");
-            }
-        }
-        if let Err(e) = writer.finish() {
-            tracing::warn!("Failed to finish Arrow IPC stream: {e}");
-        }
+    let mut writer = StreamWriter::try_new(&mut buf, &sf_schema)?;
+    for batch in &sf_batches {
+        writer.write(batch)?;
     }
-    base64::engine::general_purpose::STANDARD.encode(&buf)
+    writer.finish()?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
 }
 
 // ---------------------------------------------------------------------------
@@ -376,11 +368,11 @@ pub fn sf_query_response(
     query_id: &str,
     database: &str,
     schema_name: &str,
-) -> Value {
+) -> Result<Value, arrow::error::ArrowError> {
     let rowtype = schema_to_rowtype(schema);
-    let rowset_base64 = batches_to_arrow_base64(schema, batches);
+    let rowset_base64 = batches_to_arrow_base64(schema, batches)?;
 
-    json!({
+    Ok(json!({
         "data": {
             "parameters": [
                 {"name": "TIMEZONE", "value": "Etc/UTC"},
@@ -399,5 +391,5 @@ pub fn sf_query_response(
         "success": true,
         "code": null,
         "message": null
-    })
+    }))
 }

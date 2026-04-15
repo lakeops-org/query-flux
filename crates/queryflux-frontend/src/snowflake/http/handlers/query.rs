@@ -90,14 +90,29 @@ impl SnowflakeSink {
 
         let schema = self.schema.unwrap_or_else(|| Arc::new(Schema::empty()));
 
-        let body = sf_query_response(
+        let body = match sf_query_response(
             &schema,
             &self.batches,
             self.total_rows,
             query_id,
             database,
             schema_name,
-        );
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to serialize Arrow IPC response: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(serde_json::json!({
+                        "data": {"errorCode": "100183", "sqlState": "P0001"},
+                        "code": "100183",
+                        "message": format!("Failed to serialize result: {e}"),
+                        "success": false
+                    })),
+                )
+                    .into_response();
+            }
+        };
         (StatusCode::OK, axum::Json(body)).into_response()
     }
 }

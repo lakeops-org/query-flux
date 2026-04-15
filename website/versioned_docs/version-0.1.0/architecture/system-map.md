@@ -86,7 +86,7 @@ queryflux/
 
 ### SessionContext (`queryflux-core`)
 
-Protocol-agnostic metadata that travels with a query from frontend through routing and into the engine adapter. Each frontend extracts the common fields at connection time and places remaining protocol-specific key-value data into `extra`.
+Protocol-agnostic metadata that travels with a query from frontend through routing and into the engine adapter. Each frontend extracts the common fields at session initialization and places remaining protocol-specific key-value data into `extra`.
 
 ```rust
 pub struct SessionContext {
@@ -96,7 +96,7 @@ pub struct SessionContext {
     /// Protocol-specific key-value bag. Key conventions:
     /// - Trino / ClickHouse HTTP: HTTP header names (lowercase) → values
     /// - Postgres wire: startup parameter names → values
-    /// - MySQL wire: session variable names → values
+    /// - MySQL wire: session variables → values
     pub extra:    HashMap<String, String>,
 }
 ```

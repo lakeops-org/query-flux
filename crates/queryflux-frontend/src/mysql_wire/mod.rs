@@ -257,7 +257,12 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
     }
 
     // Fast-path: all other SET statements — acknowledge without dispatching.
+    // Capture simple single-assignment forms into session.extra so downstream
+    // routers and Python scripts can read them (key convention: lowercase var name).
     if sql_lower.starts_with("set ") || sql_lower.starts_with("set\t") {
+        if let Some((key, val)) = try_parse_set_kv(logical) {
+            session.extra.insert(key, val);
+        }
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
         return Ok(());
     }
@@ -999,6 +1004,72 @@ fn try_parse_use(sql: &str) -> Option<String> {
     Some(rest.trim_matches('`').to_string())
 }
 
+/// Parse a simple `SET [SESSION] [@@[session.]]var = value` statement into a
+/// `(key, value)` pair suitable for storing in `SessionContext::extra`.
+///
+/// Returns `None` for multi-assignment forms (containing `,` before `=`),
+/// unparseable input, or empty keys — those are still ACK'd but not stored.
+/// The key is lowercased; `@@session.` / `@@` / `@` prefixes are stripped.
+fn try_parse_set_kv(sql: &str) -> Option<(String, String)> {
+    let s = sql.trim().trim_end_matches(';');
+    let s_lower = s.to_lowercase();
+    let rest = if s_lower.starts_with("set session ") || s_lower.starts_with("set session\t") {
+        &s[12..]
+    } else if s_lower.starts_with("set ") || s_lower.starts_with("set\t") {
+        &s[4..]
+    } else {
+        return None;
+    };
+    let rest = rest.trim();
+    // Strip @@ prefix and optional `session.` qualifier, then any remaining @ (user vars).
+    let rest = rest.trim_start_matches("@@");
+    let rest = if rest.to_lowercase().starts_with("session.") {
+        &rest[8..]
+    } else {
+        rest
+    };
+    let rest = rest.trim_start_matches('@');
+    // Reject multi-assignment: any unquoted comma in the assignment text.
+    // Session variable values virtually never contain bare commas, so a simple
+    // scan suffices without full quote-aware parsing.
+    let eq_pos = rest.find('=')?;
+    {
+        let mut in_q = false;
+        let mut q_ch = '\0';
+        for ch in rest.chars() {
+            if in_q {
+                if ch == q_ch {
+                    in_q = false;
+                }
+            } else {
+                match ch {
+                    '\'' | '"' => {
+                        in_q = true;
+                        q_ch = ch;
+                    }
+                    ',' => return None,
+                    _ => {}
+                }
+            }
+        }
+    }
+    let key = rest[..eq_pos].trim().to_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    let raw_val = rest[eq_pos + 1..].trim();
+    // Strip uniform surrounding single or double quotes.
+    let val = if raw_val.len() >= 2
+        && ((raw_val.starts_with('\'') && raw_val.ends_with('\''))
+            || (raw_val.starts_with('"') && raw_val.ends_with('"')))
+    {
+        raw_val[1..raw_val.len() - 1].to_string()
+    } else {
+        raw_val.to_string()
+    };
+    Some((key, val))
+}
+
 /// Detect `SELECT DATABASE()` (with optional whitespace variations).
 fn is_select_database(sql_lower: &str) -> bool {
     let compact: String = sql_lower
@@ -1443,5 +1514,73 @@ mod tests {
         let name_bytes = b"my_column";
         let found = pkt.windows(name_bytes.len()).any(|w| w == name_bytes);
         assert!(found, "column name bytes should appear in packet");
+    }
+
+    // ── try_parse_set_kv ──────────────────────────────────────────────────────
+
+    #[test]
+    fn set_bare_variable() {
+        assert_eq!(
+            try_parse_set_kv("SET time_zone = '+00:00'"),
+            Some(("time_zone".to_string(), "+00:00".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_session_prefix_stripped() {
+        assert_eq!(
+            try_parse_set_kv("SET SESSION time_zone = 'UTC'"),
+            Some(("time_zone".to_string(), "UTC".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_double_at_prefix_stripped() {
+        assert_eq!(
+            try_parse_set_kv("SET @@time_zone = 'UTC'"),
+            Some(("time_zone".to_string(), "UTC".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_double_at_session_dot_prefix_stripped() {
+        assert_eq!(
+            try_parse_set_kv("SET @@session.time_zone = 'UTC'"),
+            Some(("time_zone".to_string(), "UTC".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_unquoted_value() {
+        assert_eq!(
+            try_parse_set_kv("SET autocommit = 1"),
+            Some(("autocommit".to_string(), "1".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_key_is_lowercased() {
+        assert_eq!(
+            try_parse_set_kv("SET TimeZone = 'UTC'"),
+            Some(("timezone".to_string(), "UTC".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_trailing_semicolon_handled() {
+        assert_eq!(
+            try_parse_set_kv("SET autocommit = 0;"),
+            Some(("autocommit".to_string(), "0".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_multi_assignment_returns_none() {
+        assert_eq!(try_parse_set_kv("SET a = 1, b = 2"), None);
+    }
+
+    #[test]
+    fn non_set_statement_returns_none() {
+        assert_eq!(try_parse_set_kv("SELECT 1"), None);
     }
 }

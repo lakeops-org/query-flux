@@ -719,7 +719,7 @@ mod snowflake_frontend {
         )
         .unwrap();
 
-        let b64 = batches_to_arrow_base64(&schema, &[batch]);
+        let b64 = batches_to_arrow_base64(&schema, &[batch]).unwrap();
         assert!(!b64.is_empty());
 
         let raw = base64::engine::general_purpose::STANDARD
@@ -733,7 +733,7 @@ mod snowflake_frontend {
     #[test]
     fn arrow_ipc_empty_batches_produces_valid_stream() {
         let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int64, false)]));
-        let b64 = batches_to_arrow_base64(&schema, &[]);
+        let b64 = batches_to_arrow_base64(&schema, &[]).unwrap();
         assert!(!b64.is_empty(), "must emit at least the IPC schema message");
 
         let raw = base64::engine::general_purpose::STANDARD
@@ -753,7 +753,7 @@ mod snowflake_frontend {
         )
         .unwrap();
 
-        let b64 = batches_to_arrow_base64(&schema, &[batch]);
+        let b64 = batches_to_arrow_base64(&schema, &[batch]).unwrap();
         let raw = base64::engine::general_purpose::STANDARD
             .decode(&b64)
             .unwrap();

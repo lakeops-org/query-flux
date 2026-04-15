@@ -133,7 +133,7 @@ Studio does **not** implement wire protocols; it only displays status from the A
 ## Checklist
 
 - [ ] **`FrontendProtocol`** + **`default_dialect()`** in `queryflux-core/src/query.rs`
-- [ ] **`SessionContext`** (new variant or reuse) + helper methods in `session.rs`
+- [ ] Construct **`SessionContext`** in your listener (no changes to `session.rs` needed)
 - [ ] **`FrontendsConfig`** field + YAML shape in `config.rs`
 - [ ] **`queryflux-frontend`** module + **`FrontendListenerTrait`** + dispatch wiring
 - [ ] **`main.rs`** startup (and reload paths if applicable)
