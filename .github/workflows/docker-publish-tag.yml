@@ -1,7 +1,7 @@
 # Manually build and push multi-arch images from a chosen Git ref with explicit GHCR tags.
 # Does not run Release Please and does not move :latest / :latest-slim (those stay for automated releases).
 #
-# Example: image_tag = queryflux-v0.1.2  →  ghcr.io/.../queryflux:queryflux-v0.1.2  and  ...:queryflux-v0.1.2-full
+# Example: image_tag = v0.1.2  →  ghcr.io/.../queryflux:v0.1.2 (server + Studio) and ...:v0.1.2-slim (server-only)
 
 name: Docker — publish ref with tag
 
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Base tag (no -full suffix), e.g. queryflux-v0.1.2"
+        description: "Version tag for unified image, e.g. v0.1.2 (publishes :v0.1.2 and :v0.1.2-slim)"
         required: true
         type: string
       git_ref:
@@ -41,7 +41,11 @@ jobs:
             exit 1
           fi
           if [[ "$TAG" == *"-full" ]]; then
-            echo "::error::image_tag must not end with -full (unified image gets <tag>-full automatically)"
+            echo "::error::image_tag must not end with -full (legacy); pass the bare version, e.g. v0.1.2"
+            exit 1
+          fi
+          if [[ "$TAG" == *"-slim" ]]; then
+            echo "::error::image_tag must not end with -slim (server-only image is published as <tag>-slim automatically)"
             exit 1
           fi
 
@@ -129,7 +133,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ inputs.image_tag }}
+            type=raw,value=${{ inputs.image_tag }}-slim
 
       - name: Create and push manifest
         working-directory: /tmp/digests
@@ -223,7 +227,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ inputs.image_tag }}-full
+            type=raw,value=${{ inputs.image_tag }}
 
       - name: Create and push manifest
         working-directory: /tmp/digests
@@ -243,5 +247,5 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Variant | Tag |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---------|-----|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Server only | \`:${{ inputs.image_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Server + Studio | \`:${{ inputs.image_tag }}-full\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Server only | \`:${{ inputs.image_tag }}-slim\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Server + Studio | \`:${{ inputs.image_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
