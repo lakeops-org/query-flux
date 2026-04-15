@@ -40,7 +40,7 @@ services:
       start_period: 30s
 
   queryflux:
-    image: ghcr.io/lakeops-org/queryflux:latest-main
+    image: ghcr.io/lakeops-org/queryflux:latest
     ports:
       - "8080:8080"
       - "9000:9000"

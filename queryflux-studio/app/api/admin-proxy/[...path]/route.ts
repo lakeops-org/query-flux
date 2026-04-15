@@ -22,6 +22,14 @@ async function forward(req: NextRequest, pathSegments: string[]) {
   if (sessionToken) {
     const auth = basicAuthFromCookieValue(sessionToken);
     if (auth) headers.set("authorization", auth);
+  } else {
+    // Fallback: bootstrap credentials from env vars (docker-compose examples, no session yet).
+    const envUser = process.env.ADMIN_API_USERNAME;
+    const envPass = process.env.ADMIN_API_PASSWORD;
+    if (envUser && envPass) {
+      const { basicAuthorizationHeader } = await import("@/lib/admin-session-codec");
+      headers.set("authorization", basicAuthorizationHeader(envUser, envPass));
+    }
   }
 
   const init: RequestInit = {

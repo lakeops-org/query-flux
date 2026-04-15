@@ -1,4 +1,4 @@
-# QueryFlux + Studio (ECR images) + Trino + StarRocks + Lakekeeper/MinIO + optional TPCH→Iceberg load.
+# QueryFlux + Trino + StarRocks + Lakekeeper/MinIO + optional TPCH→Iceberg load.
 # Modeled on docker/docker-compose.yml; paths are relative to this directory (repo-root docker/fixtures via ../..).
 #
 #   docker compose up -d --wait
@@ -6,16 +6,17 @@
 #   docker compose --profile loader run --rm -T starrocks-catalog-setup
 #
 # QueryFlux Trino HTTP: http://localhost:8080 · MySQL wire (StarRocks path): localhost:3306
-# Studio: http://localhost:3000 · Trino direct: http://localhost:8081 · Lakekeeper: http://localhost:8181
+# Studio: http://localhost:3000 · Admin: http://localhost:9000 · Trino direct: http://localhost:8081 · Lakekeeper: http://localhost:8181
 
 name: queryflux-example-full
 
 services:
   queryflux:
-    image: ghcr.io/lakeops-org/queryflux:latest-main
+    image: ghcr.io/lakeops-org/queryflux:latest
     ports:
       - "8080:8080"
       - "9000:9000"
+      - "3000:3000"
       - "3306:3306"
     volumes:
       - ./config.yaml:/etc/queryflux/config.yaml:ro
@@ -28,16 +29,6 @@ services:
         condition: service_healthy
       starrocks:
         condition: service_healthy
-    restart: unless-stopped
-
-  queryflux-studio:
-    image: 343959804465.dkr.ecr.us-east-1.amazonaws.com/queryflux-studio:latest
-    ports:
-      - "3000:3000"
-    environment:
-      ADMIN_API_URL: http://queryflux:9000
-    depends_on:
-      - queryflux
     restart: unless-stopped
 
   trino:

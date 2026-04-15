@@ -59,7 +59,10 @@ async function adminFetch(path: string, init: RequestInit = {}): Promise<Respons
   return fetch(`${ADMIN_DIRECT}${p}`, { ...init, headers: merged, cache: "no-store" });
 }
 
-/** When loopback proxy is unavailable, attach Authorization from the session cookie. */
+/** When loopback proxy is unavailable, attach Authorization from the session cookie.
+ *  Falls back to ADMIN_API_USERNAME / ADMIN_API_PASSWORD env vars (bootstrap credentials
+ *  for docker-compose examples where no user session exists yet).
+ */
 async function serverDirectAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
   try {
@@ -69,9 +72,17 @@ async function serverDirectAuthHeaders(): Promise<Record<string, string>> {
     if (session) {
       const auth = basicAuthFromCookieValue(session);
       if (auth) headers["authorization"] = auth;
+      return headers;
     }
   } catch {
     // ignore
+  }
+  // Fallback: bootstrap credentials from env vars (no session yet).
+  const envUser = process.env.ADMIN_API_USERNAME;
+  const envPass = process.env.ADMIN_API_PASSWORD;
+  if (envUser && envPass) {
+    const { basicAuthorizationHeader } = await import("./admin-session-codec");
+    headers["authorization"] = basicAuthorizationHeader(envUser, envPass);
   }
   return headers;
 }
