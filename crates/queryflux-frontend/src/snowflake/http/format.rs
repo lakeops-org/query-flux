@@ -217,9 +217,28 @@ fn to_sf_array(arr: &ArrayRef) -> ArrayRef {
             };
             ns
         }
-        DataType::Time32(_) => {
-            // Cast to ns int64
-            arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone())
+        DataType::Time32(unit) => {
+            // Scale to nanoseconds: Time32(Second) × 1e9, Time32(Millisecond) × 1e6.
+            let scale: i64 = match unit {
+                TimeUnit::Second => 1_000_000_000,
+                TimeUnit::Millisecond => 1_000_000,
+                _ => 1, // spec only defines Second and Millisecond for Time32
+            };
+            let i64_arr =
+                arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone());
+            if scale == 1 {
+                return i64_arr;
+            }
+            let scaled = i64_arr
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .map(|a| {
+                    Arc::new(Int64Array::from_iter(
+                        a.iter().map(|v| v.map(|x| x * scale)),
+                    )) as ArrayRef
+                })
+                .unwrap_or(i64_arr);
+            scaled
         }
         DataType::UInt64 => {
             arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone())
@@ -255,8 +274,12 @@ fn timestamp_to_sf_struct(arr: &ArrayRef, unit: &TimeUnit) -> ArrayRef {
                             (None, None)
                         } else {
                             let nanos = ts.value(i);
-                            let epoch = nanos / 1_000_000_000;
-                            let fraction = (nanos % 1_000_000_000) as i32;
+                            // Use Euclidean division so pre-epoch timestamps (negative nanos)
+                            // produce a correct (negative epoch, positive fraction) pair
+                            // instead of the C-style truncation that gives wrong results
+                            // (e.g. nanos=-500_000_000 → epoch=0, fraction=-500_000_000).
+                            let epoch = nanos.div_euclid(1_000_000_000);
+                            let fraction = nanos.rem_euclid(1_000_000_000) as i32;
                             (Some(epoch), Some(fraction))
                         }
                     })
@@ -316,7 +339,15 @@ pub fn batches_to_arrow_base64(schema: &Arc<Schema>, batches: &[RecordBatch]) ->
         .iter()
         .filter_map(|batch| {
             let sf_columns: Vec<ArrayRef> = batch.columns().iter().map(to_sf_array).collect();
-            RecordBatch::try_new(sf_schema.clone(), sf_columns).ok()
+            match RecordBatch::try_new(sf_schema.clone(), sf_columns) {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    tracing::warn!(
+                        "Dropping Arrow batch: failed to convert to Snowflake format: {e}"
+                    );
+                    None
+                }
+            }
         })
         .collect();
 

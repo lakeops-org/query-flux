@@ -120,6 +120,14 @@ pub fn interpolate_params(
         parts.push(sql_part);
     }
 
+    if param_idx.get() != params.len() {
+        return Err(anyhow::anyhow!(
+            "Parameter count mismatch: SQL has {} placeholder(s) but {} parameter(s) were provided",
+            param_idx.get(),
+            params.len()
+        ));
+    }
+
     Ok(parts.join(";\n"))
 }
 

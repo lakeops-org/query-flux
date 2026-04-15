@@ -263,7 +263,8 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
     }
 
     // Fast-path: USE db sent as COM_QUERY text (mysql CLI does this).
-    if let Some(db) = try_parse_use(&sql_lower) {
+    // Parse from `logical` (original case) so `USE Sales` stores `Sales`, not `sales`.
+    if let Some(db) = try_parse_use(logical) {
         session.database = if db.is_empty() { None } else { Some(db) };
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
         return Ok(());
@@ -978,15 +979,16 @@ impl StripPrefixCi for str {
     }
 }
 
-/// Parse `USE db` / `USE \`db\`` sent as COM_QUERY text. Returns the database name.
-fn try_parse_use(sql_lower: &str) -> Option<String> {
-    let s = sql_lower.trim().trim_end_matches(';');
-    let rest = if s == "use" {
+/// Parse `USE db` / `USE \`db\`` sent as COM_QUERY text. Returns the database name
+/// in the original case as sent by the client.
+fn try_parse_use(sql: &str) -> Option<String> {
+    let s = sql.trim().trim_end_matches(';');
+    let s_lower = s.to_lowercase();
+    // Detect the "USE" keyword case-insensitively, then extract db from the original string.
+    let rest = if s_lower == "use" {
         ""
-    } else if let Some(r) = s.strip_prefix("use ") {
-        r
-    } else if let Some(r) = s.strip_prefix("use\t") {
-        r
+    } else if s_lower.starts_with("use ") || s_lower.starts_with("use\t") {
+        &s[4..]
     } else {
         return None;
     };

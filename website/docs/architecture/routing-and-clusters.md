@@ -95,7 +95,7 @@ def route(query: str, ctx: dict) -> str | None:
 
 | Key | Type | Meaning |
 |-----|------|---------|
-| `protocol` | `str` | One of `trinoHttp`, `postgresWire`, `mysqlWire`, `clickHouseHttp`, `flightSql`, `snowflakeHttp`, `snowflakeSqlApi` (camelCase). |
+| `protocol` | `str` | One of `trinoHttp`, `postgresWire`, `mysqlWire`, `clickhouseHttp`, `flightSql`, `snowflakeHttp`, `snowflakeSqlApi` (camelCase). |
 | `user` | `str \| None` | Resolved user identity. Extracted from `X-Trino-User`, Postgres startup message, MySQL handshake, etc. |
 | `database` | `str \| None` | Target database/catalog hint. Extracted from `X-Trino-Catalog`, Postgres `database`, MySQL `USE`, etc. |
 | `extra` | `dict[str, str]` | Protocol-specific key-value bag. For Trino/ClickHouse HTTP: lowercased header names (e.g. `x-trino-source`). For Postgres: startup parameters. For MySQL: session variables. Empty for other protocols. |

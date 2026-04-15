@@ -115,6 +115,45 @@ fn substitute_placeholders(sql: &str, ordered: &BTreeMap<u32, (&str, &str)>) -> 
     result
 }
 
+/// Returns `true` if `value` is a safe SQL numeric literal (digits, sign, decimal point,
+/// exponent). Accepts integers of any magnitude — avoids f64 precision loss on large values.
+fn is_safe_numeric(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    let start = if bytes[0] == b'+' || bytes[0] == b'-' {
+        1
+    } else {
+        0
+    };
+    if start >= bytes.len() {
+        return false; // sign only
+    }
+    let mut has_dot = false;
+    let mut has_exp = false;
+    let mut after_exp = false;
+    for &b in &bytes[start..] {
+        match b {
+            b'0'..=b'9' => {
+                if after_exp {
+                    after_exp = false; // consumed sign/first-digit after 'e'
+                }
+            }
+            b'.' if !has_dot && !has_exp => has_dot = true,
+            b'e' | b'E' if !has_exp => {
+                has_exp = true;
+                after_exp = true;
+            }
+            b'+' | b'-' if after_exp => {
+                after_exp = false; // sign right after 'e', allowed once
+            }
+            _ => return false,
+        }
+    }
+    !after_exp // reject trailing 'e'/'e+'/'e-' with no digits
+}
+
 /// Render a Snowflake-typed binding value as a SQL literal.
 fn render_literal(sf_type: &str, value: &str) -> String {
     match sf_type.to_uppercase().as_str() {
@@ -123,7 +162,7 @@ fn render_literal(sf_type: &str, value: &str) -> String {
             if value == "NULL" || value.is_empty() {
                 return "NULL".to_string();
             }
-            if value.parse::<f64>().is_ok() {
+            if is_safe_numeric(value) {
                 value.to_string()
             } else {
                 warn!(
@@ -209,7 +248,7 @@ fn binding_to_param(sf_type: &str, value: &str) -> QueryParam {
     }
     match sf_type.to_uppercase().as_str() {
         "FIXED" | "REAL" => {
-            if value.parse::<f64>().is_ok() {
+            if is_safe_numeric(value) {
                 QueryParam::Numeric(value.to_string())
             } else {
                 warn!(

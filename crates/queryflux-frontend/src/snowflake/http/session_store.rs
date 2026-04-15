@@ -12,6 +12,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use tokio::time::interval;
+
 use dashmap::DashMap;
 use queryflux_auth::AuthContext;
 use queryflux_core::config::FrontendConfig;
@@ -97,10 +99,48 @@ pub struct SnowflakeSession {
 
 impl SnowflakeSessionStore {
     pub fn new(policy: SnowflakeHttpSessionPolicy) -> Arc<Self> {
-        Arc::new(Self {
+        let store = Arc::new(Self {
             sessions: DashMap::new(),
             policy,
-        })
+        });
+        // Spawn a background task to evict sessions that were abandoned (client never
+        // logged out). Without this, the DashMap grows monotonically.
+        if store.policy.max_session_age.is_some() || store.policy.idle_timeout.is_some() {
+            let weak = Arc::downgrade(&store);
+            tokio::spawn(async move {
+                // Sweep every 5 minutes. Fine-grained enough to bound memory growth
+                // without adding noticeable overhead.
+                let mut ticker = interval(Duration::from_secs(300));
+                ticker.tick().await; // skip the immediate first tick
+                loop {
+                    ticker.tick().await;
+                    match weak.upgrade() {
+                        Some(s) => s.sweep_expired(),
+                        None => break, // store dropped — stop GC task
+                    }
+                }
+            });
+        }
+        store
+    }
+
+    /// Remove all sessions that have exceeded their max age or idle timeout.
+    /// Called by the background GC task; also callable from tests.
+    pub fn sweep_expired(&self) {
+        let policy = &self.policy;
+        self.sessions.retain(|_, session| {
+            if let Some(max) = policy.max_session_age {
+                if session.created_at.elapsed() > max {
+                    return false;
+                }
+            }
+            if let Some(idle) = policy.idle_timeout {
+                if session.last_seen.elapsed() > idle {
+                    return false;
+                }
+            }
+            true
+        });
     }
 
     pub fn insert(&self, token: String, session: SnowflakeSession) {
@@ -139,6 +179,10 @@ impl SnowflakeSessionStore {
             }
         }
 
+        // Refresh last_seen BEFORE computing the remaining idle TTL so the response
+        // reflects the just-renewed lifetime, not the stale pre-call value.
+        guard.last_seen = now;
+
         let age_remaining = self
             .policy
             .max_session_age
@@ -153,8 +197,6 @@ impl SnowflakeSessionStore {
             (None, Some(i)) => Some(i),
             (None, None) => None,
         };
-
-        guard.last_seen = now;
         Some(ValidatedSnowflakeSession {
             validity_in_seconds_st,
             snapshot: SnowflakeSessionSnapshot {
