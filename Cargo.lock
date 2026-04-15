@@ -3533,7 +3533,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3556,7 +3556,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-auth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bcrypt",
@@ -3574,7 +3574,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-bench"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3588,7 +3588,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-cluster-manager"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "queryflux-core",
@@ -3597,7 +3597,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "queryflux-core",
@@ -3607,7 +3607,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3651,7 +3651,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-engine-adapters"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "adbc_core",
  "adbc_driver_manager",
@@ -3681,7 +3681,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-fingerprint"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "polyglot-sql 0.2.3",
  "queryflux-core",
@@ -3692,7 +3692,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-frontend"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "arrow",
@@ -3732,7 +3732,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-metrics"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "prometheus",
@@ -3744,7 +3744,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-persistence"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3758,7 +3758,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-routing"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "pyo3",
@@ -3772,7 +3772,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-translation"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "pyo3",
