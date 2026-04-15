@@ -40,7 +40,11 @@ use queryflux_frontend::{
 };
 use queryflux_metrics::{ClusterSnapshot, MetricsStore, QueryRecord};
 use queryflux_persistence::in_memory::InMemoryPersistence;
-use queryflux_routing::{chain::RouterChain, implementations::header::HeaderRouter, RouterTrait};
+use queryflux_routing::{
+    chain::RouterChain,
+    implementations::{header::HeaderRouter, protocol_based::ProtocolBasedRouter},
+    RouterTrait,
+};
 use queryflux_translation::TranslationService;
 use tokio::net::TcpListener;
 
@@ -235,6 +239,19 @@ impl TestHarness {
         }
 
         let fallback = pick_fallback_group(&group_order);
+        // Snowflake HTTP/SQL-API requests always target DuckDB in the test harness.
+        // This prevents Snowflake e2e tests (query_params_tests, etc.) from being routed
+        // to the Trino fallback when Trino happens to be reachable but requires auth.
+        let duckdb_group = ClusterGroupName(GROUP_DUCKDB.to_string());
+        routers.push(Box::new(ProtocolBasedRouter {
+            trino_http: None,
+            postgres_wire: None,
+            mysql_wire: None,
+            clickhouse_http: None,
+            flight_sql: None,
+            snowflake_http: Some(duckdb_group.clone()),
+            snowflake_sql_api: Some(duckdb_group),
+        }));
         // Route compatibility:
         // - `X-Qf-Group` is our internal E2E routing header (legacy tests).
         // - `X-Trino-Client-Tags` is set by real Trino clients like `trino-rust-client`.

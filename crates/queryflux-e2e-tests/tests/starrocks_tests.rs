@@ -156,16 +156,18 @@ async fn starrocks_session_catalog_recorded_in_metrics() {
 
 /// The StarRocks adapter issues `USE <db>` when `session.database()` is set.
 /// Verify that setting `X-Trino-Catalog: information_schema` and then querying
-/// a table that only exists there works — confirming the USE was applied.
+/// a view that only exists there works — confirming the USE was applied.
 #[tokio::test]
 #[ignore = "requires StarRocks — run with: make test-e2e"]
 async fn starrocks_database_hint_applied_as_use_statement() {
     require_group!(GROUP_STARROCKS);
-    // Query information_schema.columns without a schema qualifier.
-    // This only works if `USE information_schema` was issued first.
+    // `schemata` is a view that only exists in `information_schema`.
+    // Without `USE information_schema`, the query would fail with "table not found".
+    // `schemata` always contains at least one row (information_schema itself), so a
+    // fresh StarRocks instance with no user tables still returns a row.
     let r = client()
         .execute(
-            "SELECT table_name FROM tables LIMIT 1",
+            "SELECT SCHEMA_NAME FROM schemata LIMIT 1",
             &[
                 ("x-trino-user", "test"),
                 ("x-trino-catalog", "information_schema"),
@@ -179,8 +181,7 @@ async fn starrocks_database_hint_applied_as_use_statement() {
         "expected USE information_schema to scope the query, got: {:?}",
         r.error
     );
-    // `information_schema.tables` always has rows.
-    assert_eq!(r.rows.len(), 1);
+    assert_eq!(r.rows.len(), 1, "schemata must contain at least one row");
 }
 
 /// An invalid database hint must bubble up as a query error (StarRocks `USE` fails),
