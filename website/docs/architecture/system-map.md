@@ -86,15 +86,18 @@ queryflux/
 
 ### SessionContext (`queryflux-core`)
 
-Carries protocol-specific metadata that travels with a query from frontend through routing and into the engine adapter. Each variant holds what that protocol actually provides.
+Protocol-agnostic metadata that travels with a query from frontend through routing and into the engine adapter. Each frontend extracts the common fields at session initialization and places remaining protocol-specific key-value data into `extra`.
 
 ```rust
-pub enum SessionContext {
-    TrinoHttp      { headers: HashMap<String, String> },
-    PostgresWire   { user: Option<String>, database: Option<String>, session_params: HashMap<String, String> },
-    MySqlWire      { user: Option<String>, schema: Option<String>, session_vars: HashMap<String, String> },
-    ClickHouseHttp { headers: HashMap<String, String>, query_params: HashMap<String, String> },
-    FlightSql      { headers: HashMap<String, String> },
+pub struct SessionContext {
+    pub user:     Option<String>,
+    pub database: Option<String>,
+    pub tags:     QueryTags,
+    /// Protocol-specific key-value bag. Key conventions:
+    /// - Trino / ClickHouse HTTP: HTTP header names (lowercase) → values
+    /// - Postgres wire: startup parameter names → values
+    /// - MySQL wire: session variables → values
+    pub extra:    HashMap<String, String>,
 }
 ```
 

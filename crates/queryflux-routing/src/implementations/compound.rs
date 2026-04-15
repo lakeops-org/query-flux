@@ -25,25 +25,19 @@ fn protocol_from_config(s: &str) -> Option<FrontendProtocol> {
         "mysqlWire" => Some(FrontendProtocol::MySqlWire),
         "clickhouseHttp" => Some(FrontendProtocol::ClickHouseHttp),
         "flightSql" => Some(FrontendProtocol::FlightSql),
+        "snowflakeHttp" => Some(FrontendProtocol::SnowflakeHttp),
+        "snowflakeSqlApi" => Some(FrontendProtocol::SnowflakeSqlApi),
         _ => None,
     }
 }
 
 fn header_equals(session: &SessionContext, header_name: &str, expected_value: &str) -> bool {
     let key = header_name.to_lowercase();
-    let actual = match session {
-        SessionContext::TrinoHttp { headers, .. } => headers.get(&key),
-        SessionContext::ClickHouseHttp { headers, .. } => headers.get(&key),
-        _ => return false,
-    };
-    actual.map(|s| s.as_str()) == Some(expected_value)
+    session.extra.get(&key).map(|s| s.as_str()) == Some(expected_value)
 }
 
 fn client_tags_contain(session: &SessionContext, tag: &str) -> bool {
-    let SessionContext::TrinoHttp { headers, .. } = session else {
-        return false;
-    };
-    let Some(raw) = headers.get("x-trino-client-tags") else {
+    let Some(raw) = session.extra.get("x-trino-client-tags") else {
         return false;
     };
     raw.split(',').map(|t| t.trim()).any(|t| t == tag)

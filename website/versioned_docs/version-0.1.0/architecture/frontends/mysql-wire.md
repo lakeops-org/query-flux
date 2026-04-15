@@ -79,16 +79,16 @@ Leading `/* ... */` and `/*!...*/` conditional comments in SQL are stripped befo
 
 ## Session context
 
-`SessionContext::MySqlWire` carries:
+The MySQL wire frontend populates `SessionContext` as follows:
 
 | Field | Source |
 |-------|--------|
 | `user` | Handshake response |
-| `schema` | `COM_INIT_DB` or initial database from handshake |
-| `session_vars` | Currently empty (generic `SET` is not stored) |
-| `tags` | From `SET query_tags` / `SET SESSION query_tags` |
+| `database` | `COM_INIT_DB`, `USE` command, or initial schema from handshake |
+| `tags` | `SET query_tags` / `SET SESSION query_tags` |
+| `extra` | Empty (generic `SET` variables are acknowledged but not stored) |
 
-The `schema` and `user` fields are available to routers — the `pythonScript` router receives them in `ctx["schema"]` and `ctx["user"]`.
+`database` is mutable per-connection — it updates whenever the client issues `USE db` or `COM_INIT_DB`. Available to routers via `ctx["database"]` and `ctx["user"]` in the `pythonScript` router.
 
 ## Client examples
 
@@ -108,6 +108,16 @@ cur = conn.cursor()
 cur.execute("SELECT 42 AS answer")
 print(cur.fetchone())
 ```
+
+## Not supported / Known limitations
+
+| Feature | Status |
+|---------|--------|
+| Prepared statements (`COM_STMT_PREPARE` / `COM_STMT_EXECUTE` / `COM_STMT_CLOSE`) | Not supported — returns an error. Use plain `COM_QUERY` (text protocol). |
+| SSL/TLS | Detected and rejected — the connection is closed. Use `--ssl-mode=DISABLED` or `useSSL=false`. |
+| `COM_FIELD_LIST` | Stub — returns an empty EOF response (no column metadata). |
+| `extra` in `SessionContext` | Always empty. Generic `SET` variables are acknowledged but not stored or forwarded to routers or adapters. |
+| Binary result protocol | Not supported. All results use the MySQL text protocol. |
 
 ## Related
 

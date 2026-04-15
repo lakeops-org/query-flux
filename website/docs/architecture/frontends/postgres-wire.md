@@ -49,16 +49,16 @@ Errors are returned as Postgres `ErrorResponse` messages with SQLSTATE codes.
 
 ## Session context
 
-`SessionContext::PostgresWire` carries:
+The Postgres wire frontend populates `SessionContext` as follows:
 
 | Field | Source |
 |-------|--------|
 | `user` | Startup message `user` parameter |
 | `database` | Startup message `database` parameter |
-| `session_params` | Initially empty |
-| `tags` | `query_tags` / `query_tag` from startup parameters |
+| `tags` | `query_tags` / `query_tag` startup parameters |
+| `extra` | Empty (startup parameters beyond `user`/`database`/`query_tags` are not forwarded) |
 
-The `database` and `user` fields are available to routers — the `pythonScript` router receives them in `ctx["database"]` and `ctx["user"]`.
+The `database` and `user` fields are available to routers via `ctx["database"]` and `ctx["user"]` in the `pythonScript` router.
 
 ## SET handling
 
@@ -77,6 +77,18 @@ cur = conn.cursor()
 cur.execute("SELECT 42 AS answer")
 print(cur.fetchone())
 ```
+
+## Not supported / Known limitations
+
+| Feature | Status |
+|---------|--------|
+| Extended query protocol (Parse/Bind/Execute/Describe) | Not supported — returns a Postgres `ErrorResponse`. Clients must use simple-query mode. |
+| SSL/TLS | Declined at the wire level (`N` response). Use an external TLS terminator or connect with TLS disabled. |
+| `COPY` protocol | Not supported. |
+| `COPY TO / FROM STDIN` | Not supported. |
+| Session variables via `SET` | `SET` statements are acknowledged without effect. Variables are not stored or forwarded. |
+| `extra` in `SessionContext` | Always empty. Startup parameters beyond `user`, `database`, and `query_tags` are not forwarded to routers or adapters. |
+| Per-query routing based on startup params | Not available — only `user`, `database`, and tags can be used for routing. |
 
 ## Related
 

@@ -72,6 +72,8 @@ fn protocol_camel(p: FrontendProtocol) -> &'static str {
         FrontendProtocol::MySqlWire => "mysqlWire",
         FrontendProtocol::ClickHouseHttp => "clickHouseHttp",
         FrontendProtocol::FlightSql => "flightSql",
+        FrontendProtocol::SnowflakeHttp => "snowflakeHttp",
+        FrontendProtocol::SnowflakeSqlApi => "snowflakeSqlApi",
     }
 }
 
@@ -114,48 +116,9 @@ fn build_routing_ctx<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let ctx = PyDict::new(py);
     ctx.set_item("protocol", protocol_camel(protocol))?;
-
-    match session {
-        SessionContext::TrinoHttp { headers, .. } => {
-            ctx.set_item("headers", str_str_dict(py, headers)?)?;
-        }
-        SessionContext::PostgresWire {
-            database,
-            user,
-            session_params,
-            ..
-        } => {
-            ctx.set_item(
-                "headers",
-                str_str_dict(py, &std::collections::HashMap::new())?,
-            )?;
-            set_opt_str(&ctx, py, "database", database)?;
-            set_opt_str(&ctx, py, "user", user)?;
-            ctx.set_item("sessionParams", str_str_dict(py, session_params)?)?;
-        }
-        SessionContext::MySqlWire {
-            schema,
-            user,
-            session_vars,
-            ..
-        } => {
-            ctx.set_item(
-                "headers",
-                str_str_dict(py, &std::collections::HashMap::new())?,
-            )?;
-            set_opt_str(&ctx, py, "schema", schema)?;
-            set_opt_str(&ctx, py, "user", user)?;
-            ctx.set_item("sessionVars", str_str_dict(py, session_vars)?)?;
-        }
-        SessionContext::ClickHouseHttp {
-            headers,
-            query_params,
-            ..
-        } => {
-            ctx.set_item("headers", str_str_dict(py, headers)?)?;
-            ctx.set_item("queryParams", str_str_dict(py, query_params)?)?;
-        }
-    }
+    set_opt_str(&ctx, py, "user", &session.user)?;
+    set_opt_str(&ctx, py, "database", &session.database)?;
+    ctx.set_item("extra", str_str_dict(py, &session.extra)?)?;
 
     if let Some(a) = auth {
         let ad = PyDict::new(py);

@@ -27,14 +27,24 @@ use queryflux_core::{
     error::Result as QfResult,
     query::{ClusterGroupName, ClusterName, EngineType},
 };
-use queryflux_engine_adapters::{starrocks::StarRocksAdapter, trino::TrinoAdapter, AdapterKind};
+use queryflux_engine_adapters::{
+    duckdb::{DuckDbAdapter, DuckDbConfig},
+    starrocks::StarRocksAdapter,
+    trino::TrinoAdapter,
+    AdapterKind,
+};
 use queryflux_frontend::{
+    snowflake::SnowflakeFrontend,
     state::LiveConfig,
     trino_http::{state::AppState, TrinoHttpFrontend},
 };
 use queryflux_metrics::{ClusterSnapshot, MetricsStore, QueryRecord};
 use queryflux_persistence::in_memory::InMemoryPersistence;
-use queryflux_routing::{chain::RouterChain, implementations::header::HeaderRouter, RouterTrait};
+use queryflux_routing::{
+    chain::RouterChain,
+    implementations::{header::HeaderRouter, protocol_based::ProtocolBasedRouter},
+    RouterTrait,
+};
 use queryflux_translation::TranslationService;
 use tokio::net::TcpListener;
 
@@ -56,6 +66,8 @@ impl MetricsStore for CapturingMetrics {
 
 pub const GROUP_TRINO: &str = "trino";
 pub const GROUP_STARROCKS: &str = "starrocks";
+/// Always available — in-process embedded DuckDB (in-memory, no external dependency).
+pub const GROUP_DUCKDB: &str = "duckdb";
 /// Set when Lakekeeper port is reachable (Iceberg tables seeded by e2e tests via Trino).
 pub const GROUP_LAKEKEEPER: &str = "lakekeeper";
 
@@ -185,14 +197,61 @@ impl TestHarness {
             adapters.insert(cluster.0.clone(), AdapterKind::Sync(sr));
         }
 
-        if group_states.is_empty() {
-            return Err(anyhow!(
-                "No backends reachable. Start docker compose (see docker/docker-compose.test.yml): \
-                 Trino :18081 and/or StarRocks :9030."
+        // --- DuckDB (always available — embedded, in-memory, no external dependency) ---
+        {
+            let group = ClusterGroupName(GROUP_DUCKDB.to_string());
+            let cluster = ClusterName("duckdb-1".to_string());
+            let state = Arc::new(ClusterState::new(
+                cluster.clone(),
+                group.clone(),
+                None,
+                None,
+                EngineType::DuckDb,
+                None,
+                4,
+                true,
             ));
+            let adapter = Arc::new(
+                DuckDbAdapter::new(
+                    cluster.clone(),
+                    group.clone(),
+                    DuckDbConfig {
+                        database_path: None,
+                        motherduck_token: None,
+                    },
+                )
+                .map_err(|e| anyhow!("DuckDB adapter: {e}"))?,
+            );
+            group_states.insert(group.clone(), (vec![state], strategy_from_config(None)));
+            group_members.insert(GROUP_DUCKDB.to_string(), vec![cluster.0.clone()]);
+            group_order.push(GROUP_DUCKDB.to_string());
+            adapters.insert(cluster.0.clone(), AdapterKind::Sync(adapter));
+            available_groups.push(GROUP_DUCKDB.to_string());
+            header_map.insert(GROUP_DUCKDB.to_string(), group);
+        }
+
+        if group_states.len() == 1 {
+            // Only DuckDB: warn but don't fail — query-params tests can still run.
+            eprintln!(
+                "WARNING: No external backends reachable (Trino :18081, StarRocks :9030). \
+                 Only DuckDB group available. Start docker compose for full e2e coverage."
+            );
         }
 
         let fallback = pick_fallback_group(&group_order);
+        // Snowflake HTTP/SQL-API requests always target DuckDB in the test harness.
+        // This prevents Snowflake e2e tests (query_params_tests, etc.) from being routed
+        // to the Trino fallback when Trino happens to be reachable but requires auth.
+        let duckdb_group = ClusterGroupName(GROUP_DUCKDB.to_string());
+        routers.push(Box::new(ProtocolBasedRouter {
+            trino_http: None,
+            postgres_wire: None,
+            mysql_wire: None,
+            clickhouse_http: None,
+            flight_sql: None,
+            snowflake_http: Some(duckdb_group.clone()),
+            snowflake_sql_api: Some(duckdb_group),
+        }));
         // Route compatibility:
         // - `X-Qf-Group` is our internal E2E routing header (legacy tests).
         // - `X-Trino-Client-Tags` is set by real Trino clients like `trino-rust-client`.
@@ -238,10 +297,17 @@ impl TestHarness {
             auth_provider: Arc::new(NoneAuthProvider::new(false)) as Arc<dyn AuthProvider>,
             authorization: Arc::new(AllowAllAuthorization) as Arc<dyn AuthorizationChecker>,
             identity_resolver: Arc::new(BackendIdentityResolver::new()),
+            snowflake_sessions:
+                queryflux_frontend::snowflake::http::session_store::SnowflakeSessionStore::new(
+                    Default::default(),
+                ),
         });
 
-        let trino_fe = TrinoHttpFrontend::new(state, port);
-        let router: Router = trino_fe.router();
+        let trino_fe = TrinoHttpFrontend::new(state.clone(), port);
+        let snowflake_fe = SnowflakeFrontend::new(state, port);
+        // Serve both Trino HTTP (/v1/statement) and Snowflake HTTP (/session, /queries) on the
+        // same port so query-params e2e tests can use the Snowflake protocol with bindings.
+        let router: Router = trino_fe.router().merge(snowflake_fe.router());
         let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -299,7 +365,9 @@ impl TestHarness {
 }
 
 fn pick_fallback_group(group_order: &[String]) -> ClusterGroupName {
-    for preferred in [GROUP_TRINO, GROUP_STARROCKS] {
+    // Prefer external engines for the Trino-HTTP fallback path; fall back to DuckDB
+    // when no external backend is reachable (e.g. query-params-only CI run).
+    for preferred in [GROUP_TRINO, GROUP_STARROCKS, GROUP_DUCKDB] {
         if group_order.iter().any(|g| g == preferred) {
             return ClusterGroupName(preferred.to_string());
         }

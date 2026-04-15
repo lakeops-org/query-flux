@@ -8,8 +8,6 @@
 ///
 /// Run with the same flow as other e2e tests: `make test-e2e` or
 /// `cargo test -p queryflux-e2e-tests --test trino_adbc_tests -- --include-ignored`.
-use std::collections::HashMap;
-
 use futures::StreamExt;
 use queryflux_auth::QueryCredentials;
 use queryflux_core::query::{ClusterGroupName, ClusterName, EngineType};
@@ -64,10 +62,7 @@ async fn trino_adbc_adapter_ready() -> Option<AdbcAdapter> {
 }
 
 fn empty_trino_session() -> SessionContext {
-    SessionContext::TrinoHttp {
-        headers: HashMap::new(),
-        tags: QueryTags::new(),
-    }
+    SessionContext::default()
 }
 
 async fn count_arrow_rows(adapter: &AdbcAdapter, sql: &str) -> usize {
@@ -75,7 +70,7 @@ async fn count_arrow_rows(adapter: &AdbcAdapter, sql: &str) -> usize {
     let creds = QueryCredentials::ServiceAccount;
     let tags = QueryTags::new();
     let mut exec = adapter
-        .execute_as_arrow(sql, &session, &creds, &tags)
+        .execute_as_arrow(sql, &session, &creds, &tags, &vec![])
         .await
         .expect("execute_as_arrow");
     let mut total = 0usize;

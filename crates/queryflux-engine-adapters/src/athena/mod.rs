@@ -360,6 +360,7 @@ impl AsyncAdapter for AthenaAdapter {
         _session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         _tags: &QueryTags,
+        _params: &queryflux_core::params::QueryParams,
     ) -> Result<QueryExecution> {
         Err(QueryFluxError::Engine(
             "Athena requires execute_as_arrow; use a non-Trino-HTTP frontend".to_string(),
@@ -392,6 +393,7 @@ impl AsyncAdapter for AthenaAdapter {
         session: &queryflux_core::session::SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         _tags: &queryflux_core::tags::QueryTags,
+        params: &queryflux_core::params::QueryParams,
     ) -> crate::Result<crate::SyncExecution> {
         use crate::SyncExecution;
         use futures::stream;
@@ -404,11 +406,18 @@ impl AsyncAdapter for AthenaAdapter {
             .output_location(&self.s3_output_location)
             .build();
 
+        let athena_params: Option<Vec<String>> = if params.is_empty() {
+            None
+        } else {
+            Some(params.iter().map(query_param_to_athena_string).collect())
+        };
+
         let resp = self
             .client
             .start_query_execution()
             .query_string(sql)
             .query_execution_context(ctx)
+            .set_execution_parameters(athena_params)
             .result_configuration(result_cfg)
             .work_group(&self.workgroup)
             .send()
@@ -480,6 +489,10 @@ impl AsyncAdapter for AthenaAdapter {
 
     fn engine_type(&self) -> EngineType {
         EngineType::Athena
+    }
+
+    fn supports_native_params(&self) -> bool {
+        true
     }
 
     // --- Catalog discovery via Glue ---
@@ -605,6 +618,26 @@ impl AsyncAdapter for AthenaAdapter {
 // ---------------------------------------------------------------------------
 // Type mapping
 // ---------------------------------------------------------------------------
+
+/// Convert a [`QueryParam`] to the string representation Athena expects in
+/// `execution_parameters`. Athena passes these as positional `?` bindings and
+/// handles quoting itself — we send the raw value string for all types.
+fn query_param_to_athena_string(p: &queryflux_core::params::QueryParam) -> String {
+    use queryflux_core::params::QueryParam;
+    match p {
+        QueryParam::Text(s) => s.clone(),
+        QueryParam::Numeric(s) => s.clone(),
+        QueryParam::Boolean(b) => {
+            if *b {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
+        QueryParam::Date(s) | QueryParam::Timestamp(s) | QueryParam::Time(s) => s.clone(),
+        QueryParam::Null => "NULL".to_string(),
+    }
+}
 
 fn athena_type_to_arrow(athena_type: &str) -> DataType {
     match athena_type
@@ -796,5 +829,80 @@ impl crate::EngineAdapterFactory for AthenaFactory {
         Ok(AdapterKind::Async(Arc::new(
             AthenaAdapter::new(cluster_name, group, config).await?,
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use queryflux_core::params::QueryParam;
+
+    #[test]
+    fn text_passes_through() {
+        assert_eq!(
+            query_param_to_athena_string(&QueryParam::Text("alice".into())),
+            "alice"
+        );
+    }
+
+    #[test]
+    fn integer_numeric_passes_through() {
+        assert_eq!(
+            query_param_to_athena_string(&QueryParam::Numeric("42".into())),
+            "42"
+        );
+    }
+
+    #[test]
+    fn float_numeric_passes_through() {
+        assert_eq!(
+            query_param_to_athena_string(&QueryParam::Numeric("3.14".into())),
+            "3.14"
+        );
+    }
+
+    #[test]
+    fn boolean_true_is_lowercase_true() {
+        assert_eq!(
+            query_param_to_athena_string(&QueryParam::Boolean(true)),
+            "true"
+        );
+    }
+
+    #[test]
+    fn boolean_false_is_lowercase_false() {
+        assert_eq!(
+            query_param_to_athena_string(&QueryParam::Boolean(false)),
+            "false"
+        );
+    }
+
+    #[test]
+    fn date_passes_through() {
+        assert_eq!(
+            query_param_to_athena_string(&QueryParam::Date("2025-01-15".into())),
+            "2025-01-15"
+        );
+    }
+
+    #[test]
+    fn timestamp_passes_through() {
+        assert_eq!(
+            query_param_to_athena_string(&QueryParam::Timestamp("2025-01-15 12:00:00".into())),
+            "2025-01-15 12:00:00"
+        );
+    }
+
+    #[test]
+    fn time_passes_through() {
+        assert_eq!(
+            query_param_to_athena_string(&QueryParam::Time("08:30:00".into())),
+            "08:30:00"
+        );
+    }
+
+    #[test]
+    fn null_emits_null_string() {
+        assert_eq!(query_param_to_athena_string(&QueryParam::Null), "NULL");
     }
 }

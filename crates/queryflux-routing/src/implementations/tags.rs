@@ -90,11 +90,9 @@ mod tests {
 
     fn mysql_session_with_tags(raw: &str) -> SessionContext {
         let (tags, _) = queryflux_core::tags::parse_query_tags(raw);
-        SessionContext::MySqlWire {
-            schema: None,
-            user: None,
-            session_vars: HashMap::new(),
+        SessionContext {
             tags,
+            ..Default::default()
         }
     }
 
@@ -105,9 +103,10 @@ mod tests {
             .filter(|t| !t.is_empty())
             .map(|t| (t.to_string(), None))
             .collect();
-        SessionContext::TrinoHttp {
-            headers: HashMap::from([("x-trino-client-tags".to_string(), tags_header.to_string())]),
+        SessionContext {
+            extra: HashMap::from([("x-trino-client-tags".to_string(), tags_header.to_string())]),
             tags,
+            ..Default::default()
         }
     }
 
@@ -225,12 +224,7 @@ mod tests {
             tags: HashMap::from([("team".to_string(), Some("eng".to_string()))]),
             target_group: "engineering".to_string(),
         }]);
-        let session = SessionContext::MySqlWire {
-            schema: None,
-            user: None,
-            session_vars: HashMap::new(),
-            tags: queryflux_core::tags::QueryTags::new(),
-        };
+        let session = SessionContext::default();
         let result = router
             .route("SELECT 1", &session, &FrontendProtocol::MySqlWire, None)
             .await

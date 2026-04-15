@@ -15,6 +15,7 @@ A **frontend** is the entry point for client traffic into QueryFlux. Each fronte
 | [PostgreSQL wire](postgres-wire.md) | `postgresWire` | 5432 | PostgreSQL v3 wire | Postgres | **Done** |
 | [MySQL wire](mysql-wire.md) | `mysqlWire` | 3306 | MySQL wire | MySQL | **Done** |
 | [Arrow Flight SQL](flight-sql.md) | `flightSql` | 50051 | gRPC (Arrow Flight) | Generic | **Done** |
+| [Snowflake](snowflake.md) | `snowflakeHttp` | 8443 | Snowflake HTTP wire + SQL API v2 | Snowflake | **Done** |
 | ClickHouse HTTP | `clickhouseHttp` | 8123 | HTTP | ClickHouse | Planned |
 
 ## Shared architecture
@@ -71,16 +72,16 @@ The `ConnectionFormat` declaration is the only thing an adapter needs to change 
 
 ### SessionContext
 
-Each frontend builds a protocol-specific `SessionContext` that travels with the query through routing and into dispatch:
+Each frontend builds a `SessionContext` that travels with the query through routing and into dispatch. It is a flat struct — not protocol-specific:
 
-| Variant | Fields |
-|---------|--------|
-| `TrinoHttp` | `headers` (lowercased HTTP headers) |
-| `PostgresWire` | `user`, `database`, `session_params` |
-| `MySqlWire` | `user`, `schema`, `session_vars` |
-| `ClickHouseHttp` | `headers`, `query_params` |
+| Field | Type | Description |
+|-------|------|-------------|
+| `user` | `Option<String>` | Resolved user identity, extracted at connection time. |
+| `database` | `Option<String>` | Target database/catalog hint for routing and adapters. |
+| `tags` | `QueryTags` | Query tags for routing and metrics. |
+| `extra` | `HashMap<String, String>` | Protocol-specific key-value bag (headers, session params, etc.). |
 
-Flight SQL uses internal session metadata compatible with dispatch; see the [Flight SQL frontend](flight-sql.md).
+Each frontend is responsible for extracting `user` and `database` from its protocol's native fields and placing remaining data into `extra`. Key conventions for `extra`: Trino/ClickHouse HTTP store lowercased header names; Postgres wire stores startup parameters; MySQL wire stores session variables.
 
 ### Authentication
 

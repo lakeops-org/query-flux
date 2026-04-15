@@ -46,3 +46,7 @@ async-trait = { workspace = true }
 # ADBC Trino integration test (StreamExt)
 futures = { workspace = true }
 
+# Query params e2e tests — decode Snowflake rowsetBase64 (Arrow IPC + base64)
+arrow = { workspace = true }
+base64 = "0.22"
+

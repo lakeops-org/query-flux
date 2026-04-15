@@ -65,6 +65,19 @@ ATTACH 'grpc://localhost:50051' AS qf (TYPE flight_sql);
 SELECT * FROM qf.my_catalog.my_schema.my_table LIMIT 10;
 ```
 
+## Not supported / Known limitations
+
+| Feature | Status |
+|---------|--------|
+| Catalog / schema RPCs (`GetCatalogs`, `GetSchemas`, `GetTables`, etc.) | Not implemented — return gRPC `Unimplemented`. |
+| `DoPut` (bulk ingest) | Not implemented. |
+| `DoExchange` | Not implemented. |
+| `DoAction` / `ListActions` | Not implemented. |
+| Prepared statements (`CreatePreparedStatement`, etc.) | Not implemented. |
+| Query tags | Not extracted. `SessionContext.tags` is always empty; the `tags` router type cannot be used with Flight SQL clients. |
+| `database` hint | Not extracted. `SessionContext.database` is always `None`. |
+| TLS | Not terminated by QueryFlux. Use an external TLS terminator or gRPC plaintext. |
+
 ## Related
 
 - [Frontends overview](overview.md) — shared dispatch and session model

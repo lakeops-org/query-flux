@@ -102,11 +102,13 @@ impl QueryFluxFlightSql {
                 _ => None,
             })
             .collect();
-        // Re-use TrinoHttp session for now — headers carry user/auth info.
-        // Tags from gRPC metadata are not yet extracted; Flight SQL clients don't send them.
-        SessionContext::TrinoHttp {
-            headers,
+        // Extract user from gRPC metadata headers; tags are not yet extracted.
+        let user = headers.get("x-trino-user").cloned();
+        SessionContext {
+            user,
+            database: None,
             tags: queryflux_core::tags::QueryTags::new(),
+            extra: headers,
         }
     }
 }
@@ -205,7 +207,14 @@ impl FlightSqlService for QueryFluxFlightSql {
 
         tokio::spawn(async move {
             let _ = execute_to_sink(
-                &state2, sql2, session, protocol, group, &mut sink, &auth_ctx,
+                &state2,
+                sql2,
+                vec![],
+                session,
+                protocol,
+                group,
+                &mut sink,
+                &auth_ctx,
             )
             .await;
             // sink drops here → tx closes → rx stream ends

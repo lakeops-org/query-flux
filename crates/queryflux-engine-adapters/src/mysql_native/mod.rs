@@ -17,6 +17,7 @@ use queryflux_auth::QueryCredentials;
 use queryflux_core::{
     error::{QueryFluxError, Result},
     native_result::{NativeColumn, NativeResultChunk, NativeRow, NativeTypeInfo, NativeTypeKind},
+    params::{QueryParam, QueryParams},
     session::SessionContext,
     tags::{tags_to_json, QueryTags},
 };
@@ -43,6 +44,7 @@ pub async fn execute(
     session: &SessionContext,
     _credentials: &QueryCredentials,
     tags: &QueryTags,
+    params: &QueryParams,
 ) -> Result<NativeExecution> {
     let mut conn = pool
         .get_conn()
@@ -65,10 +67,18 @@ pub async fn execute(
         })?;
     }
 
-    let rows: Vec<Row> = conn
-        .query::<Row, _>(sql)
-        .await
-        .map_err(|e| QueryFluxError::Engine(format!("mysql_native: query failed: {e}")))?;
+    let rows: Vec<Row> = if params.is_empty() {
+        conn.query::<Row, _>(sql)
+            .await
+            .map_err(|e| QueryFluxError::Engine(format!("mysql_native: query failed: {e}")))?
+    } else {
+        let mysql_params = mysql_async::Params::Positional(
+            params.iter().map(query_param_to_mysql_value).collect(),
+        );
+        conn.exec::<Row, _, _>(sql, mysql_params)
+            .await
+            .map_err(|e| QueryFluxError::Engine(format!("mysql_native: exec failed: {e}")))?
+    };
 
     let (stats_tx, stats_rx) = tokio::sync::oneshot::channel();
 
@@ -121,6 +131,27 @@ pub async fn execute(
 // ---------------------------------------------------------------------------
 // Row / value conversion
 // ---------------------------------------------------------------------------
+
+/// Convert a [`QueryParam`] to a `mysql_async` native value for prepared-statement binding.
+fn query_param_to_mysql_value(p: &QueryParam) -> Value {
+    match p {
+        QueryParam::Text(s) => Value::Bytes(s.as_bytes().to_vec()),
+        QueryParam::Numeric(s) => {
+            if let Ok(n) = s.parse::<i64>() {
+                Value::Int(n)
+            } else if let Ok(f) = s.parse::<f64>() {
+                Value::Double(f)
+            } else {
+                Value::Bytes(s.as_bytes().to_vec())
+            }
+        }
+        QueryParam::Boolean(b) => Value::Int(*b as i64),
+        QueryParam::Date(s) | QueryParam::Timestamp(s) | QueryParam::Time(s) => {
+            Value::Bytes(s.as_bytes().to_vec())
+        }
+        QueryParam::Null => Value::NULL,
+    }
+}
 
 fn row_to_native(mut row: Row, num_cols: usize) -> NativeRow {
     let values = (0..num_cols)
@@ -210,6 +241,94 @@ fn mysql_column_type_to_native(ct: ColumnType) -> NativeTypeInfo {
 mod tests {
     use super::*;
     use mysql_async::consts::ColumnType;
+    use queryflux_core::params::QueryParam;
+
+    // ── query_param_to_mysql_value ────────────────────────────────────────────
+
+    #[test]
+    fn text_maps_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Text("alice".into())),
+            Value::Bytes(b"alice".to_vec())
+        );
+    }
+
+    #[test]
+    fn integer_numeric_maps_to_int() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Numeric("42".into())),
+            Value::Int(42)
+        );
+    }
+
+    #[test]
+    fn negative_integer_numeric_maps_to_int() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Numeric("-7".into())),
+            Value::Int(-7)
+        );
+    }
+
+    #[test]
+    fn float_numeric_maps_to_double() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Numeric("2.5".into())),
+            Value::Double(2.5)
+        );
+    }
+
+    #[test]
+    fn non_parseable_numeric_falls_back_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Numeric("bad".into())),
+            Value::Bytes(b"bad".to_vec())
+        );
+    }
+
+    #[test]
+    fn boolean_true_maps_to_int_one() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Boolean(true)),
+            Value::Int(1)
+        );
+    }
+
+    #[test]
+    fn boolean_false_maps_to_int_zero() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Boolean(false)),
+            Value::Int(0)
+        );
+    }
+
+    #[test]
+    fn date_maps_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Date("2025-01-15".into())),
+            Value::Bytes(b"2025-01-15".to_vec())
+        );
+    }
+
+    #[test]
+    fn timestamp_maps_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Timestamp("2025-01-15 12:00:00".into())),
+            Value::Bytes(b"2025-01-15 12:00:00".to_vec())
+        );
+    }
+
+    #[test]
+    fn time_maps_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Time("08:30:00".into())),
+            Value::Bytes(b"08:30:00".to_vec())
+        );
+    }
+
+    #[test]
+    fn null_maps_to_null() {
+        assert_eq!(query_param_to_mysql_value(&QueryParam::Null), Value::NULL);
+    }
 
     // ── value_to_bytes ────────────────────────────────────────────────────────
 
