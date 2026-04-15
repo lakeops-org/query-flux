@@ -1,11 +1,7 @@
 # Changelog
 
-## [1.0.0](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.0...queryflux-v1.0.0) (2026-04-15)
+## [0.1.1](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.0...queryflux-v1.0.0) (2026-04-15)
 
-
-### ⚠ BREAKING CHANGES
-
-* initial 0.1.0 release
 
 ### Features
 
