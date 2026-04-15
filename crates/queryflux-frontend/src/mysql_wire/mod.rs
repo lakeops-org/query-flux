@@ -169,10 +169,10 @@ async fn handle_connection(
         "MySQL wire: client authenticated"
     );
 
-    let mut session = SessionContext::MySqlWire {
+    let mut session = SessionContext {
         user: if user.is_empty() { None } else { Some(user) },
-        schema,
-        session_vars: HashMap::new(),
+        database: schema,
+        extra: HashMap::new(),
         tags: QueryTags::new(),
     };
 
@@ -200,20 +200,7 @@ async fn handle_connection(
                 let db = String::from_utf8_lossy(body)
                     .trim_end_matches('\0')
                     .to_string();
-                if let SessionContext::MySqlWire {
-                    user,
-                    session_vars,
-                    tags,
-                    ..
-                } = &session
-                {
-                    session = SessionContext::MySqlWire {
-                        schema: if db.is_empty() { None } else { Some(db) },
-                        user: user.clone(),
-                        session_vars: session_vars.clone(),
-                        tags: tags.clone(),
-                    };
-                }
+                session.database = if db.is_empty() { None } else { Some(db) };
                 write_packet(&mut writer, seq.wrapping_add(1), &build_ok(0, 0)).await?;
             }
 
@@ -264,9 +251,7 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
 
     // Fast-path: SET query_tags / SET SESSION query_tags — update session tags and ACK.
     if let Some(new_tags) = try_parse_set_query_tags(logical) {
-        if let SessionContext::MySqlWire { tags, .. } = session {
-            *tags = new_tags;
-        }
+        session.tags = new_tags;
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
         return Ok(());
     }
@@ -279,20 +264,7 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
 
     // Fast-path: USE db sent as COM_QUERY text (mysql CLI does this).
     if let Some(db) = try_parse_use(&sql_lower) {
-        if let SessionContext::MySqlWire {
-            user,
-            session_vars,
-            tags,
-            ..
-        } = session
-        {
-            *session = SessionContext::MySqlWire {
-                schema: if db.is_empty() { None } else { Some(db) },
-                user: user.clone(),
-                session_vars: session_vars.clone(),
-                tags: tags.clone(),
-            };
-        }
+        session.database = if db.is_empty() { None } else { Some(db) };
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
         return Ok(());
     }
@@ -378,7 +350,14 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
 
     let exec_task = tokio::spawn(async move {
         execute_to_sink(
-            &state2, sql2, session2, protocol, group, &mut sink, &auth_ctx,
+            &state2,
+            sql2,
+            vec![],
+            session2,
+            protocol,
+            group,
+            &mut sink,
+            &auth_ctx,
         )
         .await
         // `sink` drops here — closes tx — rx.recv() will return None after last packet

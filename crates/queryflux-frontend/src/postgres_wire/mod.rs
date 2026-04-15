@@ -171,11 +171,11 @@ async fn handle_connection(
         .map(String::as_str)
         .unwrap_or("");
     let (tags, _) = parse_query_tags(raw_tags);
-    let session = SessionContext::PostgresWire {
+    let session = SessionContext {
         user: if user.is_empty() { None } else { Some(user) },
         database,
-        session_params: HashMap::new(),
         tags,
+        extra: HashMap::new(),
     };
 
     // ── Command loop ─────────────────────────────────────────────────────────
@@ -310,7 +310,14 @@ async fn handle_simple_query<W: AsyncWriteExt + Unpin>(
 
     let exec_task = tokio::spawn(async move {
         execute_to_sink(
-            &state2, sql2, session2, protocol, group, &mut sink, &auth_ctx,
+            &state2,
+            sql2,
+            vec![],
+            session2,
+            protocol,
+            group,
+            &mut sink,
+            &auth_ctx,
         )
         .await
         // sink drops here, closing tx

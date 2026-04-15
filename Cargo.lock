@@ -3309,6 +3309,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "polyglot-sql"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2aa7e8237d9a7ebc1faf26358b5c2b202268e69bd7f2e57008ab85da71cf8bc3"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3601,6 +3613,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
+ "polyglot-sql 0.3.2",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3614,8 +3627,10 @@ name = "queryflux-e2e-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "futures",
  "queryflux-auth",
  "queryflux-cluster-manager",
@@ -3668,7 +3683,7 @@ dependencies = [
 name = "queryflux-fingerprint"
 version = "0.1.0"
 dependencies = [
- "polyglot-sql",
+ "polyglot-sql 0.2.3",
  "queryflux-core",
  "regex",
  "tracing",

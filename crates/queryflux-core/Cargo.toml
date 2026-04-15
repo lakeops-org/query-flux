@@ -15,3 +15,4 @@ uuid = { version = "1.22.0", features = ["v4", "serde"] }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }
+polyglot-sql = { workspace = true }

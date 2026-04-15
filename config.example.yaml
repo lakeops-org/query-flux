@@ -7,6 +7,11 @@ queryflux:
     postgresWire:
       enabled: false
       port: 5432
+    # Snowflake JDBC/ODBC/Python wire + SQL API v2 on one port (sessions are process-local).
+    # snowflakeHttp:
+    #   enabled: false
+    #   port: 8445
+    #   sessionAffinityAcknowledged: false
   persistence:
     type: inMemory
   # --- Postgres persistence examples (pick one style) ---

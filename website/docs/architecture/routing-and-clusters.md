@@ -91,32 +91,36 @@ def route(query: str, ctx: dict) -> str | None:
 ```
 
 - **`query`**: SQL text (the same string the router chain sees).
-- **`ctx`**: plain `dict` built by QueryFlux (string keys). **`protocol`** is always set; other keys depend on the frontend and session shape.
+- **`ctx`**: plain `dict` built by QueryFlux (string keys). **`protocol`** is always set; all other keys are protocol-agnostic.
 
-| Key | When | Meaning |
+| Key | Type | Meaning |
 |-----|------|---------|
-| `protocol` | Always | One of `trinoHttp`, `postgresWire`, `mysqlWire`, `clickHouseHttp`, `flightSql` (camelCase, matching config / API). |
-| `headers` | Always | `dict[str, str]`. Client headers for HTTP-style frontends (Trino HTTP uses lowercase keys as stored by the proxy, e.g. `x-trino-user`). Empty `{}` for Postgres and MySQL wire. |
-| `database`, `user` | Postgres wire | From startup / auth; each may be Python `None`. |
-| `sessionParams` | Postgres wire | `dict[str, str]` (parameters from `SET`). |
-| `schema`, `user` | MySQL wire | Current schema and user; may be `None`. |
-| `sessionVars` | MySQL wire | `dict[str, str]` (`SET SESSION`). |
-| `queryParams` | ClickHouse HTTP | URL query string parameters (e.g. `?database=…`). |
-| `auth` | When the request was authenticated | `{"user": str, "groups": [str, …], "roles": [str, …]}`. Raw JWT / bearer tokens are **not** passed into Python. |
+| `protocol` | `str` | One of `trinoHttp`, `postgresWire`, `mysqlWire`, `clickHouseHttp`, `flightSql`, `snowflakeHttp`, `snowflakeSqlApi` (camelCase). |
+| `user` | `str \| None` | Resolved user identity. Extracted from `X-Trino-User`, Postgres startup message, MySQL handshake, etc. |
+| `database` | `str \| None` | Target database/catalog hint. Extracted from `X-Trino-Catalog`, Postgres `database`, MySQL `USE`, etc. |
+| `extra` | `dict[str, str]` | Protocol-specific key-value bag. For Trino/ClickHouse HTTP: lowercased header names (e.g. `x-trino-source`). For Postgres: startup parameters. For MySQL: session variables. Empty for other protocols. |
+| `auth` | `dict \| None` | `{"user": str, "groups": [str, …], "roles": [str, …]}` when the request was authenticated. Raw JWT / bearer tokens are **not** passed into Python. |
 
-Query tags are **not** currently injected into the Python context dict. Use the `tags` router type for tag-based routing instead.
+Query tags are **not** injected into the Python context dict. Use the `tags` router type for tag-based routing instead.
 
-**Flight SQL** reports `protocol: "flightSql"` but **`SessionContext` is still Trino-style**: `headers` are built from gRPC metadata (see `queryflux-frontend` Flight SQL service).
+**Example (route by user):**
 
-**Example (Trino HTTP):**
+```python
+def route(query: str, ctx: dict) -> str | None:
+    if ctx.get("user") == "batch":
+        return "heavy-trino"
+    return None
+```
+
+**Example (inspect a Trino HTTP header via `extra`):**
 
 ```python
 def route(query: str, ctx: dict) -> str | None:
     if ctx.get("protocol") != "trinoHttp":
         return None
-    user = (ctx.get("headers") or {}).get("x-trino-user")
-    if user == "batch":
-        return "heavy-trino"
+    source = (ctx.get("extra") or {}).get("x-trino-source")
+    if source == "dbt":
+        return "dbt-group"
     return None
 ```
 

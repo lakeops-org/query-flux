@@ -177,6 +177,7 @@ pub trait SyncAdapter: Send + Sync {
         session: &queryflux_core::session::SessionContext,
         credentials: &queryflux_auth::QueryCredentials,
         tags: &queryflux_core::tags::QueryTags,
+        params: &queryflux_core::params::QueryParams,
     ) -> Result<SyncExecution>;
     fn engine_type(&self) -> queryflux_core::query::EngineType;
     /// Target dialect for SQL translation (may differ from `engine_type().dialect()`, e.g. Flight SQL + arbitrary sqlglot backend).
@@ -193,6 +194,13 @@ pub trait SyncAdapter: Send + Sync {
 
     /// Execute a query and stream results as `NativeResultChunk`s, bypassing Arrow.
     ///
+    /// Returns `true` when this adapter handles parameter binding natively (e.g. via ADBC
+    /// prepared statements).  When `false` (the default) dispatch interpolates params into
+    /// the SQL before calling `execute_as_arrow` / `execute_native`.
+    fn supports_native_params(&self) -> bool {
+        false
+    }
+
     /// Only called by dispatch when `connection_format().matches_frontend(protocol)` is true.
     /// Default returns `Err` — adapters that override `connection_format` must also override this.
     async fn execute_native(
@@ -202,6 +210,7 @@ pub trait SyncAdapter: Send + Sync {
         _session: &queryflux_core::session::SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         _tags: &queryflux_core::tags::QueryTags,
+        _params: &queryflux_core::params::QueryParams,
     ) -> Result<NativeExecution> {
         Err(queryflux_core::error::QueryFluxError::Engine(
             "execute_native not implemented for this adapter".to_string(),
@@ -233,6 +242,7 @@ pub trait AsyncAdapter: Send + Sync {
         session: &queryflux_core::session::SessionContext,
         credentials: &queryflux_auth::QueryCredentials,
         tags: &queryflux_core::tags::QueryTags,
+        params: &queryflux_core::params::QueryParams,
     ) -> Result<queryflux_core::query::QueryExecution>;
     async fn poll_query(
         &self,
@@ -257,10 +267,14 @@ pub trait AsyncAdapter: Send + Sync {
         _session: &queryflux_core::session::SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         _tags: &queryflux_core::tags::QueryTags,
+        _params: &queryflux_core::params::QueryParams,
     ) -> Result<SyncExecution> {
         Err(queryflux_core::error::QueryFluxError::SyncEngineRequired(
             "this engine only supports the async (HTTP submit-poll) protocol".to_string(),
         ))
+    }
+    fn supports_native_params(&self) -> bool {
+        false
     }
     /// Extract engine-reported execution stats from a terminal submit-response body.
     ///

@@ -20,6 +20,10 @@ use queryflux_frontend::{
     flight_sql::FlightSqlFrontend,
     mysql_wire::MysqlWireFrontend,
     postgres_wire::PostgresWireFrontend,
+    snowflake::{
+        http::session_store::{SnowflakeHttpSessionPolicy, SnowflakeSessionStore},
+        SnowflakeFrontend,
+    },
     state::LiveConfig,
     trino_http::{state::AppState, TrinoHttpFrontend},
     FrontendListenerTrait,
@@ -487,6 +491,8 @@ async fn main() -> Result<()> {
                 mysql_wire,
                 clickhouse_http,
                 flight_sql,
+                snowflake_http,
+                snowflake_sql_api,
             } => {
                 routers.push(Box::new(ProtocolBasedRouter {
                     trino_http: trino_http.as_ref().map(|s| ClusterGroupName(s.clone())),
@@ -496,6 +502,10 @@ async fn main() -> Result<()> {
                         .as_ref()
                         .map(|s| ClusterGroupName(s.clone())),
                     flight_sql: flight_sql.as_ref().map(|s| ClusterGroupName(s.clone())),
+                    snowflake_http: snowflake_http.as_ref().map(|s| ClusterGroupName(s.clone())),
+                    snowflake_sql_api: snowflake_sql_api
+                        .as_ref()
+                        .map(|s| ClusterGroupName(s.clone())),
                 }));
             }
             RouterConfig::Header {
@@ -644,6 +654,29 @@ async fn main() -> Result<()> {
         }
     }
 
+    // --- Snowflake HTTP: sessions are in-memory on this process only ---
+    if let Some(sf) = config.queryflux.frontends.snowflake_http.as_ref() {
+        if sf.enabled {
+            if config.queryflux.enforce_snowflake_http_session_affinity
+                && !sf.session_affinity_acknowledged
+            {
+                anyhow::bail!(
+                    "Snowflake HTTP is enabled and queryflux.enforceSnowflakeHttpSessionAffinity is true, \
+                     but frontends.snowflakeHttp.sessionAffinityAcknowledged is false. \
+                     Wire sessions live in process memory; configure your load balancer for session affinity \
+                     to the same QueryFlux replica for all requests that reuse the Snowflake login token \
+                     (e.g. consistent hash on the Authorization header), then set sessionAffinityAcknowledged: true. \
+                     For a single-replica deployment, omit enforceSnowflakeHttpSessionAffinity."
+                );
+            }
+            tracing::info!(
+                "Snowflake HTTP frontend: login sessions are stored in this process only; \
+                 multi-replica setups require load balancer session affinity to the same instance per client token. \
+                 Set queryflux.enforceSnowflakeHttpSessionAffinity: true with sessionAffinityAcknowledged: true after configuring routing."
+            );
+        }
+    }
+
     let identity_resolver = Arc::new(BackendIdentityResolver::new());
     let cluster_configs = config.clusters.clone();
 
@@ -722,6 +755,14 @@ async fn main() -> Result<()> {
     }));
     let live = Arc::new(tokio::sync::RwLock::new(live_config));
 
+    let snowflake_session_policy = config
+        .queryflux
+        .frontends
+        .snowflake_http
+        .as_ref()
+        .map(SnowflakeHttpSessionPolicy::from_frontend_config)
+        .unwrap_or_default();
+
     let app_state = Arc::new(AppState {
         external_address: external_address.clone(),
         live: live.clone(),
@@ -731,6 +772,7 @@ async fn main() -> Result<()> {
         auth_provider,
         authorization,
         identity_resolver,
+        snowflake_sessions: SnowflakeSessionStore::new(snowflake_session_policy),
     });
 
     // --- Start admin server (Prometheus /metrics + future /admin/* endpoints) ---
@@ -1094,12 +1136,24 @@ async fn main() -> Result<()> {
         }
     };
 
+    let snowflake_future = async {
+        match &config.queryflux.frontends.snowflake_http {
+            Some(cfg) if cfg.enabled => {
+                SnowflakeFrontend::new(app_state.clone(), cfg.port)
+                    .listen()
+                    .await
+            }
+            _ => std::future::pending::<queryflux_core::error::Result<()>>().await,
+        }
+    };
+
     tokio::select! {
         r = frontend.listen()   => r.map_err(|e| anyhow::anyhow!("{e}"))?,
         r = admin.listen()      => r.map_err(|e| anyhow::anyhow!("{e}"))?,
         r = mysql_future        => r.map_err(|e| anyhow::anyhow!("{e}"))?,
         r = postgres_future     => r.map_err(|e| anyhow::anyhow!("{e}"))?,
         r = flight_sql_future   => r.map_err(|e| anyhow::anyhow!("{e}"))?,
+        r = snowflake_future    => r.map_err(|e| anyhow::anyhow!("{e}"))?,
     }
 
     Ok(())
@@ -1394,6 +1448,8 @@ async fn build_live_config(
                 mysql_wire,
                 clickhouse_http,
                 flight_sql,
+                snowflake_http,
+                snowflake_sql_api,
             } => {
                 routers.push(Box::new(
                     queryflux_routing::implementations::protocol_based::ProtocolBasedRouter {
@@ -1404,6 +1460,12 @@ async fn build_live_config(
                             .as_ref()
                             .map(|s| ClusterGroupName(s.clone())),
                         flight_sql: flight_sql.as_ref().map(|s| ClusterGroupName(s.clone())),
+                        snowflake_http: snowflake_http
+                            .as_ref()
+                            .map(|s| ClusterGroupName(s.clone())),
+                        snowflake_sql_api: snowflake_sql_api
+                            .as_ref()
+                            .map(|s| ClusterGroupName(s.clone())),
                     },
                 ));
             }

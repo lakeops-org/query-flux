@@ -13,6 +13,8 @@ This section describes how QueryFlux is put together: why it exists, how SQL is 
 | [System map](system-map.md) | End-to-end query lifecycle, major crates, and component status (high level). |
 | [Query translation](query-translation.md) | Dialect detection, sqlglot integration, when translation runs, and schema-aware mode. |
 | [Routing and clusters](routing-and-clusters.md) | Router chain, `routingFallback`, cluster groups, load-balancing strategies, and queueing. |
+| [Query tags](query-tags.md) | Attaching metadata to queries for routing, observability, and backend forwarding. |
+| [Query parameters](query-params.md) | Typed positional bindings — how `?` params flow from frontend to native engine APIs. |
 | [Observability](observability.md) | Prometheus metrics, Grafana dashboard, QueryFlux Studio, and the Admin REST API. |
 | [Frontends](frontends/overview.md) | Protocol listeners — Trino HTTP, PostgreSQL wire, MySQL wire, Flight SQL, and more. Shared dispatch, session model, and per-protocol details. |
 | [Extending QueryFlux](adding-support/overview.md) | **[Backend](adding-support/backend.md)** (Rust + Studio) and **[Frontend](adding-support/frontend.md)** (new protocols). |

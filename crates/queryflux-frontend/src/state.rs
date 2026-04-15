@@ -6,6 +6,7 @@ use queryflux_auth::{AuthProvider, AuthorizationChecker, BackendIdentityResolver
 use queryflux_cluster_manager::{cluster_state::ClusterState, ClusterGroupManager};
 use queryflux_core::{
     config::ClusterConfig,
+    params::QueryParams,
     query::{
         ClusterGroupName, ClusterName, EngineType, FrontendProtocol, ProxyQueryId,
         QueryEngineStats, QueryStatus, SqlDialect,
@@ -19,6 +20,8 @@ use queryflux_metrics::{MetricsStore, QueryRecord};
 use queryflux_persistence::Persistence;
 use queryflux_routing::chain::{RouterChain, RoutingTrace};
 use queryflux_translation::TranslationService;
+
+use crate::snowflake::http::session_store::SnowflakeSessionStore;
 
 /// Everything that can be hot-reloaded from the DB without restarting the proxy.
 ///
@@ -66,6 +69,8 @@ pub struct AppState {
     pub authorization: Arc<dyn AuthorizationChecker>,
     /// Resolves per-user `QueryCredentials` from `AuthContext` + cluster `queryAuth` config.
     pub identity_resolver: Arc<BackendIdentityResolver>,
+    /// Snowflake HTTP wire sessions (in-memory, process-local). See Snowflake frontend docs.
+    pub snowflake_sessions: Arc<SnowflakeSessionStore>,
 }
 
 /// Stable per-query metadata that does not change across the query's lifecycle.
@@ -86,6 +91,9 @@ pub struct QueryContext {
     pub was_translated: bool,
     pub translated_sql: Option<String>,
     pub query_tags: QueryTags,
+    /// Typed positional parameters extracted from the client's wire protocol.
+    /// Empty when the query is not parameterized.
+    pub query_params: QueryParams,
 }
 
 /// How the query ended — the fields that vary between success, failure, and cancellation.

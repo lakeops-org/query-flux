@@ -9,6 +9,7 @@ use queryflux_core::{
     catalog::TableSchema,
     config::{ClusterAuth, ClusterConfig},
     error::{QueryFluxError, Result},
+    params::{QueryParam, QueryParams},
     query::{ClusterGroupName, ClusterName, EngineType},
     session::SessionContext,
     tags::QueryTags,
@@ -141,16 +142,23 @@ impl SyncAdapter for DuckDbAdapter {
         EngineType::DuckDb
     }
 
+    fn supports_native_params(&self) -> bool {
+        true
+    }
+
     async fn execute_as_arrow(
         &self,
         sql: &str,
         _session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         _tags: &QueryTags,
+        params: &QueryParams,
     ) -> Result<SyncExecution> {
         debug!(cluster = %self.cluster_name, "Executing DuckDB query as Arrow");
         let conn = Arc::clone(&self.conn);
         let sql = sql.to_string();
+        let duckdb_params: Vec<duckdb::types::Value> =
+            params.iter().map(query_param_to_duckdb).collect();
 
         let batches = tokio::task::spawn_blocking(move || {
             let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
@@ -158,7 +166,7 @@ impl SyncAdapter for DuckDbAdapter {
                 .prepare(&sql)
                 .map_err(|e| QueryFluxError::Engine(format!("DuckDB prepare failed: {e}")))?;
             let arrow = stmt
-                .query_arrow([])
+                .query_arrow(duckdb::params_from_iter(duckdb_params))
                 .map_err(|e| QueryFluxError::Engine(format!("DuckDB query failed: {e}")))?;
             Ok::<_, QueryFluxError>(arrow.collect::<Vec<_>>())
         })
@@ -380,6 +388,28 @@ impl DuckDbAdapter {
     }
 }
 
+/// Convert a [`QueryParam`] to a DuckDB native value.
+fn query_param_to_duckdb(p: &QueryParam) -> duckdb::types::Value {
+    use duckdb::types::Value;
+    match p {
+        QueryParam::Text(s) => Value::Text(s.clone()),
+        QueryParam::Numeric(s) => {
+            if let Ok(n) = s.parse::<i64>() {
+                Value::BigInt(n)
+            } else if let Ok(f) = s.parse::<f64>() {
+                Value::Double(f)
+            } else {
+                Value::Text(s.clone())
+            }
+        }
+        QueryParam::Boolean(b) => Value::Boolean(*b),
+        QueryParam::Date(s) | QueryParam::Timestamp(s) | QueryParam::Time(s) => {
+            Value::Text(s.clone())
+        }
+        QueryParam::Null => Value::Null,
+    }
+}
+
 pub struct DuckDbFactory;
 
 #[async_trait]
@@ -406,5 +436,97 @@ impl crate::EngineAdapterFactory for DuckDbFactory {
             group,
             config,
         )?)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use duckdb::types::Value;
+    use queryflux_core::params::QueryParam;
+
+    #[test]
+    fn text_maps_to_text() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Text("hello".into())),
+            Value::Text("hello".into())
+        );
+    }
+
+    #[test]
+    fn integer_numeric_maps_to_bigint() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Numeric("42".into())),
+            Value::BigInt(42)
+        );
+    }
+
+    #[test]
+    fn negative_integer_numeric_maps_to_bigint() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Numeric("-7".into())),
+            Value::BigInt(-7)
+        );
+    }
+
+    #[test]
+    fn float_numeric_maps_to_double() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Numeric("2.5".into())),
+            Value::Double(2.5)
+        );
+    }
+
+    #[test]
+    fn non_parseable_numeric_falls_back_to_text() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Numeric("not_a_number".into())),
+            Value::Text("not_a_number".into())
+        );
+    }
+
+    #[test]
+    fn boolean_true_maps_correctly() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Boolean(true)),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn boolean_false_maps_correctly() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Boolean(false)),
+            Value::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn date_maps_to_text() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Date("2025-01-15".into())),
+            Value::Text("2025-01-15".into())
+        );
+    }
+
+    #[test]
+    fn timestamp_maps_to_text() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Timestamp("2025-01-15 12:00:00".into())),
+            Value::Text("2025-01-15 12:00:00".into())
+        );
+    }
+
+    #[test]
+    fn time_maps_to_text() {
+        assert_eq!(
+            query_param_to_duckdb(&QueryParam::Time("08:30:00".into())),
+            Value::Text("08:30:00".into())
+        );
+    }
+
+    #[test]
+    fn null_maps_to_null() {
+        assert_eq!(query_param_to_duckdb(&QueryParam::Null), Value::Null);
     }
 }

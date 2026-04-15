@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         'architecture/query-translation',
         'architecture/routing-and-clusters',
         'architecture/query-tags',
+        'architecture/query-params',
         'architecture/observability',
         'architecture/adding-engine-support',
         'architecture/auth-authz-design',

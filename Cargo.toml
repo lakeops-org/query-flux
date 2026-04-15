@@ -55,6 +55,9 @@ async-trait = "0.1.89"
 # Time
 chrono = { version = "0.4.44", features = ["serde"] }
 
+# SQL
+polyglot-sql = "0.3.2"
+
 # Concurrency
 dashmap = "6.1.0"
 

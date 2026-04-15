@@ -28,41 +28,44 @@ use queryflux_routing::{
 // ---------------------------------------------------------------------------
 
 fn trino_session(headers: &[(&str, &str)]) -> SessionContext {
-    SessionContext::TrinoHttp {
-        headers: headers
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-        tags: queryflux_core::tags::QueryTags::new(),
+    let extra: HashMap<String, String> = headers
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let user = extra.get("x-trino-user").cloned();
+    SessionContext {
+        user,
+        extra,
+        ..Default::default()
     }
 }
 
 fn postgres_session() -> SessionContext {
-    SessionContext::PostgresWire {
-        database: None,
+    SessionContext {
         user: Some("alice".to_string()),
-        session_params: HashMap::new(),
-        tags: queryflux_core::tags::QueryTags::new(),
+        ..Default::default()
     }
 }
 
 fn mysql_session(user: Option<&str>) -> SessionContext {
-    SessionContext::MySqlWire {
-        schema: None,
+    SessionContext {
         user: user.map(String::from),
-        session_vars: HashMap::new(),
-        tags: queryflux_core::tags::QueryTags::new(),
+        ..Default::default()
     }
 }
 
 fn clickhouse_session(headers: &[(&str, &str)]) -> SessionContext {
-    SessionContext::ClickHouseHttp {
-        headers: headers
-            .iter()
-            .map(|(k, v)| (k.to_lowercase(), (*v).to_string()))
-            .collect(),
-        query_params: HashMap::new(),
-        tags: queryflux_core::tags::QueryTags::new(),
+    let extra: HashMap<String, String> = headers
+        .iter()
+        .map(|(k, v)| (k.to_lowercase(), (*v).to_string()))
+        .collect();
+    let user = extra.get("user").cloned();
+    let database = extra.get("database").cloned();
+    SessionContext {
+        user,
+        database,
+        extra,
+        ..Default::default()
     }
 }
 
@@ -147,6 +150,8 @@ async fn protocol_router_trino_http() {
         mysql_wire: None,
         clickhouse_http: None,
         flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let session = trino_session(&[]);
     let result = router
@@ -164,6 +169,8 @@ async fn protocol_router_postgres_wire() {
         mysql_wire: None,
         clickhouse_http: None,
         flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -185,6 +192,8 @@ async fn protocol_router_unconfigured() {
         mysql_wire: None,
         clickhouse_http: None,
         flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -206,6 +215,8 @@ async fn protocol_router_mysql_wire() {
         mysql_wire: Some(group("mysql-group")),
         clickhouse_http: None,
         flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -227,6 +238,8 @@ async fn protocol_router_clickhouse_http() {
         mysql_wire: None,
         clickhouse_http: Some(group("ch-group")),
         flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     let result = router
         .route(
@@ -248,6 +261,8 @@ async fn protocol_router_flight_sql() {
         mysql_wire: Some(group("mysql-group")),
         clickhouse_http: Some(group("ch-group")),
         flight_sql: Some(group("sf-analytics")),
+        snowflake_http: None,
+        snowflake_sql_api: None,
     };
     // `ProtocolBasedRouter` routes on frontend protocol only (session is ignored).
     let result = router
@@ -260,6 +275,52 @@ async fn protocol_router_flight_sql() {
         .await
         .unwrap();
     assert_eq!(result, Some(group("sf-analytics")));
+}
+
+#[tokio::test]
+async fn protocol_router_snowflake_http() {
+    let router = ProtocolBasedRouter {
+        trino_http: None,
+        postgres_wire: None,
+        mysql_wire: None,
+        clickhouse_http: None,
+        flight_sql: None,
+        snowflake_http: Some(group("sf-wire")),
+        snowflake_sql_api: None,
+    };
+    let result = router
+        .route(
+            "SELECT 1",
+            &mysql_session(Some("u")),
+            &FrontendProtocol::SnowflakeHttp,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("sf-wire")));
+}
+
+#[tokio::test]
+async fn protocol_router_snowflake_sql_api() {
+    let router = ProtocolBasedRouter {
+        trino_http: None,
+        postgres_wire: None,
+        mysql_wire: None,
+        clickhouse_http: None,
+        flight_sql: None,
+        snowflake_http: None,
+        snowflake_sql_api: Some(group("sf-rest")),
+    };
+    let result = router
+        .route(
+            "SELECT 1",
+            &mysql_session(Some("u")),
+            &FrontendProtocol::SnowflakeSqlApi,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, Some(group("sf-rest")));
 }
 
 // ---------------------------------------------------------------------------
@@ -275,12 +336,10 @@ fn trino_session_with_client_tags(tags_header: &str) -> SessionContext {
         .filter(|t| !t.is_empty())
         .map(|t| (t.to_string(), None))
         .collect();
-    SessionContext::TrinoHttp {
-        headers: std::collections::HashMap::from([(
-            "x-trino-client-tags".to_string(),
-            tags_header.to_string(),
-        )]),
+    SessionContext {
+        extra: HashMap::from([("x-trino-client-tags".to_string(), tags_header.to_string())]),
         tags,
+        ..Default::default()
     }
 }
 
@@ -312,11 +371,10 @@ async fn tags_kv_match_postgres() {
         "analytics-group",
     )]);
     let (tags, _) = queryflux_core::tags::parse_query_tags("team:analytics");
-    let session = SessionContext::PostgresWire {
-        database: None,
+    let session = SessionContext {
         user: Some("alice".to_string()),
-        session_params: HashMap::new(),
         tags,
+        ..Default::default()
     };
     let result = router
         .route("SELECT 1", &session, &FrontendProtocol::PostgresWire, None)
@@ -358,11 +416,9 @@ async fn tags_and_logic_partial_no_match() {
         "prod-eng",
     )]);
     let (tags, _) = queryflux_core::tags::parse_query_tags("team:eng,env:staging");
-    let session = SessionContext::MySqlWire {
-        schema: None,
-        user: None,
-        session_vars: HashMap::new(),
+    let session = SessionContext {
         tags,
+        ..Default::default()
     };
     let result = router
         .route("SELECT 1", &session, &FrontendProtocol::MySqlWire, None)
@@ -1051,6 +1107,8 @@ async fn chain_protocol_based_then_header_fallback() {
                 mysql_wire: None,
                 clickhouse_http: None,
                 flight_sql: None,
+                snowflake_http: None,
+                snowflake_sql_api: None,
             }),
             Box::new(HeaderRouter::new(
                 "x-tenant".to_string(),

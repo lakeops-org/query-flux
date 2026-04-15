@@ -55,7 +55,6 @@ Release images are built for **linux/amd64** and **linux/arm64** only.
 
 | Git tag | Workflow | GitHub | Server-only manifest tags | Unified manifest tags |
 |---------|----------|--------|---------------------------|------------------------|
-| `vX.Y.Z-rc.N` | [docker-release-rc.yml](.github/workflows/docker-release-rc.yml) | Pre-release + auto notes | `:<git-tag>` | `:<git-tag>-full` |
 | `vX.Y.Z` (no `-rc`) | [docker-release-prod.yml](.github/workflows/docker-release-prod.yml) | Release + auto notes | `:<git-tag>`, `:latest-slim` | `:<git-tag>-full`, `:latest` |
 
 **Per-arch tags** (for pinning): e.g. `:<git-tag>-amd64`, `:<git-tag>-arm64`, `:<git-tag>-full-amd64`, `:latest-amd64`, `:latest-slim-amd64`, etc. Multi-arch **manifest** tags are assembled with `docker buildx imagetools create`, similar to [lakekeeper/lakekeeper’s release workflow](https://github.com/lakekeeper/lakekeeper/blob/main/.github/workflows/release.yml).
