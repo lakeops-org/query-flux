@@ -157,17 +157,15 @@ impl TrinoAdapter {
         session: &SessionContext,
         tags: &QueryTags,
     ) -> reqwest::RequestBuilder {
-        if let SessionContext::TrinoHttp { headers, .. } = session {
-            for (k, v) in headers {
-                let k_lower = k.to_lowercase();
-                // X-Trino-Client-Tags and X-Trino-Session are rebuilt below so that
-                // effective_tags always win. All other X-Trino-* headers pass through.
-                if k_lower == "x-trino-client-tags" || k_lower == "x-trino-session" {
-                    continue;
-                }
-                if k_lower.starts_with("x-trino-") || k_lower == "authorization" {
-                    builder = builder.header(k, v);
-                }
+        for (k, v) in &session.extra {
+            let k_lower = k.to_lowercase();
+            // X-Trino-Client-Tags and X-Trino-Session are rebuilt below so that
+            // effective_tags always win. All other X-Trino-* headers pass through.
+            if k_lower == "x-trino-client-tags" || k_lower == "x-trino-session" {
+                continue;
+            }
+            if k_lower.starts_with("x-trino-") || k_lower == "authorization" {
+                builder = builder.header(k, v);
             }
         }
 
@@ -178,20 +176,18 @@ impl TrinoAdapter {
         // may be percent-encoded. We filter out `query_tag` and `query_tags` keys so
         // unrelated session properties (join_distribution_type, query_max_run_time, …)
         // are always preserved.
-        if let SessionContext::TrinoHttp { headers, .. } = session {
-            if let Some(session_props) = headers.get("x-trino-session") {
-                let retained: Vec<&str> = session_props
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|prop| {
-                        let key = prop.split('=').next().unwrap_or("").trim();
-                        key != "query_tag" && key != "query_tags"
-                    })
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if !retained.is_empty() {
-                    builder = builder.header("X-Trino-Session", retained.join(","));
-                }
+        if let Some(session_props) = session.extra.get("x-trino-session") {
+            let retained: Vec<&str> = session_props
+                .split(',')
+                .map(str::trim)
+                .filter(|prop| {
+                    let key = prop.split('=').next().unwrap_or("").trim();
+                    key != "query_tag" && key != "query_tags"
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !retained.is_empty() {
+                builder = builder.header("X-Trino-Session", retained.join(","));
             }
         }
 
@@ -200,10 +196,8 @@ impl TrinoAdapter {
         // Key-value tags: "team" => Some("eng") → "team:eng"
         if tags.is_empty() {
             // No effective tags — forward the original client-tags header unchanged.
-            if let SessionContext::TrinoHttp { headers, .. } = session {
-                if let Some(v) = headers.get("x-trino-client-tags") {
-                    builder = builder.header("X-Trino-Client-Tags", v);
-                }
+            if let Some(v) = session.extra.get("x-trino-client-tags") {
+                builder = builder.header("X-Trino-Client-Tags", v);
             }
         } else {
             let client_tags: Vec<String> = tags
@@ -263,6 +257,7 @@ impl AsyncAdapter for TrinoAdapter {
         session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         tags: &QueryTags,
+        _params: &queryflux_core::params::QueryParams,
     ) -> Result<QueryExecution> {
         let url = self.trino_url("/v1/statement");
         debug!(cluster = %self.cluster_name, url = %url, "Submitting query to Trino");
@@ -420,12 +415,15 @@ impl AsyncAdapter for TrinoAdapter {
         session: &queryflux_core::session::SessionContext,
         credentials: &queryflux_auth::QueryCredentials,
         tags: &queryflux_core::tags::QueryTags,
+        params: &queryflux_core::params::QueryParams,
     ) -> crate::Result<crate::SyncExecution> {
         use crate::SyncExecution;
         use queryflux_core::query::QueryPollResult;
         use tokio_stream::wrappers::ReceiverStream;
 
-        let execution = self.submit_query(sql, session, credentials, tags).await?;
+        let execution = self
+            .submit_query(sql, session, credentials, tags, params)
+            .await?;
         let queryflux_core::query::QueryExecution::Async {
             backend_query_id,
             mut next_uri,
@@ -576,12 +574,13 @@ impl AsyncAdapter for TrinoAdapter {
         table: &str,
     ) -> Result<Option<TableSchema>> {
         let sql = format!("DESCRIBE {catalog}.{database}.{table}");
-        let session = SessionContext::TrinoHttp {
-            headers: HashMap::from([(
+        let session = SessionContext {
+            user: Some("queryflux-catalog-discovery".to_string()),
+            extra: HashMap::from([(
                 "x-trino-user".to_string(),
                 "queryflux-catalog-discovery".to_string(),
             )]),
-            tags: QueryTags::new(),
+            ..Default::default()
         };
         let execution = self
             .submit_query(
@@ -589,6 +588,7 @@ impl AsyncAdapter for TrinoAdapter {
                 &session,
                 &queryflux_auth::QueryCredentials::ServiceAccount,
                 &QueryTags::new(),
+                &vec![],
             )
             .await?;
         if let QueryExecution::Async {
@@ -608,12 +608,13 @@ impl AsyncAdapter for TrinoAdapter {
 impl TrinoAdapter {
     /// Submit a single-cell numeric discovery query and read the result via submit + poll.
     async fn run_discovery_scalar_u64(&self, sql: &str) -> Option<u64> {
-        let session = SessionContext::TrinoHttp {
-            headers: HashMap::from([(
+        let session = SessionContext {
+            user: Some("queryflux-running-query-reconcile".to_string()),
+            extra: HashMap::from([(
                 "x-trino-user".to_string(),
                 "queryflux-running-query-reconcile".to_string(),
             )]),
-            tags: QueryTags::new(),
+            ..Default::default()
         };
         let execution = self
             .submit_query(
@@ -621,6 +622,7 @@ impl TrinoAdapter {
                 &session,
                 &queryflux_auth::QueryCredentials::ServiceAccount,
                 &QueryTags::new(),
+                &vec![],
             )
             .await
             .ok()?;
@@ -661,12 +663,13 @@ impl TrinoAdapter {
     }
 
     async fn run_show_query(&self, sql: &str) -> Result<Vec<String>> {
-        let session = SessionContext::TrinoHttp {
-            headers: HashMap::from([(
+        let session = SessionContext {
+            user: Some("queryflux-catalog-discovery".to_string()),
+            extra: HashMap::from([(
                 "x-trino-user".to_string(),
                 "queryflux-catalog-discovery".to_string(),
             )]),
-            tags: QueryTags::new(),
+            ..Default::default()
         };
         let execution = self
             .submit_query(
@@ -674,6 +677,7 @@ impl TrinoAdapter {
                 &session,
                 &queryflux_auth::QueryCredentials::ServiceAccount,
                 &QueryTags::new(),
+                &vec![],
             )
             .await?;
         if let QueryExecution::Async {

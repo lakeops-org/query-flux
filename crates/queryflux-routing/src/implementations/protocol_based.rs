@@ -16,6 +16,8 @@ pub struct ProtocolBasedRouter {
     pub mysql_wire: Option<ClusterGroupName>,
     pub clickhouse_http: Option<ClusterGroupName>,
     pub flight_sql: Option<ClusterGroupName>,
+    pub snowflake_http: Option<ClusterGroupName>,
+    pub snowflake_sql_api: Option<ClusterGroupName>,
 }
 
 #[async_trait]
@@ -37,6 +39,8 @@ impl RouterTrait for ProtocolBasedRouter {
             FrontendProtocol::MySqlWire => self.mysql_wire.clone(),
             FrontendProtocol::ClickHouseHttp => self.clickhouse_http.clone(),
             FrontendProtocol::FlightSql => self.flight_sql.clone(),
+            FrontendProtocol::SnowflakeHttp => self.snowflake_http.clone(),
+            FrontendProtocol::SnowflakeSqlApi => self.snowflake_sql_api.clone(),
         };
         Ok(group)
     }

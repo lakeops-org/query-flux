@@ -56,12 +56,22 @@ In **`crates/queryflux-core/src/query.rs`**:
 1. Add **`FrontendProtocol::YourProtocol`** to the enum (serde **`camelCase`** in JSON where this appears).
 2. Implement **`default_dialect()`** for your variant: this is the **source** dialect for sqlglot when translating client SQL. If nothing fits, **`SqlDialect::Generic`** is acceptable; you may need to extend **`SqlDialect`** and translation rules — see [query-translation.md](../query-translation.md).
 
-### Step 2 — Session metadata (`queryflux-core`)
+### Step 2 — Session metadata (`queryflux-frontend`)
 
-In **`crates/queryflux-core/src/session.rs`**, either:
+`SessionContext` is a flat struct — no new variants are needed. In your frontend listener, construct it directly:
 
-- **Reuse** an existing **`SessionContext`** variant if semantics match (e.g. HTTP headers → **`TrinoHttp`** or **`ClickHouseHttp`**), or  
-- Add a **new** **`SessionContext`** variant and update **`tags()`**, **`user()`**, **`database()`**, **`client_source()`** (and any other helpers) so routers and catalog code can read what they need.
+```rust
+SessionContext {
+    user:     /* extracted from your protocol's auth */,
+    database: /* catalog/schema hint from your protocol */,
+    tags:     /* extracted query tags */,
+    extra:    /* remaining key-value data (headers, params, etc.) */,
+}
+```
+
+- Set `user` and `database` from your protocol's native fields (e.g. auth header, connection message).
+- Put everything else — headers, URL params, session variables — into `extra` as a flat `HashMap<String, String>`. Downstream components (routers, Python scripts) can read from `extra` using your protocol's key conventions.
+- There is no need to touch `crates/queryflux-core/src/session.rs`.
 
 Every **`IncomingQuery`** carries **`SessionContext`** + **`FrontendProtocol`**.
 
@@ -123,7 +133,7 @@ Studio does **not** implement wire protocols; it only displays status from the A
 ## Checklist
 
 - [ ] **`FrontendProtocol`** + **`default_dialect()`** in `queryflux-core/src/query.rs`
-- [ ] **`SessionContext`** (new variant or reuse) + helper methods in `session.rs`
+- [ ] Construct **`SessionContext`** in your listener (no changes to `session.rs` needed)
 - [ ] **`FrontendsConfig`** field + YAML shape in `config.rs`
 - [ ] **`queryflux-frontend`** module + **`FrontendListenerTrait`** + dispatch wiring
 - [ ] **`main.rs`** startup (and reload paths if applicable)

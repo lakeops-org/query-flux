@@ -264,6 +264,12 @@ pub fn build_frontends_status(
             "Arrow Flight SQL / gRPC-style access (driver-dependent).",
             frontends.flight_sql.as_ref(),
         ),
+        opt_fe(
+            "snowflake_http",
+            "Snowflake HTTP",
+            "Snowflake wire protocol + SQL API v2 on one port (session and query endpoints).",
+            frontends.snowflake_http.as_ref(),
+        ),
     ];
 
     FrontendsStatusDto {

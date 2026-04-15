@@ -8,6 +8,7 @@ use queryflux_e2e_tests::{
     harness::{TestHarness, GROUP_STARROCKS, GROUP_TRINO},
     trino_client::TrinoClient,
 };
+use serde_json::json;
 
 static HARNESS: OnceLock<TestHarness> = OnceLock::new();
 
@@ -89,6 +90,139 @@ async fn starrocks_empty_result() {
         .expect("query");
     assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
     assert_eq!(r.rows.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Session context propagation
+// ---------------------------------------------------------------------------
+
+/// `X-Trino-User` from the Trino HTTP frontend must end up in the QueryRecord.
+#[tokio::test]
+#[ignore = "requires StarRocks — run with: make test-e2e"]
+async fn starrocks_session_user_recorded_in_metrics() {
+    require_group!(GROUP_STARROCKS);
+    harness().clear_records();
+    let r = client()
+        .execute(
+            "SELECT 1",
+            &[("x-trino-user", "alice"), ("x-qf-group", GROUP_STARROCKS)],
+        )
+        .await
+        .expect("query");
+    assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
+
+    let record = harness()
+        .wait_for_record(|r| {
+            r.user.as_deref() == Some("alice") && r.cluster_group.0 == GROUP_STARROCKS
+        })
+        .await;
+    assert!(
+        record.is_some(),
+        "expected QueryRecord with user=alice on starrocks"
+    );
+}
+
+/// `X-Trino-Catalog` must appear as `catalog` in the QueryRecord.
+#[tokio::test]
+#[ignore = "requires StarRocks — run with: make test-e2e"]
+async fn starrocks_session_catalog_recorded_in_metrics() {
+    require_group!(GROUP_STARROCKS);
+    harness().clear_records();
+    // `information_schema` is present in every StarRocks instance.
+    let r = client()
+        .execute(
+            "SELECT 1",
+            &[
+                ("x-trino-user", "test"),
+                ("x-trino-catalog", "information_schema"),
+                ("x-qf-group", GROUP_STARROCKS),
+            ],
+        )
+        .await
+        .expect("query");
+    assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
+
+    let record = harness()
+        .wait_for_record(|r| {
+            r.catalog.as_deref() == Some("information_schema")
+                && r.cluster_group.0 == GROUP_STARROCKS
+        })
+        .await;
+    assert!(
+        record.is_some(),
+        "expected QueryRecord with catalog=information_schema on starrocks"
+    );
+}
+
+/// The StarRocks adapter issues `USE <db>` when `session.database()` is set.
+/// Verify that setting `X-Trino-Catalog: information_schema` and then querying
+/// a view that only exists there works — confirming the USE was applied.
+#[tokio::test]
+#[ignore = "requires StarRocks — run with: make test-e2e"]
+async fn starrocks_database_hint_applied_as_use_statement() {
+    require_group!(GROUP_STARROCKS);
+    // `schemata` is a view that only exists in `information_schema`.
+    // Without `USE information_schema`, the query would fail with "table not found".
+    // `schemata` always contains at least one row (information_schema itself), so a
+    // fresh StarRocks instance with no user tables still returns a row.
+    let r = client()
+        .execute(
+            "SELECT SCHEMA_NAME FROM schemata LIMIT 1",
+            &[
+                ("x-trino-user", "test"),
+                ("x-trino-catalog", "information_schema"),
+                ("x-qf-group", GROUP_STARROCKS),
+            ],
+        )
+        .await
+        .expect("query");
+    assert!(
+        r.error.is_none(),
+        "expected USE information_schema to scope the query, got: {:?}",
+        r.error
+    );
+    assert_eq!(r.rows.len(), 1, "schemata must contain at least one row");
+}
+
+/// An invalid database hint must bubble up as a query error (StarRocks `USE` fails),
+/// not a panic or a silent mismatch.
+#[tokio::test]
+#[ignore = "requires StarRocks — run with: make test-e2e"]
+async fn starrocks_invalid_database_hint_returns_error() {
+    require_group!(GROUP_STARROCKS);
+    let r = client()
+        .execute(
+            "SELECT 1",
+            &[
+                ("x-trino-user", "test"),
+                ("x-trino-catalog", "nonexistent_db_xyz_qf_test"),
+                ("x-qf-group", GROUP_STARROCKS),
+            ],
+        )
+        .await
+        .expect("request succeeded");
+    assert!(
+        r.error.is_some(),
+        "expected an error for USE nonexistent_db, got rows: {:?}",
+        r.rows
+    );
+}
+
+/// Omitting the catalog header must not break queries — `session.database()` is
+/// None so no `USE` is issued and StarRocks uses its connection default.
+#[tokio::test]
+#[ignore = "requires StarRocks — run with: make test-e2e"]
+async fn starrocks_no_database_hint_still_executes() {
+    require_group!(GROUP_STARROCKS);
+    let r = client()
+        .execute(
+            "SELECT 42 AS n",
+            &[("x-trino-user", "test"), ("x-qf-group", GROUP_STARROCKS)],
+        )
+        .await
+        .expect("query");
+    assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
+    assert_eq!(r.rows[0][0], json!(42));
 }
 
 // ---------------------------------------------------------------------------

@@ -292,6 +292,10 @@ impl SyncAdapter for StarRocksAdapter {
         crate::ConnectionFormat::MysqlWire
     }
 
+    fn supports_native_params(&self) -> bool {
+        true
+    }
+
     async fn execute_native(
         &self,
         _protocol: &queryflux_core::query::FrontendProtocol,
@@ -299,8 +303,9 @@ impl SyncAdapter for StarRocksAdapter {
         session: &SessionContext,
         credentials: &queryflux_auth::QueryCredentials,
         tags: &QueryTags,
+        params: &queryflux_core::params::QueryParams,
     ) -> crate::Result<crate::NativeExecution> {
-        crate::mysql_native::execute(&self.pool, sql, session, credentials, tags).await
+        crate::mysql_native::execute(&self.pool, sql, session, credentials, tags, params).await
     }
 
     async fn execute_as_arrow(
@@ -309,6 +314,7 @@ impl SyncAdapter for StarRocksAdapter {
         session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         tags: &QueryTags,
+        params: &queryflux_core::params::QueryParams,
     ) -> Result<SyncExecution> {
         let mut conn = self.acquire_conn().await?;
 
@@ -331,10 +337,18 @@ impl SyncAdapter for StarRocksAdapter {
             })?;
         }
 
-        let mut rows: Vec<Row> = conn
-            .query::<Row, _>(sql)
-            .await
-            .map_err(|e| QueryFluxError::Engine(format!("StarRocks query failed: {e}")))?;
+        let mut rows: Vec<Row> = if params.is_empty() {
+            conn.query::<Row, _>(sql)
+                .await
+                .map_err(|e| QueryFluxError::Engine(format!("StarRocks query failed: {e}")))?
+        } else {
+            let mysql_params = mysql_async::Params::Positional(
+                params.iter().map(query_param_to_mysql_value).collect(),
+            );
+            conn.exec::<Row, _, _>(sql, mysql_params)
+                .await
+                .map_err(|e| QueryFluxError::Engine(format!("StarRocks exec failed: {e}")))?
+        };
 
         let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -459,6 +473,32 @@ impl SyncAdapter for StarRocksAdapter {
             table: table.to_string(),
             columns,
         }))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Parameter binding
+// ---------------------------------------------------------------------------
+
+/// Convert a [`QueryParam`] to a `mysql_async` native value for prepared-statement binding.
+fn query_param_to_mysql_value(p: &queryflux_core::params::QueryParam) -> Value {
+    use queryflux_core::params::QueryParam;
+    match p {
+        QueryParam::Text(s) => Value::Bytes(s.as_bytes().to_vec()),
+        QueryParam::Numeric(s) => {
+            if let Ok(n) = s.parse::<i64>() {
+                Value::Int(n)
+            } else if let Ok(f) = s.parse::<f64>() {
+                Value::Double(f)
+            } else {
+                Value::Bytes(s.as_bytes().to_vec())
+            }
+        }
+        QueryParam::Boolean(b) => Value::Int(*b as i64),
+        QueryParam::Date(s) | QueryParam::Timestamp(s) | QueryParam::Time(s) => {
+            Value::Bytes(s.as_bytes().to_vec())
+        }
+        QueryParam::Null => Value::NULL,
     }
 }
 
@@ -732,5 +772,96 @@ impl crate::EngineAdapterFactory for StarRocksFactory {
             group,
             config,
         )?)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use queryflux_core::params::QueryParam;
+
+    #[test]
+    fn text_maps_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Text("alice".into())),
+            Value::Bytes(b"alice".to_vec())
+        );
+    }
+
+    #[test]
+    fn integer_numeric_maps_to_int() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Numeric("99".into())),
+            Value::Int(99)
+        );
+    }
+
+    #[test]
+    fn negative_integer_numeric_maps_to_int() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Numeric("-3".into())),
+            Value::Int(-3)
+        );
+    }
+
+    #[test]
+    fn float_numeric_maps_to_double() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Numeric("1.5".into())),
+            Value::Double(1.5)
+        );
+    }
+
+    #[test]
+    fn non_parseable_numeric_falls_back_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Numeric("bad".into())),
+            Value::Bytes(b"bad".to_vec())
+        );
+    }
+
+    #[test]
+    fn boolean_true_maps_to_int_one() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Boolean(true)),
+            Value::Int(1)
+        );
+    }
+
+    #[test]
+    fn boolean_false_maps_to_int_zero() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Boolean(false)),
+            Value::Int(0)
+        );
+    }
+
+    #[test]
+    fn date_maps_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Date("2025-06-01".into())),
+            Value::Bytes(b"2025-06-01".to_vec())
+        );
+    }
+
+    #[test]
+    fn timestamp_maps_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Timestamp("2025-06-01 09:00:00".into())),
+            Value::Bytes(b"2025-06-01 09:00:00".to_vec())
+        );
+    }
+
+    #[test]
+    fn time_maps_to_bytes() {
+        assert_eq!(
+            query_param_to_mysql_value(&QueryParam::Time("14:30:00".into())),
+            Value::Bytes(b"14:30:00".to_vec())
+        );
+    }
+
+    #[test]
+    fn null_maps_to_null() {
+        assert_eq!(query_param_to_mysql_value(&QueryParam::Null), Value::NULL);
     }
 }

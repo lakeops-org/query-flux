@@ -130,6 +130,11 @@ const config: Config = {
           className: 'navbar-item-docs-mobile',
         },
         {
+          to: '/community',
+          label: 'Community',
+          position: 'left',
+        },
+        {
           type: 'docsVersionDropdown',
           position: 'left',
           className: 'navbar-item-collapse-mobile',
@@ -163,6 +168,7 @@ const config: Config = {
         {
           title: 'Project',
           items: [
+            {label: 'Community', to: '/community'},
             {label: 'Development', to: '/docs/development'},
             {label: 'Contribute', to: '/docs/contribute'},
             {label: 'Roadmap', to: '/docs/roadmap'},

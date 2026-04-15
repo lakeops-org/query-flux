@@ -421,6 +421,55 @@ impl AdbcAdapter {
     }
 }
 
+/// Build an Arrow RecordBatch encoding positional query parameters for ADBC's `stmt.bind()`.
+///
+/// ADBC uses a RecordBatch with one column per `?` placeholder and one row per execution.
+/// Column names are positional ("p1", "p2", …); the driver ignores names and binds by position.
+fn params_to_record_batch(params: &queryflux_core::params::QueryParams) -> Result<RecordBatch> {
+    use arrow::array::{BooleanArray, Float64Array, Int64Array, NullArray, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use queryflux_core::params::QueryParam;
+
+    let mut fields = Vec::with_capacity(params.len());
+    let mut columns: Vec<Arc<dyn arrow::array::Array>> = Vec::with_capacity(params.len());
+
+    for (i, param) in params.iter().enumerate() {
+        let name = format!("p{}", i + 1);
+        match param {
+            QueryParam::Text(s)
+            | QueryParam::Date(s)
+            | QueryParam::Timestamp(s)
+            | QueryParam::Time(s) => {
+                fields.push(Field::new(&name, DataType::Utf8, false));
+                columns.push(Arc::new(StringArray::from(vec![s.as_str()])));
+            }
+            QueryParam::Numeric(s) => {
+                if let Ok(n) = s.parse::<i64>() {
+                    fields.push(Field::new(&name, DataType::Int64, false));
+                    columns.push(Arc::new(Int64Array::from(vec![n])));
+                } else if let Ok(f) = s.parse::<f64>() {
+                    fields.push(Field::new(&name, DataType::Float64, false));
+                    columns.push(Arc::new(Float64Array::from(vec![f])));
+                } else {
+                    fields.push(Field::new(&name, DataType::Utf8, false));
+                    columns.push(Arc::new(StringArray::from(vec![s.as_str()])));
+                }
+            }
+            QueryParam::Boolean(b) => {
+                fields.push(Field::new(&name, DataType::Boolean, false));
+                columns.push(Arc::new(BooleanArray::from(vec![*b])));
+            }
+            QueryParam::Null => {
+                fields.push(Field::new(&name, DataType::Null, true));
+                columns.push(Arc::new(NullArray::new(1)));
+            }
+        }
+    }
+
+    RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)
+        .map_err(|e| QueryFluxError::Engine(format!("ADBC: failed to build param batch: {e}")))
+}
+
 fn collect_batches(
     reader: impl Iterator<Item = std::result::Result<RecordBatch, arrow::error::ArrowError>>,
 ) -> std::result::Result<Vec<RecordBatch>, QueryFluxError> {
@@ -431,15 +480,25 @@ fn collect_batches(
 
 #[async_trait]
 impl SyncAdapter for AdbcAdapter {
+    fn supports_native_params(&self) -> bool {
+        true
+    }
+
     async fn execute_as_arrow(
         &self,
         sql: &str,
         _session: &SessionContext,
         _credentials: &queryflux_auth::QueryCredentials,
         _tags: &QueryTags,
+        params: &queryflux_core::params::QueryParams,
     ) -> Result<SyncExecution> {
         let pool = self.pool.clone();
         let sql = sql.to_string();
+        let param_batch = if params.is_empty() {
+            None
+        } else {
+            Some(params_to_record_batch(params)?)
+        };
 
         let (batch_tx, batch_rx) = mpsc::channel::<Result<RecordBatch>>(32);
         let (stats_tx, stats_rx) = oneshot::channel();
@@ -468,6 +527,14 @@ impl SyncAdapter for AdbcAdapter {
                     "ADBC: failed to set SQL query: {e}"
                 ))));
                 return;
+            }
+            if let Some(batch) = param_batch {
+                if let Err(e) = stmt.bind(batch) {
+                    let _ = batch_tx.blocking_send(Err(QueryFluxError::Engine(format!(
+                        "ADBC: failed to bind parameters: {e}"
+                    ))));
+                    return;
+                }
             }
             let reader = match stmt.execute() {
                 Ok(r) => r,
@@ -994,5 +1061,123 @@ mod tests {
         });
         let cfg = AdbcConfig::from_json(&json, "c").expect("parse");
         assert_eq!(cfg.engine_type(), EngineType::StarRocks);
+    }
+
+    // ── params_to_record_batch ────────────────────────────────────────────────
+
+    use super::params_to_record_batch;
+    use arrow::array::{Array, BooleanArray, Float64Array, Int64Array, NullArray, StringArray};
+    use arrow::datatypes::DataType;
+    use queryflux_core::params::QueryParam;
+
+    #[test]
+    fn text_param_produces_utf8_column() {
+        let params = vec![QueryParam::Text("hello".into())];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.num_columns(), 1);
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::Utf8);
+        assert_eq!(batch.schema().field(0).name(), "p1");
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(col.value(0), "hello");
+    }
+
+    #[test]
+    fn integer_numeric_produces_int64_column() {
+        let params = vec![QueryParam::Numeric("42".into())];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::Int64);
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(col.value(0), 42);
+    }
+
+    #[test]
+    fn float_numeric_produces_float64_column() {
+        let params = vec![QueryParam::Numeric("2.5".into())];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::Float64);
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert!((col.value(0) - 2.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn non_parseable_numeric_falls_back_to_utf8() {
+        let params = vec![QueryParam::Numeric("bad".into())];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::Utf8);
+    }
+
+    #[test]
+    fn boolean_param_produces_boolean_column() {
+        let params = vec![QueryParam::Boolean(true)];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::Boolean);
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
+        assert!(col.value(0));
+    }
+
+    #[test]
+    fn null_param_produces_null_column() {
+        let params = vec![QueryParam::Null];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::Null);
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<NullArray>()
+            .unwrap();
+        assert_eq!(col.len(), 1);
+    }
+
+    #[test]
+    fn temporal_params_produce_utf8_columns() {
+        let params = vec![
+            QueryParam::Date("2025-01-15".into()),
+            QueryParam::Timestamp("2025-01-15 12:00:00".into()),
+            QueryParam::Time("08:30:00".into()),
+        ];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.num_columns(), 3);
+        for i in 0..3 {
+            assert_eq!(batch.schema().field(i).data_type(), &DataType::Utf8);
+        }
+    }
+
+    #[test]
+    fn multiple_params_get_positional_column_names() {
+        let params = vec![
+            QueryParam::Text("a".into()),
+            QueryParam::Numeric("1".into()),
+            QueryParam::Boolean(false),
+        ];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.schema().field(0).name(), "p1");
+        assert_eq!(batch.schema().field(1).name(), "p2");
+        assert_eq!(batch.schema().field(2).name(), "p3");
+    }
+
+    #[test]
+    fn batch_always_has_exactly_one_row() {
+        let params = vec![
+            QueryParam::Text("x".into()),
+            QueryParam::Numeric("5".into()),
+        ];
+        let batch = params_to_record_batch(&params).expect("build");
+        assert_eq!(batch.num_rows(), 1);
     }
 }

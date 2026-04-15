@@ -201,7 +201,14 @@ fn extract_session(headers: &HeaderMap) -> SessionContext {
         }
     }
     let tags = extract_trino_tags(&h);
-    SessionContext::TrinoHttp { headers: h, tags }
+    let user = h.get("x-trino-user").cloned();
+    let database = h.get("x-trino-catalog").cloned();
+    SessionContext {
+        user,
+        database,
+        tags,
+        extra: h,
+    }
 }
 
 /// Percent-encode a session property value for [`set_session_response`] (`X-Trino-Set-Session`),
@@ -429,6 +436,7 @@ pub async fn post_statement(
             &state,
             query_id.clone(),
             sql.clone(),
+            vec![],
             session.clone(),
             protocol.clone(),
             group.clone(),
@@ -441,9 +449,17 @@ pub async fn post_statement(
             Ok(outcome) => outcome_to_response(&state, &query_id, outcome),
             Err(QueryFluxError::SyncEngineRequired(_)) => {
                 let mut sink = TrinoHttpResultSink::new(&query_id.0);
-                if let Err(e) =
-                    execute_to_sink(&state, sql, session, protocol, group, &mut sink, &auth_ctx)
-                        .await
+                if let Err(e) = execute_to_sink(
+                    &state,
+                    sql,
+                    vec![],
+                    session,
+                    protocol,
+                    group,
+                    &mut sink,
+                    &auth_ctx,
+                )
+                .await
                 {
                     warn!(id = %query_id, "execute_to_sink error: {e}");
                 }
@@ -460,8 +476,17 @@ pub async fn post_statement(
         }
     } else {
         let mut sink = TrinoHttpResultSink::new(&query_id.0);
-        if let Err(e) =
-            execute_to_sink(&state, sql, session, protocol, group, &mut sink, &auth_ctx).await
+        if let Err(e) = execute_to_sink(
+            &state,
+            sql,
+            vec![],
+            session,
+            protocol,
+            group,
+            &mut sink,
+            &auth_ctx,
+        )
+        .await
         {
             warn!(id = %query_id, "execute_to_sink error: {e}");
         }
@@ -621,6 +646,7 @@ pub async fn get_queued_statement(
             &state,
             query_id.clone(),
             sql.clone(),
+            vec![],
             session.clone(),
             protocol.clone(),
             group.clone(),
@@ -634,9 +660,17 @@ pub async fn get_queued_statement(
             Err(QueryFluxError::SyncEngineRequired(_)) => {
                 let _ = state.persistence.delete_queued(&query_id).await;
                 let mut sink = TrinoHttpResultSink::new(&query_id.0);
-                if let Err(e) =
-                    execute_to_sink(&state, sql, session, protocol, group, &mut sink, &auth_ctx)
-                        .await
+                if let Err(e) = execute_to_sink(
+                    &state,
+                    sql,
+                    vec![],
+                    session,
+                    protocol,
+                    group,
+                    &mut sink,
+                    &auth_ctx,
+                )
+                .await
                 {
                     warn!(id = %query_id, "execute_to_sink error: {e}");
                 }
@@ -650,8 +684,17 @@ pub async fn get_queued_statement(
     } else {
         let _ = state.persistence.delete_queued(&query_id).await;
         let mut sink = TrinoHttpResultSink::new(&query_id.0);
-        if let Err(e) =
-            execute_to_sink(&state, sql, session, protocol, group, &mut sink, &auth_ctx).await
+        if let Err(e) = execute_to_sink(
+            &state,
+            sql,
+            vec![],
+            session,
+            protocol,
+            group,
+            &mut sink,
+            &auth_ctx,
+        )
+        .await
         {
             warn!(id = %query_id, "execute_to_sink error: {e}");
         }
@@ -784,6 +827,7 @@ pub async fn get_executing_statement(
             None
         },
         query_tags: effective_tags,
+        query_params: vec![],
     };
 
     match poll_result {

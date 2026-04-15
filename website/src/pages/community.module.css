@@ -1,0 +1,223 @@
+/* Community page — hero + two-column involvement cards (Slack + docs) */
+
+.page {
+  --community-card-radius: 14px;
+}
+
+.hero {
+  position: relative;
+  padding: 3rem 0 2.5rem;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.heroGlow {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to bottom, rgba(237, 233, 254, 0.45) 0%, rgba(255, 255, 255, 0.4) 45%, transparent 100%),
+    radial-gradient(ellipse 70% 55% at 50% -10%, rgba(167, 139, 250, 0.22) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 40% at 90% 20%, rgba(192, 132, 252, 0.12) 0%, transparent 50%),
+    radial-gradient(ellipse 45% 35% at 10% 30%, rgba(124, 58, 237, 0.08) 0%, transparent 50%);
+}
+
+html[data-theme='dark'] .hero {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+  color: #e7e7e7;
+}
+
+html[data-theme='dark'] .heroGlow {
+  background:
+    linear-gradient(to bottom, rgba(88, 28, 135, 0.2) 0%, rgba(0, 0, 0, 0.92) 55%, #000000 100%),
+    radial-gradient(ellipse 68% 52% at 50% 0%, rgba(124, 58, 237, 0.22) 0%, transparent 58%),
+    radial-gradient(ellipse 48% 38% at 82% 12%, rgba(234, 88, 12, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 32% at 18% 28%, rgba(167, 139, 250, 0.06) 0%, transparent 50%);
+}
+
+.heroInner {
+  position: relative;
+  text-align: center;
+  max-width: var(--qf-content-max);
+  margin: 0 auto;
+}
+
+.title {
+  font-size: clamp(2rem, 4vw, 2.65rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin: 0 0 0.65rem;
+}
+
+.lead {
+  font-size: 1.15rem;
+  line-height: 1.65;
+  color: #475569;
+  margin: 0 auto 1.5rem;
+  max-width: var(--qf-leadin-max);
+}
+
+html[data-theme='dark'] .lead {
+  color: #cbd5e1;
+}
+
+.ctaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+}
+
+.slackButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #4a154b;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff !important;
+  box-shadow: 0 4px 18px rgba(74, 21, 75, 0.35);
+}
+
+.slackButton:hover {
+  background: #5c1a5e;
+  color: #fff !important;
+  box-shadow: 0 6px 24px rgba(74, 21, 75, 0.45);
+}
+
+.slackIcon {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.main {
+  padding: 2.75rem 0 3.5rem;
+  background: var(--ifm-background-color);
+}
+
+.sectionTitle {
+  text-align: center;
+  font-size: clamp(1.35rem, 2.5vw, 1.6rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.5rem;
+}
+
+.sectionSub {
+  text-align: center;
+  color: #64748b;
+  max-width: var(--qf-section-sub-max);
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+}
+
+html[data-theme='dark'] .sectionSub {
+  color: #94a3b8;
+}
+
+.cardGrid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: var(--qf-page-max);
+  margin: 0 auto;
+}
+
+@media screen and (max-width: 996px) {
+  .cardGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  position: relative;
+  padding: 1.5rem 1.5rem 1.4rem;
+  border-radius: var(--community-card-radius);
+  border: 1px solid rgba(124, 58, 237, 0.18);
+  background: var(--ifm-background-surface-color);
+  box-shadow: 0 2px 16px rgba(15, 23, 42, 0.06);
+}
+
+html[data-theme='dark'] .card {
+  border-color: rgba(167, 139, 250, 0.2);
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.35);
+}
+
+.cardAccent {
+  position: absolute;
+  top: 0;
+  left: 1.5rem;
+  right: 1.5rem;
+  height: 3px;
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(90deg, #7c3aed, #ea580c);
+  opacity: 0.85;
+}
+
+.cardIcon {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-bottom: 0.85rem;
+  color: var(--ifm-color-primary);
+}
+
+.cardIcon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.cardTitle {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0 0 0.65rem;
+  letter-spacing: -0.02em;
+}
+
+.cardText {
+  margin: 0 0 1rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.98rem;
+}
+
+html[data-theme='dark'] .cardText {
+  color: #cbd5e1;
+}
+
+.bullets {
+  margin: 0 0 1.15rem;
+  padding-left: 1.15rem;
+  line-height: 1.55;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.95rem;
+}
+
+html[data-theme='dark'] .bullets {
+  color: #94a3b8;
+}
+
+.bullets li {
+  margin-bottom: 0.35rem;
+}
+
+.cardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.wideCard {
+  margin-top: 1.25rem;
+  max-width: var(--qf-page-max);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+@media screen and (max-width: 996px) {
+  .hero {
+    padding: 2.25rem 0 2rem;
+  }
+}

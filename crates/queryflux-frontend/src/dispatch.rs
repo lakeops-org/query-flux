@@ -10,6 +10,7 @@ use futures::StreamExt;
 use queryflux_auth::{AuthContext, QueryCredentials};
 use queryflux_cluster_manager::ClusterGroupManager;
 use queryflux_core::native_result::NativeResultChunk;
+use queryflux_core::params::{interpolate_params, QueryParams};
 use queryflux_core::tags::{merge_tags, QueryTags};
 use queryflux_core::{
     error::{QueryFluxError, Result},
@@ -108,6 +109,7 @@ pub async fn dispatch_query(
     state: &Arc<AppState>,
     query_id: ProxyQueryId,
     sql: String,
+    params: QueryParams,
     session: SessionContext,
     protocol: FrontendProtocol,
     group: ClusterGroupName,
@@ -217,8 +219,21 @@ pub async fn dispatch_query(
         info!(id = %query_id, src = ?src_dialect, tgt = ?tgt_dialect, "SQL translated");
     }
 
+    // Fallback interpolation for async adapters that don't support native params.
+    let (sql, effective_params) = if !params.is_empty() {
+        (interpolate_params(&sql, &params, &tgt_dialect)?, vec![])
+    } else {
+        (sql, params)
+    };
+
     let execution = match adapter
-        .submit_query(&sql, &session, &credentials, &effective_tags)
+        .submit_query(
+            &sql,
+            &session,
+            &credentials,
+            &effective_tags,
+            &effective_params,
+        )
         .await
     {
         Ok(e) => e,
@@ -414,6 +429,7 @@ async fn finalize_trino_async_terminal_on_submit(
             None
         },
         query_tags: executing.query_tags.clone(),
+        query_params: vec![],
     };
 
     let engine_stats = adapter.terminal_stats_from_body(body);
@@ -564,10 +580,24 @@ impl DispatchAdapter {
         session: &SessionContext,
         credentials: &QueryCredentials,
         tags: &queryflux_core::tags::QueryTags,
+        params: &QueryParams,
     ) -> Result<queryflux_engine_adapters::SyncExecution> {
         match self {
-            Self::Sync(a) => a.execute_as_arrow(sql, session, credentials, tags).await,
-            Self::Async(a) => a.execute_as_arrow(sql, session, credentials, tags).await,
+            Self::Sync(a) => {
+                a.execute_as_arrow(sql, session, credentials, tags, params)
+                    .await
+            }
+            Self::Async(a) => {
+                a.execute_as_arrow(sql, session, credentials, tags, params)
+                    .await
+            }
+        }
+    }
+
+    fn supports_native_params(&self) -> bool {
+        match self {
+            Self::Sync(a) => a.supports_native_params(),
+            Self::Async(a) => a.supports_native_params(),
         }
     }
 
@@ -597,6 +627,8 @@ impl DispatchAdapter {
 /// Holds the cluster slot, resolved credentials, translated SQL, and query context.
 struct SyncQuerySetup {
     adapter: DispatchAdapter,
+    /// SQL to send to the adapter: translated + params interpolated when the adapter
+    /// does not support native parameter binding.
     translated: String,
     start: Instant,
     /// Holds the acquired cluster slot — released on drop or via `slot.release().await`.
@@ -604,6 +636,8 @@ struct SyncQuerySetup {
     /// Fully-built context for record_query — all strings owned.
     ctx: QueryContext,
     credentials: QueryCredentials,
+    /// Typed parameters — empty when the adapter interpolated them into `translated`.
+    params: QueryParams,
 }
 
 /// The outcome of executing a sync query — everything record_query needs.
@@ -635,10 +669,15 @@ impl From<SyncOutcome> for QueryOutcome {
 /// query context. If translation fails, records the failure and releases the slot
 /// before returning Err — the caller has no cleanup to do.
 ///
+/// When `params` is non-empty and the selected adapter does not support native parameter
+/// binding, the params are interpolated into the translated SQL before returning, and
+/// `SyncQuerySetup.params` is left empty so the adapter receives no raw params.
+///
 /// Failures before slot acquisition (no adapter) return Err without recording.
 async fn setup_sync_query(
     state: &Arc<AppState>,
     sql: String,
+    params: QueryParams,
     session: SessionContext,
     protocol: FrontendProtocol,
     group: ClusterGroupName,
@@ -734,6 +773,7 @@ async fn setup_sync_query(
                 was_translated: false,
                 translated_sql: None,
                 query_tags: effective_tags,
+                query_params: params,
             };
             state.record_query(
                 &ctx,
@@ -760,6 +800,19 @@ async fn setup_sync_query(
         .resolve(auth_ctx, cluster_cfg.as_ref())
         .await;
 
+    // Fallback interpolation: when the adapter does not support native params,
+    // substitute `?` placeholders with typed literals now so the adapter receives
+    // a fully-resolved SQL string and empty params.
+    let (translated, effective_params) = if !params.is_empty() && !adapter.supports_native_params()
+    {
+        (
+            interpolate_params(&translated, &params, &tgt_dialect)?,
+            vec![],
+        )
+    } else {
+        (translated, params)
+    };
+
     let ctx = QueryContext {
         query_id,
         sql,
@@ -779,6 +832,7 @@ async fn setup_sync_query(
             None
         },
         query_tags: effective_tags,
+        query_params: effective_params.clone(),
     };
 
     Ok(SyncQuerySetup {
@@ -788,6 +842,7 @@ async fn setup_sync_query(
         slot,
         ctx,
         credentials,
+        params: effective_params,
     })
 }
 
@@ -812,6 +867,7 @@ async fn execute_stream(
             &setup.ctx.session,
             &setup.credentials,
             &setup.ctx.query_tags,
+            &setup.params,
         )
         .await
     {
@@ -963,6 +1019,7 @@ async fn execute_native_to_sink(
             &setup.ctx.session,
             &setup.credentials,
             &setup.ctx.query_tags,
+            &setup.params,
         )
         .await
     {
@@ -1047,9 +1104,11 @@ async fn execute_native_to_sink(
 /// Guarantees:
 /// - `record_query` is called **exactly once** per query at the terminal state.
 /// - The cluster slot is always released — even on tokio future cancellation (via Drop).
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_to_sink(
     state: &Arc<AppState>,
     sql: String,
+    params: QueryParams,
     session: SessionContext,
     protocol: FrontendProtocol,
     group: ClusterGroupName,
@@ -1064,13 +1123,22 @@ pub async fn execute_to_sink(
         return sink.on_error(&msg).await;
     }
 
-    let mut setup =
-        match setup_sync_query(state, sql, session, protocol.clone(), group, auth_ctx).await {
-            Ok(s) => s,
-            // Setup failed (no adapter, or translation error already recorded inside).
-            // No slot is held at this point — just notify the sink.
-            Err(e) => return sink.on_error(&e.to_string()).await,
-        };
+    let mut setup = match setup_sync_query(
+        state,
+        sql,
+        params,
+        session,
+        protocol.clone(),
+        group,
+        auth_ctx,
+    )
+    .await
+    {
+        Ok(s) => s,
+        // Setup failed (no adapter, or translation error already recorded inside).
+        // No slot is held at this point — just notify the sink.
+        Err(e) => return sink.on_error(&e.to_string()).await,
+    };
 
     // Native path: skip Arrow when backend connection format matches frontend protocol.
     // All other guarantees (slot release, record_query) are upheld by this function's

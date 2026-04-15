@@ -35,13 +35,11 @@ impl RouterTrait for ClientTagsRouter {
         _frontend_protocol: &FrontendProtocol,
         _auth_ctx: Option<&queryflux_auth::AuthContext>,
     ) -> Result<Option<ClusterGroupName>> {
-        if let SessionContext::TrinoHttp { headers } = session {
-            // X-Trino-Client-Tags is a comma-separated list of tags.
-            if let Some(tags_header) = headers.get("x-trino-client-tags") {
-                for tag in tags_header.split(',').map(|t| t.trim()) {
-                    if let Some(group) = self.tag_to_group.get(tag) {
-                        return Ok(Some(group.clone()));
-                    }
+        // X-Trino-Client-Tags is a comma-separated list of tags stored in extra.
+        if let Some(tags_header) = session.extra.get("x-trino-client-tags") {
+            for tag in tags_header.split(',').map(|t| t.trim()) {
+                if let Some(group) = self.tag_to_group.get(tag) {
+                    return Ok(Some(group.clone()));
                 }
             }
         }

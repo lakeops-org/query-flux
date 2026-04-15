@@ -293,6 +293,9 @@ pub struct QueryFluxConfig {
     /// Omit or set to `null` to keep history indefinitely.
     #[serde(default)]
     pub query_history_retention_days: Option<u64>,
+    /// When true and Snowflake HTTP is enabled, require `frontends.snowflakeHttp.sessionAffinityAcknowledged`.
+    #[serde(default)]
+    pub enforce_snowflake_http_session_affinity: bool,
     #[serde(default)]
     pub metrics: MetricsConfig,
 }
@@ -325,6 +328,8 @@ pub struct FrontendsConfig {
     pub clickhouse_http: Option<FrontendConfig>,
     #[serde(default)]
     pub flight_sql: Option<FrontendConfig>,
+    #[serde(default)]
+    pub snowflake_http: Option<FrontendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,6 +338,15 @@ pub struct FrontendConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub port: u16,
+    /// Operator assertion: load balancer provides session affinity for Snowflake HTTP wire.
+    #[serde(default)]
+    pub session_affinity_acknowledged: bool,
+    /// Snowflake HTTP wire — max session lifetime in seconds from login. Omitted → 86400. `0` = unbounded.
+    #[serde(default)]
+    pub snowflake_session_max_age_secs: Option<u64>,
+    /// Snowflake HTTP wire — idle timeout in seconds. Omitted → 14400. `0` = no idle limit.
+    #[serde(default)]
+    pub snowflake_session_idle_timeout_secs: Option<u64>,
 }
 
 impl Default for FrontendConfig {
@@ -340,6 +354,9 @@ impl Default for FrontendConfig {
         Self {
             enabled: true,
             port: 8080,
+            session_affinity_acknowledged: false,
+            snowflake_session_max_age_secs: None,
+            snowflake_session_idle_timeout_secs: None,
         }
     }
 }
@@ -678,6 +695,10 @@ pub enum RouterConfig {
         clickhouse_http: Option<String>,
         #[serde(default)]
         flight_sql: Option<String>,
+        #[serde(default)]
+        snowflake_http: Option<String>,
+        #[serde(default)]
+        snowflake_sql_api: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Header {

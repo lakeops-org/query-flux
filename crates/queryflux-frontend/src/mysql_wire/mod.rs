@@ -169,10 +169,10 @@ async fn handle_connection(
         "MySQL wire: client authenticated"
     );
 
-    let mut session = SessionContext::MySqlWire {
+    let mut session = SessionContext {
         user: if user.is_empty() { None } else { Some(user) },
-        schema,
-        session_vars: HashMap::new(),
+        database: schema,
+        extra: HashMap::new(),
         tags: QueryTags::new(),
     };
 
@@ -200,20 +200,7 @@ async fn handle_connection(
                 let db = String::from_utf8_lossy(body)
                     .trim_end_matches('\0')
                     .to_string();
-                if let SessionContext::MySqlWire {
-                    user,
-                    session_vars,
-                    tags,
-                    ..
-                } = &session
-                {
-                    session = SessionContext::MySqlWire {
-                        schema: if db.is_empty() { None } else { Some(db) },
-                        user: user.clone(),
-                        session_vars: session_vars.clone(),
-                        tags: tags.clone(),
-                    };
-                }
+                session.database = if db.is_empty() { None } else { Some(db) };
                 write_packet(&mut writer, seq.wrapping_add(1), &build_ok(0, 0)).await?;
             }
 
@@ -264,35 +251,26 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
 
     // Fast-path: SET query_tags / SET SESSION query_tags — update session tags and ACK.
     if let Some(new_tags) = try_parse_set_query_tags(logical) {
-        if let SessionContext::MySqlWire { tags, .. } = session {
-            *tags = new_tags;
-        }
+        session.tags = new_tags;
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
         return Ok(());
     }
 
     // Fast-path: all other SET statements — acknowledge without dispatching.
+    // Capture simple single-assignment forms into session.extra so downstream
+    // routers and Python scripts can read them (key convention: lowercase var name).
     if sql_lower.starts_with("set ") || sql_lower.starts_with("set\t") {
+        if let Some((key, val)) = try_parse_set_kv(logical) {
+            session.extra.insert(key, val);
+        }
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
         return Ok(());
     }
 
     // Fast-path: USE db sent as COM_QUERY text (mysql CLI does this).
-    if let Some(db) = try_parse_use(&sql_lower) {
-        if let SessionContext::MySqlWire {
-            user,
-            session_vars,
-            tags,
-            ..
-        } = session
-        {
-            *session = SessionContext::MySqlWire {
-                schema: if db.is_empty() { None } else { Some(db) },
-                user: user.clone(),
-                session_vars: session_vars.clone(),
-                tags: tags.clone(),
-            };
-        }
+    // Parse from `logical` (original case) so `USE Sales` stores `Sales`, not `sales`.
+    if let Some(db) = try_parse_use(logical) {
+        session.database = if db.is_empty() { None } else { Some(db) };
         write_packet(writer, start_seq, &build_ok(0, 0)).await?;
         return Ok(());
     }
@@ -378,7 +356,14 @@ async fn handle_com_query<W: AsyncWriteExt + Unpin>(
 
     let exec_task = tokio::spawn(async move {
         execute_to_sink(
-            &state2, sql2, session2, protocol, group, &mut sink, &auth_ctx,
+            &state2,
+            sql2,
+            vec![],
+            session2,
+            protocol,
+            group,
+            &mut sink,
+            &auth_ctx,
         )
         .await
         // `sink` drops here — closes tx — rx.recv() will return None after last packet
@@ -999,15 +984,16 @@ impl StripPrefixCi for str {
     }
 }
 
-/// Parse `USE db` / `USE \`db\`` sent as COM_QUERY text. Returns the database name.
-fn try_parse_use(sql_lower: &str) -> Option<String> {
-    let s = sql_lower.trim().trim_end_matches(';');
-    let rest = if s == "use" {
+/// Parse `USE db` / `USE \`db\`` sent as COM_QUERY text. Returns the database name
+/// in the original case as sent by the client.
+fn try_parse_use(sql: &str) -> Option<String> {
+    let s = sql.trim().trim_end_matches(';');
+    let s_lower = s.to_lowercase();
+    // Detect the "USE" keyword case-insensitively, then extract db from the original string.
+    let rest = if s_lower == "use" {
         ""
-    } else if let Some(r) = s.strip_prefix("use ") {
-        r
-    } else if let Some(r) = s.strip_prefix("use\t") {
-        r
+    } else if s_lower.starts_with("use ") || s_lower.starts_with("use\t") {
+        &s[4..]
     } else {
         return None;
     };
@@ -1016,6 +1002,72 @@ fn try_parse_use(sql_lower: &str) -> Option<String> {
         return Some(String::new());
     }
     Some(rest.trim_matches('`').to_string())
+}
+
+/// Parse a simple `SET [SESSION] [@@[session.]]var = value` statement into a
+/// `(key, value)` pair suitable for storing in `SessionContext::extra`.
+///
+/// Returns `None` for multi-assignment forms (containing `,` before `=`),
+/// unparseable input, or empty keys — those are still ACK'd but not stored.
+/// The key is lowercased; `@@session.` / `@@` / `@` prefixes are stripped.
+fn try_parse_set_kv(sql: &str) -> Option<(String, String)> {
+    let s = sql.trim().trim_end_matches(';');
+    let s_lower = s.to_lowercase();
+    let rest = if s_lower.starts_with("set session ") || s_lower.starts_with("set session\t") {
+        &s[12..]
+    } else if s_lower.starts_with("set ") || s_lower.starts_with("set\t") {
+        &s[4..]
+    } else {
+        return None;
+    };
+    let rest = rest.trim();
+    // Strip @@ prefix and optional `session.` qualifier, then any remaining @ (user vars).
+    let rest = rest.trim_start_matches("@@");
+    let rest = if rest.to_lowercase().starts_with("session.") {
+        &rest[8..]
+    } else {
+        rest
+    };
+    let rest = rest.trim_start_matches('@');
+    // Reject multi-assignment: any unquoted comma in the assignment text.
+    // Session variable values virtually never contain bare commas, so a simple
+    // scan suffices without full quote-aware parsing.
+    let eq_pos = rest.find('=')?;
+    {
+        let mut in_q = false;
+        let mut q_ch = '\0';
+        for ch in rest.chars() {
+            if in_q {
+                if ch == q_ch {
+                    in_q = false;
+                }
+            } else {
+                match ch {
+                    '\'' | '"' => {
+                        in_q = true;
+                        q_ch = ch;
+                    }
+                    ',' => return None,
+                    _ => {}
+                }
+            }
+        }
+    }
+    let key = rest[..eq_pos].trim().to_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    let raw_val = rest[eq_pos + 1..].trim();
+    // Strip uniform surrounding single or double quotes.
+    let val = if raw_val.len() >= 2
+        && ((raw_val.starts_with('\'') && raw_val.ends_with('\''))
+            || (raw_val.starts_with('"') && raw_val.ends_with('"')))
+    {
+        raw_val[1..raw_val.len() - 1].to_string()
+    } else {
+        raw_val.to_string()
+    };
+    Some((key, val))
 }
 
 /// Detect `SELECT DATABASE()` (with optional whitespace variations).
@@ -1462,5 +1514,73 @@ mod tests {
         let name_bytes = b"my_column";
         let found = pkt.windows(name_bytes.len()).any(|w| w == name_bytes);
         assert!(found, "column name bytes should appear in packet");
+    }
+
+    // ── try_parse_set_kv ──────────────────────────────────────────────────────
+
+    #[test]
+    fn set_bare_variable() {
+        assert_eq!(
+            try_parse_set_kv("SET time_zone = '+00:00'"),
+            Some(("time_zone".to_string(), "+00:00".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_session_prefix_stripped() {
+        assert_eq!(
+            try_parse_set_kv("SET SESSION time_zone = 'UTC'"),
+            Some(("time_zone".to_string(), "UTC".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_double_at_prefix_stripped() {
+        assert_eq!(
+            try_parse_set_kv("SET @@time_zone = 'UTC'"),
+            Some(("time_zone".to_string(), "UTC".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_double_at_session_dot_prefix_stripped() {
+        assert_eq!(
+            try_parse_set_kv("SET @@session.time_zone = 'UTC'"),
+            Some(("time_zone".to_string(), "UTC".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_unquoted_value() {
+        assert_eq!(
+            try_parse_set_kv("SET autocommit = 1"),
+            Some(("autocommit".to_string(), "1".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_key_is_lowercased() {
+        assert_eq!(
+            try_parse_set_kv("SET TimeZone = 'UTC'"),
+            Some(("timezone".to_string(), "UTC".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_trailing_semicolon_handled() {
+        assert_eq!(
+            try_parse_set_kv("SET autocommit = 0;"),
+            Some(("autocommit".to_string(), "0".to_string()))
+        );
+    }
+
+    #[test]
+    fn set_multi_assignment_returns_none() {
+        assert_eq!(try_parse_set_kv("SET a = 1, b = 2"), None);
+    }
+
+    #[test]
+    fn non_set_statement_returns_none() {
+        assert_eq!(try_parse_set_kv("SELECT 1"), None);
     }
 }

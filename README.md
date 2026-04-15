@@ -22,6 +22,11 @@
   <a href="https://github.com/lakeops-org/queryflux/issues"><img src="https://img.shields.io/github/issues/lakeops-org/queryflux?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;label=issues" alt="Open issues" /></a>
   <a href="https://github.com/lakeops-org/queryflux/stargazers"><img src="https://img.shields.io/github/stars/lakeops-org/queryflux?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;label=stars" alt="GitHub stars" /></a>
 </p>
+<p align="center">
+  <a href="https://join.slack.com/t/queryfluxworkspace/shared_invite/zt-3v7qedxj9-o8ElCLGK0UXT8xBU0_bD8w">Slack community</a>
+  &nbsp;·&nbsp;
+  <a href="https://queryflux.dev/">Documentation</a>
+</p>
 
 # <p align="center"><big>Universal SQL multi-engine query router and proxy in Rust</big></p>
 

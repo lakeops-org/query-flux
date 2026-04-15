@@ -24,7 +24,7 @@ Every backend cluster has **two distinct credential relationships**, both config
 
 `queryAuth` has exactly **three explicit types**: `serviceAccount | impersonate | tokenExchange`
 
-There is no `passthrough` type. For same-engine routing (Trino HTTP → Trino backend), the Trino adapter already forwards all `SessionContext::TrinoHttp { headers }` verbatim — including the client's `Authorization` header — without any special config. This implicit client header passthrough is the default today.
+There is no `passthrough` type. For same-engine routing (Trino HTTP → Trino backend), the Trino adapter already forwards all headers stored in `SessionContext.extra` verbatim — including the client's `Authorization` header — without any special config. This implicit client header passthrough is the default today.
 
 Health checks always use Type 1 (`auth`) directly, never `queryAuth`. This ensures they work even when a user's token is expired or missing.
 
@@ -488,7 +488,7 @@ All modes configured under `clusters[].queryAuth` (per-cluster, not per-group).
 
 ### Implicit header forwarding (Trino HTTP → Trino, no config needed)
 
-The Trino HTTP adapter forwards `SessionContext::TrinoHttp { headers }` verbatim to the backend — including `Authorization` and `X-Trino-User`. No separate `queryAuth` entry is required for this path; the default `serviceAccount` fallback does not suppress these headers in the Trino adapter because the Trino adapter applies session headers after cluster auth.
+The Trino HTTP adapter forwards all headers stored in `SessionContext.extra` to the backend — including `Authorization` and `X-Trino-User`. No separate `queryAuth` entry is required for this path; the default `serviceAccount` fallback does not suppress these headers in the Trino adapter because the Trino adapter applies session headers after cluster auth.
 
 However: when `queryAuth: impersonate` is set on a Trino cluster, the adapter **must suppress the client's `Authorization` header** and use only Type 1 credentials for authentication. The `X-Trino-User` injection happens after the service account auth is applied. Failing to suppress the client `Authorization` would cause the backend to see conflicting auth credentials.
 
