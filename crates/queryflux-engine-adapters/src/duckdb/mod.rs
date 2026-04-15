@@ -396,10 +396,10 @@ fn query_param_to_duckdb(p: &QueryParam) -> duckdb::types::Value {
         QueryParam::Numeric(s) => {
             if let Ok(n) = s.parse::<i64>() {
                 Value::BigInt(n)
+            } else if let Ok(f) = s.parse::<f64>() {
+                Value::Double(f)
             } else {
-                // Avoid f64 for non-integer numerics: parsing as f64 silently loses
-                // precision for large decimals (e.g. DECIMAL(38,18)). DuckDB accepts
-                // a text value and coerces it to the target column type without loss.
+                // Genuinely non-numeric string — pass as text and let DuckDB error.
                 Value::Text(s.clone())
             }
         }
