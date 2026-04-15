@@ -196,28 +196,25 @@ fn sf_arrow_schema(schema: &Schema) -> Schema {
 // ---------------------------------------------------------------------------
 
 /// Cast a column to Snowflake's expected Arrow wire type.
-fn to_sf_array(arr: &ArrayRef) -> ArrayRef {
+fn to_sf_array(arr: &ArrayRef) -> Result<ArrayRef, arrow::error::ArrowError> {
     match arr.data_type() {
-        DataType::Timestamp(unit, _tz) => timestamp_to_sf_struct(arr, unit),
+        DataType::Timestamp(unit, _tz) => Ok(timestamp_to_sf_struct(arr, unit)),
         DataType::Time64(unit) => {
-            let ns = match unit {
-                TimeUnit::Nanosecond => {
-                    arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone())
-                }
+            let ns: ArrayRef = match unit {
+                TimeUnit::Nanosecond => arrow::compute::cast(arr, &DataType::Int64)?,
                 TimeUnit::Microsecond => {
-                    let cast =
-                        arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone());
+                    let cast = arrow::compute::cast(arr, &DataType::Int64)?;
                     // µs → ns: multiply by 1000
-                    let ns_arr: Int64Array = cast
-                        .as_any()
-                        .downcast_ref::<Int64Array>()
-                        .map(|a| Int64Array::from_iter(a.iter().map(|v| v.map(|x| x * 1000))))
-                        .unwrap_or_else(|| Int64Array::from(vec![0i64; arr.len()]));
-                    Arc::new(ns_arr)
+                    let a = cast.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                        arrow::error::ArrowError::CastError(
+                            "Time64 µs cast produced non-Int64 array".to_string(),
+                        )
+                    })?;
+                    Arc::new(Int64Array::from_iter(a.iter().map(|v| v.map(|x| x * 1000))))
                 }
-                _ => arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone()),
+                _ => arrow::compute::cast(arr, &DataType::Int64)?,
             };
-            ns
+            Ok(ns)
         }
         DataType::Time32(unit) => {
             // Scale to nanoseconds: Time32(Second) × 1e9, Time32(Millisecond) × 1e6.
@@ -226,26 +223,35 @@ fn to_sf_array(arr: &ArrayRef) -> ArrayRef {
                 TimeUnit::Millisecond => 1_000_000,
                 _ => 1, // spec only defines Second and Millisecond for Time32
             };
-            let i64_arr =
-                arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone());
+            let i64_arr = arrow::compute::cast(arr, &DataType::Int64)?;
             if scale == 1 {
-                return i64_arr;
+                return Ok(i64_arr);
             }
-            let scaled = i64_arr
+            let a = i64_arr
                 .as_any()
                 .downcast_ref::<Int64Array>()
-                .map(|a| {
-                    Arc::new(Int64Array::from_iter(
-                        a.iter().map(|v| v.map(|x| x * scale)),
-                    )) as ArrayRef
-                })
-                .unwrap_or(i64_arr);
-            scaled
+                .ok_or_else(|| {
+                    arrow::error::ArrowError::CastError(
+                        "Time32 cast produced non-Int64 array".to_string(),
+                    )
+                })?;
+            Ok(Arc::new(Int64Array::from_iter(
+                a.iter().map(|v| v.map(|x| x * scale)),
+            )))
         }
         DataType::UInt64 => {
-            arrow::compute::cast(arr, &DataType::Int64).unwrap_or_else(|_| arr.clone())
+            // Use unsafe cast (safe: false) so values > i64::MAX produce an ArrowError
+            // rather than silently wrapping. The caller propagates this to an HTTP 500.
+            Ok(arrow::compute::cast_with_options(
+                arr,
+                &DataType::Int64,
+                &arrow::compute::CastOptions {
+                    safe: false,
+                    ..Default::default()
+                },
+            )?)
         }
-        _ => arr.clone(),
+        _ => Ok(arr.clone()),
     }
 }
 
@@ -343,7 +349,11 @@ pub fn batches_to_arrow_base64(
     let sf_batches: Vec<RecordBatch> = batches
         .iter()
         .map(|batch| {
-            let sf_columns: Vec<ArrayRef> = batch.columns().iter().map(to_sf_array).collect();
+            let sf_columns = batch
+                .columns()
+                .iter()
+                .map(to_sf_array)
+                .collect::<Result<Vec<_>, _>>()?;
             RecordBatch::try_new(sf_schema.clone(), sf_columns)
         })
         .collect::<Result<_, _>>()?;
