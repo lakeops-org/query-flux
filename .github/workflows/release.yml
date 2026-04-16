@@ -5,6 +5,10 @@ on:
     branches:
       - main
       - "rel-*"
+    paths-ignore:
+      - "website/**"
+      - "docs/**"
+      - "*.md"
   workflow_dispatch:
 
 env:
