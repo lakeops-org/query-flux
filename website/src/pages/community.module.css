@@ -1,12 +1,16 @@
-/* Community page — hero + two-column involvement cards (Slack + docs) */
+/* Community page */
 
 .page {
-  --community-card-radius: 14px;
+  --community-card-radius: 16px;
+  --slack-purple: #4a154b;
+  --card-transition: transform 0.22s cubic-bezier(0.34, 1.3, 0.64, 1), box-shadow 0.22s ease, border-color 0.22s ease;
 }
+
+/* ─── Hero ─────────────────────────────────────────────────────────── */
 
 .hero {
   position: relative;
-  padding: 3rem 0 2.5rem;
+  padding: 4.5rem 0 3.75rem;
   overflow: hidden;
   border-bottom: 1px solid rgba(148, 163, 184, 0.2);
 }
@@ -16,23 +20,22 @@
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(to bottom, rgba(237, 233, 254, 0.45) 0%, rgba(255, 255, 255, 0.4) 45%, transparent 100%),
-    radial-gradient(ellipse 70% 55% at 50% -10%, rgba(167, 139, 250, 0.22) 0%, transparent 55%),
-    radial-gradient(ellipse 50% 40% at 90% 20%, rgba(192, 132, 252, 0.12) 0%, transparent 50%),
-    radial-gradient(ellipse 45% 35% at 10% 30%, rgba(124, 58, 237, 0.08) 0%, transparent 50%);
+    linear-gradient(to bottom, rgba(237, 233, 254, 0.6) 0%, rgba(255, 255, 255, 0.45) 45%, transparent 100%),
+    radial-gradient(ellipse 75% 60% at 50% -10%, rgba(167, 139, 250, 0.3) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 45% at 92% 18%, rgba(234, 88, 12, 0.12) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 42% at 8% 28%, rgba(124, 58, 237, 0.1) 0%, transparent 50%);
 }
 
 html[data-theme='dark'] .hero {
   border-bottom-color: rgba(255, 255, 255, 0.06);
-  color: #e7e7e7;
 }
 
 html[data-theme='dark'] .heroGlow {
   background:
-    linear-gradient(to bottom, rgba(88, 28, 135, 0.2) 0%, rgba(0, 0, 0, 0.92) 55%, #000000 100%),
-    radial-gradient(ellipse 68% 52% at 50% 0%, rgba(124, 58, 237, 0.22) 0%, transparent 58%),
-    radial-gradient(ellipse 48% 38% at 82% 12%, rgba(234, 88, 12, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse 40% 32% at 18% 28%, rgba(167, 139, 250, 0.06) 0%, transparent 50%);
+    linear-gradient(to bottom, rgba(88, 28, 135, 0.25) 0%, rgba(0, 0, 0, 0.94) 55%, #000 100%),
+    radial-gradient(ellipse 72% 58% at 50% 0%, rgba(124, 58, 237, 0.28) 0%, transparent 58%),
+    radial-gradient(ellipse 52% 42% at 85% 12%, rgba(234, 88, 12, 0.1) 0%, transparent 50%),
+    radial-gradient(ellipse 44% 36% at 15% 28%, rgba(167, 139, 250, 0.09) 0%, transparent 50%);
 }
 
 .heroInner {
@@ -43,18 +46,29 @@ html[data-theme='dark'] .heroGlow {
 }
 
 .title {
-  font-size: clamp(2rem, 4vw, 2.65rem);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-  margin: 0 0 0.65rem;
+  font-size: clamp(2.4rem, 5vw, 3.25rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  margin: 0 0 0.8rem;
+  background: linear-gradient(135deg, #0f172a 0%, #6d28d9 52%, #ea580c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+html[data-theme='dark'] .title {
+  background: linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 52%, #fb923c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .lead {
-  font-size: 1.15rem;
-  line-height: 1.65;
+  font-size: 1.18rem;
+  line-height: 1.7;
   color: #475569;
-  margin: 0 auto 1.5rem;
+  margin: 0 auto 2rem;
   max-width: var(--qf-leadin-max);
 }
 
@@ -70,56 +84,127 @@ html[data-theme='dark'] .lead {
   gap: 0.85rem;
 }
 
+/* Slack button */
 .slackButton {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  background: #4a154b;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--slack-purple);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   color: #fff !important;
-  box-shadow: 0 4px 18px rgba(74, 21, 75, 0.35);
+  box-shadow: 0 4px 20px rgba(74, 21, 75, 0.4);
+  transition: background 0.18s, box-shadow 0.18s, transform 0.18s;
 }
 
 .slackButton:hover {
   background: #5c1a5e;
   color: #fff !important;
-  box-shadow: 0 6px 24px rgba(74, 21, 75, 0.45);
+  box-shadow: 0 6px 28px rgba(74, 21, 75, 0.52);
+  transform: translateY(-1px);
 }
 
 .slackIcon {
   flex-shrink: 0;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.2rem;
+  height: 1.2rem;
 }
 
+/*
+ * GitHub secondary actions — Infima `button--outline` reads as a flat black tile on
+ * dark hero/surface; use a frosted neutral + violet edge so it matches the page.
+ */
+.githubIcon {
+  flex-shrink: 0;
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.githubButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgba(71, 85, 105, 0.28) !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  color: #1e293b !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.githubButton:hover {
+  border-color: rgba(124, 58, 237, 0.45) !important;
+  background: rgba(124, 58, 237, 0.07) !important;
+  color: #4c1d95 !important;
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.12);
+  transform: translateY(-1px);
+}
+
+html[data-theme='dark'] .githubButton {
+  border: 1px solid rgba(148, 163, 184, 0.28) !important;
+  background: rgba(255, 255, 255, 0.07) !important;
+  color: #e2e8f0 !important;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='dark'] .githubButton:hover {
+  border-color: rgba(196, 181, 253, 0.45) !important;
+  background: rgba(167, 139, 250, 0.12) !important;
+  color: #f8fafc !important;
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.2);
+}
+
+/* ─── Main ──────────────────────────────────────────────────────────── */
+
 .main {
-  padding: 2.75rem 0 3.5rem;
+  padding: 3.75rem 0 4.75rem;
   background: var(--ifm-background-color);
 }
 
 .sectionTitle {
   text-align: center;
-  font-size: clamp(1.35rem, 2.5vw, 1.6rem);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0 0 0.5rem;
+  font-size: clamp(1.5rem, 3vw, 1.9rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 0 0 0.75rem;
+  position: relative;
+  padding-bottom: 0.85rem;
+}
+
+.sectionTitle::after {
+  content: '';
+  display: block;
+  width: 3rem;
+  height: 3px;
+  margin: 0.65rem auto 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #7c3aed 0%, #c026d3 50%, #ea580c 100%);
+  opacity: 0.85;
 }
 
 .sectionSub {
   text-align: center;
   color: #64748b;
   max-width: var(--qf-section-sub-max);
-  margin: 0 auto 2rem;
-  line-height: 1.6;
+  margin: 0 auto 2.75rem;
+  line-height: 1.65;
+  font-size: 1.02rem;
 }
 
 html[data-theme='dark'] .sectionSub {
   color: #94a3b8;
 }
 
+/* ─── Cards ─────────────────────────────────────────────────────────── */
+
 .cardGrid {
   display: grid;
-  gap: 1.25rem;
+  gap: 1.75rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   max-width: var(--qf-page-max);
   margin: 0 auto;
@@ -133,53 +218,122 @@ html[data-theme='dark'] .sectionSub {
 
 .card {
   position: relative;
-  padding: 1.5rem 1.5rem 1.4rem;
+  padding: 2.1rem 2rem 1.85rem;
   border-radius: var(--community-card-radius);
-  border: 1px solid rgba(124, 58, 237, 0.18);
+  border: 1px solid rgba(124, 58, 237, 0.14);
   background: var(--ifm-background-surface-color);
-  box-shadow: 0 2px 16px rgba(15, 23, 42, 0.06);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 4px 18px rgba(15, 23, 42, 0.06);
+  transition: var(--card-transition);
+  overflow: hidden;
+}
+
+.card:hover {
+  transform: translateY(-5px);
+  border-color: rgba(124, 58, 237, 0.32);
+  box-shadow:
+    0 4px 8px rgba(15, 23, 42, 0.06),
+    0 16px 40px rgba(124, 58, 237, 0.15);
 }
 
 html[data-theme='dark'] .card {
-  border-color: rgba(167, 139, 250, 0.2);
-  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.35);
+  border-color: rgba(167, 139, 250, 0.16);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+html[data-theme='dark'] .card:hover {
+  border-color: rgba(167, 139, 250, 0.4);
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.25),
+    0 16px 44px rgba(124, 58, 237, 0.24);
 }
 
 .cardAccent {
   position: absolute;
   top: 0;
-  left: 1.5rem;
-  right: 1.5rem;
+  left: 0;
+  right: 0;
   height: 3px;
-  border-radius: 0 0 4px 4px;
-  background: linear-gradient(90deg, #7c3aed, #ea580c);
-  opacity: 0.85;
+  border-radius: var(--community-card-radius) var(--community-card-radius) 0 0;
+  background: linear-gradient(90deg, #7c3aed 0%, #c026d3 50%, #ea580c 100%);
+  opacity: 0.7;
+  transition: opacity 0.22s ease;
 }
 
+.card:hover .cardAccent {
+  opacity: 1;
+}
+
+/* Icon badge */
 .cardIcon {
-  width: 2.5rem;
-  height: 2.5rem;
-  margin-bottom: 0.85rem;
-  color: var(--ifm-color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 12px;
+  margin-bottom: 1.1rem;
+  background: rgba(124, 58, 237, 0.09);
+  color: #7c3aed;
+  transition: transform 0.22s cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+
+.card:hover .cardIcon {
+  transform: scale(1.1);
 }
 
 .cardIcon svg {
-  width: 100%;
-  height: 100%;
+  width: 1.45rem;
+  height: 1.45rem;
+  flex-shrink: 0;
+}
+
+/* Per-channel icon tints */
+.cardIconSlack {
+  background: rgba(74, 21, 75, 0.1);
+  color: var(--slack-purple);
+}
+
+html[data-theme='dark'] .cardIconSlack {
+  background: rgba(74, 21, 75, 0.2);
+  color: #d8b4fe;
+}
+
+.cardIconDiscussions {
+  background: rgba(37, 99, 235, 0.09);
+  color: #2563eb;
+}
+
+html[data-theme='dark'] .cardIconDiscussions {
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+}
+
+.cardIconContribute {
+  background: rgba(234, 88, 12, 0.09);
+  color: #ea580c;
+}
+
+html[data-theme='dark'] .cardIconContribute {
+  background: rgba(234, 88, 12, 0.18);
+  color: #fb923c;
 }
 
 .cardTitle {
   font-size: 1.2rem;
   font-weight: 700;
-  margin: 0 0 0.65rem;
+  margin: 0 0 0.6rem;
   letter-spacing: -0.02em;
 }
 
 .cardText {
   margin: 0 0 1rem;
-  line-height: 1.6;
+  line-height: 1.65;
   color: var(--ifm-color-emphasis-700);
-  font-size: 0.98rem;
+  font-size: 0.97rem;
 }
 
 html[data-theme='dark'] .cardText {
@@ -187,19 +341,40 @@ html[data-theme='dark'] .cardText {
 }
 
 .bullets {
-  margin: 0 0 1.15rem;
-  padding-left: 1.15rem;
-  line-height: 1.55;
-  color: var(--ifm-color-emphasis-700);
-  font-size: 0.95rem;
-}
-
-html[data-theme='dark'] .bullets {
-  color: #94a3b8;
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
 .bullets li {
-  margin-bottom: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.93rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.bullets li::before {
+  content: '';
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7c3aed 0%, #ea580c 100%);
+  opacity: 0.75;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.12);
+}
+
+html[data-theme='dark'] .bullets li::before {
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.15);
+}
+
+html[data-theme='dark'] .bullets li {
+  color: #94a3b8;
 }
 
 .cardActions {
@@ -209,15 +384,47 @@ html[data-theme='dark'] .bullets {
   align-items: center;
 }
 
+/* ─── Wide contribute card ──────────────────────────────────────────── */
+
 .wideCard {
-  margin-top: 1.25rem;
+  margin-top: 1.5rem;
   max-width: var(--qf-page-max);
   margin-left: auto;
   margin-right: auto;
+  background: linear-gradient(
+    135deg,
+    rgba(124, 58, 237, 0.03) 0%,
+    var(--ifm-background-surface-color) 45%,
+    rgba(234, 88, 12, 0.03) 100%
+  );
 }
+
+html[data-theme='dark'] .wideCard {
+  background: linear-gradient(
+    135deg,
+    rgba(124, 58, 237, 0.07) 0%,
+    var(--ifm-background-surface-color) 45%,
+    rgba(234, 88, 12, 0.06) 100%
+  );
+}
+
+/* ─── Docs footnote ─────────────────────────────────────────────────── */
+
+.docsFootnote {
+  text-align: center;
+  margin-top: 2.5rem;
+  font-size: 0.93rem;
+  color: #64748b;
+}
+
+html[data-theme='dark'] .docsFootnote {
+  color: #94a3b8;
+}
+
+/* ─── Responsive ────────────────────────────────────────────────────── */
 
 @media screen and (max-width: 996px) {
   .hero {
-    padding: 2.25rem 0 2rem;
+    padding: 2.75rem 0 2.5rem;
   }
 }
