@@ -4,7 +4,7 @@
     "color": "EEEEEE"
   },
   "CHECKS": {
-    "regexp": "^(feat|fix|docs|chore)!?(\\(.*\\))?!?:.*"
+    "regexp": "^(feat|fix|docs|chore|ui)!?(\\(.*\\))?!?:.*"
   },
   "MESSAGES": {
     "success": "PR title is valid",
