@@ -15,8 +15,10 @@ A **frontend** is the entry point for client traffic into QueryFlux. Each fronte
 | [PostgreSQL wire](postgres-wire.md) | `postgresWire` | 5432 | PostgreSQL v3 wire | Postgres | **Done** |
 | [MySQL wire](mysql-wire.md) | `mysqlWire` | 3306 | MySQL wire | MySQL | **Done** |
 | [Arrow Flight SQL](flight-sql.md) | `flightSql` | 50051 | gRPC (Arrow Flight) | Generic | **Done** |
-| [Snowflake](snowflake.md) | `snowflakeHttp` | 8443 | Snowflake HTTP wire + SQL API v2 | Snowflake | **Done** |
+| [Snowflake](snowflake.md) | `snowflakeHttp` | 8443* | Snowflake HTTP wire + SQL API v2 | Snowflake | **Done** |
 | ClickHouse HTTP | `clickhouseHttp` | 8123 | HTTP | ClickHouse | Planned |
+
+\*Snowflake is optional: you must set `snowflakeHttp.port` in YAML (no implicit default). `8443` is typical; some repo examples use `8445`. Wire and SQL API v2 share this listener; routing uses `snowflakeHttp` vs `snowflakeSqlApi` — see [Snowflake](snowflake.md).
 
 ## Shared architecture
 
@@ -51,7 +53,7 @@ The dispatch layer offers three execution paths:
 |------|---------|----------|
 | **`dispatch_query`** | Trino HTTP (async-capable groups) | Submit to engine, persist handle, return polling URL. Client follows `nextUri` to stream pages. Falls back to `execute_to_sink` when a sync adapter is selected from a mixed-engine group. |
 | **`execute_to_sink` — native** | MySQL wire ↔ `MysqlWire` backend; Postgres wire ↔ `PostgresWire` backend | Wait for cluster capacity, call `execute_native` on the adapter, stream `NativeResultChunk`s directly to the sink. **Zero Arrow allocation.** |
-| **`execute_to_sink` — Arrow** | All other frontend/backend combinations | Wait for cluster capacity, call `execute_as_arrow`, stream `RecordBatch`es through a `ResultSink` that re-encodes to the native protocol response. |
+| **`execute_to_sink` — Arrow** | All other frontend/backend combinations (including Snowflake HTTP wire and SQL API v2) | Wait for cluster capacity, call `execute_as_arrow`, stream `RecordBatch`es through a `ResultSink` that re-encodes to the native protocol response. |
 
 #### Protocol matching (`ConnectionFormat`)
 
@@ -81,7 +83,7 @@ Each frontend builds a `SessionContext` that travels with the query through rout
 | `tags` | `QueryTags` | Query tags for routing and metrics. |
 | `extra` | `HashMap<String, String>` | Protocol-specific key-value bag (headers, session params, etc.). |
 
-Each frontend is responsible for extracting `user` and `database` from its protocol's native fields and placing remaining data into `extra`. Key conventions for `extra`: Trino/ClickHouse HTTP store lowercased header names; Postgres wire stores startup parameters; MySQL wire stores session variables.
+Each frontend is responsible for extracting `user` and `database` from its protocol's native fields and placing remaining data into `extra`. Key conventions for `extra`: Trino/ClickHouse HTTP store lowercased header names; Postgres wire stores startup parameters; MySQL wire stores session variables; Snowflake HTTP / SQL API v2 store session and account-related fields from login or request metadata.
 
 ### Authentication
 
@@ -98,6 +100,8 @@ routers:
     postgresWire: trino-default
     mysqlWire: starrocks-group
     flightSql: flight-analytics
+    snowflakeHttp: trino-default
+    snowflakeSqlApi: trino-default
 ```
 
 ### SQL dialect and translation
@@ -123,6 +127,12 @@ queryflux:
     flightSql:
       enabled: true
       port: 50051
+    snowflakeHttp:
+      enabled: true
+      port: 8443
+      sessionAffinityAcknowledged: false
 ```
 
-Omitting a frontend block or setting `enabled: false` disables that listener entirely.
+Omitting `postgresWire`, `mysqlWire`, `flightSql`, or `snowflakeHttp` disables that listener. For any frontend block, `enabled: false` turns the listener off while keeping other settings. When `trinoHttp` is omitted from YAML, serde defaults apply (`enabled: true`, port `8080`).
+
+See **[Snowflake](snowflake.md)** for session affinity, TTL fields, and SQL API v2 behavior.

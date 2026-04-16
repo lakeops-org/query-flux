@@ -34,10 +34,10 @@ QueryFlux sits between SQL clients and multiple backend query engines, providing
 
 ## Overview
 
-QueryFlux lets you connect any SQL client using standard protocols (Trino HTTP, PostgreSQL wire, MySQL wire) and route queries to the right backend engine — Trino, DuckDB, StarRocks, Athena, or ClickHouse — based on flexible routing rules. SQL dialects are translated automatically when needed via [sqlglot](https://github.com/tobymao/sqlglot).
+QueryFlux lets you connect any SQL client using standard protocols (Trino HTTP, PostgreSQL wire, MySQL wire, Snowflake HTTP wire + SQL API v2, and Arrow Flight SQL) and route queries to the right backend engine — Trino, DuckDB, StarRocks, Athena, or ClickHouse — based on flexible routing rules. SQL dialects are translated automatically when needed via [sqlglot](https://github.com/tobymao/sqlglot).
 
 ```
-Client (Trino CLI / psql / mysql)
+Client (Trino CLI / psql / mysql / Snowflake connectors)
     ↓ native protocol
 QueryFlux
     ↓ routing + dialect translation
@@ -50,7 +50,25 @@ Trino / DuckDB / StarRocks / ClickHouse
 - Trino HTTP (port 8080)
 - PostgreSQL wire (port 5432)
 - MySQL wire (port 3306)
+- Snowflake HTTP wire + SQL REST API v2 on one listener (`snowflakeHttp` in YAML; pick a port, e.g. 8443)
 - Arrow Flight SQL (query execution)
+
+### Snowflake HTTP (wire + SQL API v2)
+
+The Snowflake **HTTP wire** (JDBC/ODBC/Python connector, SnowSQL) and **SQL API v2** share the **`snowflakeHttp`** listener; routing distinguishes `snowflakeHttp` vs `snowflakeSqlApi` for `protocolBased` routers. See [`config.example.yaml`](config.example.yaml) for a commented block (`sessionAffinityAcknowledged`, optional session TTL fields). Full reference: [Snowflake frontend](website/docs/architecture/frontends/snowflake.md).
+
+```yaml
+queryflux:
+  frontends:
+    snowflakeHttp:
+      enabled: true
+      port: 8443
+routers:
+  - type: protocolBased
+    trinoHttp: trino-default
+    snowflakeHttp: duckdb-local
+    snowflakeSqlApi: duckdb-local
+```
 
 **Backend Engines**
 - Trino — async HTTP polling
@@ -216,7 +234,7 @@ queryflux/
 │   ├── queryflux/                  # Main binary
 │   ├── queryflux-core/             # Shared types and traits
 │   ├── queryflux-config/           # Config loading
-│   ├── queryflux-frontend/         # Protocol frontends (Trino HTTP, PG wire, ...)
+│   ├── queryflux-frontend/         # Protocol frontends (Trino HTTP, PG/MySQL wire, Snowflake HTTP, …)
 │   ├── queryflux-engine-adapters/  # Backend engine adapters
 │   ├── queryflux-cluster-manager/  # Load balancing and queueing
 │   ├── queryflux-routing/          # Router implementations

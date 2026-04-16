@@ -49,6 +49,7 @@ const sidebars: SidebarsConfig = {
         'architecture/frontends/postgres-wire',
         'architecture/frontends/mysql-wire',
         'architecture/frontends/flight-sql',
+        'architecture/frontends/snowflake',
       ],
     },
     {
