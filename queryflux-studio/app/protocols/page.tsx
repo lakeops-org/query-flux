@@ -1,25 +1,9 @@
 import { getFrontendsStatus } from "@/lib/api";
 import type { ProtocolFrontendDto } from "@/lib/api-types";
-import {
-  AlertCircle,
-  Cylinder,
-  Globe2,
-  LayoutGrid,
-  Plug,
-  Plane,
-  Radio,
-  type LucideIcon,
-} from "lucide-react";
+import { ProtocolListenerIconTile } from "@/components/protocol-listener-icon";
+import { AlertCircle } from "lucide-react";
 
 export const revalidate = 10;
-
-const PROTOCOL_ICONS: Record<string, LucideIcon> = {
-  trino_http: Globe2,
-  mysql_wire: Plug,
-  postgres_wire: Cylinder,
-  clickhouse_http: LayoutGrid,
-  flight_sql: Plane,
-};
 
 export default async function ProtocolsPage() {
   let status: Awaited<ReturnType<typeof getFrontendsStatus>> | null = null;
@@ -77,7 +61,6 @@ export default async function ProtocolsPage() {
 }
 
 function ProtocolCard({ protocol }: { protocol: ProtocolFrontendDto }) {
-  const Icon = PROTOCOL_ICONS[protocol.id] ?? Radio;
   const on = protocol.enabled;
   return (
     <div
@@ -86,13 +69,7 @@ function ProtocolCard({ protocol }: { protocol: ProtocolFrontendDto }) {
       }`}
     >
       <div className="flex items-start gap-4">
-        <div
-          className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl ${
-            on ? "bg-indigo-100 text-indigo-600" : "bg-slate-100 text-slate-400"
-          }`}
-        >
-          <Icon className="h-6 w-6" strokeWidth={1.75} />
-        </div>
+        <ProtocolListenerIconTile protocolId={protocol.id} enabled={on} />
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-semibold text-slate-900">{protocol.label}</h2>
