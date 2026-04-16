@@ -6,7 +6,7 @@ const siteUrl = 'https://queryflux.dev';
 const siteCanonicalUrl = siteUrl;
 const socialPreviewTitle = 'QueryFlux — Multi-engine query routing proxy';
 const socialPreviewDescription =
-  'Universal SQL query proxy and router in Rust. One endpoint for Trino, PostgreSQL, MySQL, and Flight clients with routing, queueing, and observability.';
+  'Universal SQL query proxy and router in Rust. One endpoint for Trino, PostgreSQL, MySQL, Snowflake HTTP, Flight, and more — with routing, queueing, and observability.';
 
 const config: Config = {
   title: 'QueryFlux',
@@ -44,7 +44,7 @@ const config: Config = {
         '@type': 'SoftwareSourceCode',
         name: 'QueryFlux',
         description:
-          'Universal SQL query proxy and router in Rust. Front protocols include Trino HTTP, PostgreSQL wire, MySQL wire, and Arrow Flight; backends include Trino, DuckDB, StarRocks, and more with routing and sqlglot dialect translation.',
+          'Universal SQL query proxy and router in Rust. Front protocols include Trino HTTP, PostgreSQL wire, MySQL wire, Snowflake HTTP wire + SQL API v2, and Arrow Flight; backends include Trino, DuckDB, StarRocks, and more with routing and sqlglot dialect translation.',
         url: siteCanonicalUrl,
         codeRepository: 'https://github.com/lakeops-org/queryflux',
         license: 'https://www.apache.org/licenses/LICENSE-2.0',

@@ -48,7 +48,8 @@
         "architecture/frontends/trino-http",
         "architecture/frontends/postgres-wire",
         "architecture/frontends/mysql-wire",
-        "architecture/frontends/flight-sql"
+        "architecture/frontends/flight-sql",
+        "architecture/frontends/snowflake"
       ]
     },
     {

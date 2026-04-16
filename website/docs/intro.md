@@ -2,7 +2,7 @@
 sidebar_position: 1
 sidebar_label: Overview
 description:
-  QueryFlux documentation — universal SQL proxy for Trino, PostgreSQL, MySQL, and Flight;
+  QueryFlux documentation — universal SQL proxy for Trino, PostgreSQL, MySQL, Snowflake HTTP, and Flight;
   routing, dialect translation, and one place to run queries against many engines.
 keywords:
   - QueryFlux
@@ -12,7 +12,7 @@ keywords:
 
 # QueryFlux documentation
 
-QueryFlux is a **high-performance, protocol-aware SQL proxy** for analytical and operational engines. Clients connect with the drivers they already use (Trino HTTP, PostgreSQL wire, MySQL wire, Arrow Flight). QueryFlux routes each query to the right backend, translates SQL dialects when needed, and exposes a single observability surface — so you stop wiring **N clients × M engines** by hand.
+QueryFlux is a **high-performance, protocol-aware SQL proxy** for analytical and operational engines. Clients connect with the drivers they already use (Trino HTTP, PostgreSQL wire, MySQL wire, Snowflake HTTP wire and SQL API v2, Arrow Flight). QueryFlux routes each query to the right backend, translates SQL dialects when needed, and exposes a single observability surface — so you stop wiring **N clients × M engines** by hand.
 
 > **One endpoint.** Multiple engines. Native protocols.
 
@@ -57,9 +57,10 @@ QueryFlux listens on multiple frontends at once:
 | Trino HTTP | 8080 | Trino CLI, JDBC, Python |
 | PostgreSQL wire | 5432 | `psql`, Postgres drivers |
 | MySQL wire | 3306 | `mysql`, JDBC, BI tools |
+| Snowflake HTTP + SQL API v2 | configurable (e.g. 8443) | Snowflake JDBC/ODBC/Python, SnowSQL, REST v2 |
 | Arrow Flight SQL | gRPC | Flight-native clients |
 
-Details: **[Frontends](/docs/architecture/frontends/overview)**.
+Details: **[Frontends](/docs/architecture/frontends/overview)** and **[Snowflake frontend](/docs/architecture/frontends/snowflake)**.
 
 ### 2. Routing
 
@@ -72,7 +73,7 @@ Details: **[Routing and clusters](/docs/architecture/routing-and-clusters)**.
 QueryFlux picks a healthy cluster (round-robin, least-loaded, failover, weighted), optionally **rewrites SQL** for the target dialect, and runs the query. If the group is at capacity, queries **queue** at the proxy.
 
 ```
-Client (psql / Trino CLI / mysql / BI)
+Client (psql / Trino CLI / mysql / Snowflake / BI)
         │  native protocol
         ▼
 ┌──────────────────────────┐
