@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.2...queryflux-v0.1.3) (2026-04-16)
+
+
+### Bug Fixes
+
+* **deployment:** admin api auth ([#61](https://github.com/lakeops-org/queryflux/issues/61)) ([5bc377a](https://github.com/lakeops-org/queryflux/commit/5bc377ae0c5c76ac63c06f2c5b49dedbb585c762))
+
 ## [0.1.2](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.1...queryflux-v0.1.2) (2026-04-15)
 
 
