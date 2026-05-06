@@ -122,7 +122,7 @@ export function GroupFormDialog({
         if (cancelled) return;
         setGuardrailsFull(cfg);
         const groupGuards = targetName ? (cfg.groups[targetName] ?? []) : [];
-        setGuardRows(groupGuards.map(dtoToRow));
+        setGuardRows(groupGuards.map((dto) => dtoToRow(dto, guardScripts)));
       })
       .catch(() => {
         if (!cancelled) {
@@ -133,7 +133,7 @@ export function GroupFormDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, mode, initial?.name]);
+  }, [open, mode, initial?.name, guardScripts]);
 
   function addMember(name: string) {
     setMemberOrder((prev) => (prev.includes(name) ? prev : [...prev, name]));
