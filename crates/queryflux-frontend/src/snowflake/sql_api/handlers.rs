@@ -201,11 +201,22 @@ pub async fn submit_statement(
         Err(e) => return sql_api_error(StatusCode::UNAUTHORIZED, "390002", &e.to_string()),
     };
 
+    // Collect request headers into `extra` (lowercase keys) so that agent headers
+    // (x-agent-id, x-conversation-id, etc.) are resolved lazily in dispatch.
+    let extra: HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(k, v)| {
+            v.to_str()
+                .ok()
+                .map(|s| (k.as_str().to_lowercase(), s.to_string()))
+        })
+        .collect();
     let session_ctx = SessionContext {
         user: Some(auth_ctx.user.clone()),
         database: None,
         tags: QueryTags::default(),
-        extra: HashMap::new(),
+        extra,
+        agent_context: None,
     };
     let group = {
         let live = state.live.read().await;

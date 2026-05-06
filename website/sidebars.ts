@@ -24,6 +24,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Agentic AI',
+      collapsed: false,
+      items: [
+        'agentic/agent-context',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Architecture',
       collapsed: true,
       items: [
@@ -34,6 +42,7 @@ const sidebars: SidebarsConfig = {
         'architecture/routing-and-clusters',
         'architecture/query-tags',
         'architecture/query-params',
+        'architecture/guardrails',
         'architecture/observability',
         'architecture/adding-engine-support',
         'architecture/auth-authz-design',

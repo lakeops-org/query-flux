@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
-import { listUserScripts, renameGroupConfig, upsertGroupConfig } from "@/lib/api";
+import { getGuardrailsConfig, listUserScripts, putGuardrailsConfig, renameGroupConfig, upsertGroupConfig } from "@/lib/api";
 import type {
   ClusterGroupConfigRecord,
+  GuardrailsConfig,
   UpsertClusterGroupConfig,
   UserScriptRecord,
 } from "@/lib/api-types";
+import { dtoToRow, GuardList, rowToDto, type GuardRow } from "@/components/guard-list";
 import {
   buildStrategyPayload,
   ENGINE_AFFINITY_OPTIONS,
@@ -50,6 +52,9 @@ export function GroupFormDialog({
   const [translationScriptIds, setTranslationScriptIds] = useState<number[]>([]);
   const [scriptLibrary, setScriptLibrary] = useState<UserScriptRecord[]>([]);
   const [addScriptId, setAddScriptId] = useState<string>("");
+  const [guardRows, setGuardRows] = useState<GuardRow[]>([]);
+  const [guardrailsFull, setGuardrailsFull] = useState<GuardrailsConfig | null>(null);
+  const [guardScripts, setGuardScripts] = useState<UserScriptRecord[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +69,9 @@ export function GroupFormDialog({
     setWeightedJson("{}");
     setTranslationScriptIds([]);
     setAddScriptId("");
+    setGuardRows([]);
+    setGuardrailsFull(null);
+    setGuardScripts([]);
     setError(null);
   }, []);
 
@@ -94,16 +102,38 @@ export function GroupFormDialog({
     if (!open) return;
     let cancelled = false;
     listUserScripts("translation_fixup")
-      .then((rows) => {
-        if (!cancelled) setScriptLibrary(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setScriptLibrary([]);
-      });
+      .then((rows) => { if (!cancelled) setScriptLibrary(rows); })
+      .catch(() => { if (!cancelled) setScriptLibrary([]); });
+    listUserScripts("guard")
+      .then((rows) => { if (!cancelled) setGuardScripts(rows); })
+      .catch(() => { if (!cancelled) setGuardScripts([]); });
     return () => {
       cancelled = true;
     };
   }, [open]);
+
+  // Load current guardrails config so we can edit this group's guards inline.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const targetName = mode === "edit" ? (initial?.name ?? "") : "";
+    getGuardrailsConfig()
+      .then((cfg) => {
+        if (cancelled) return;
+        setGuardrailsFull(cfg);
+        const groupGuards = targetName ? (cfg.groups[targetName] ?? []) : [];
+        setGuardRows(groupGuards.map((dto) => dtoToRow(dto, guardScripts)));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGuardrailsFull(null);
+          setGuardRows([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode, initial?.name, guardScripts]);
 
   function addMember(name: string) {
     setMemberOrder((prev) => (prev.includes(name) ? prev : [...prev, name]));
@@ -212,6 +242,25 @@ export function GroupFormDialog({
         await renameGroupConfig(initial.name, { newName: nameTrim });
       }
       await upsertGroupConfig(pathName, body);
+
+      // Save guardrails for this group. Merge into the full config we loaded on open
+      // (or fetch fresh if we failed to load it earlier).
+      try {
+        const baseCfg = guardrailsFull ?? (await getGuardrailsConfig());
+        // When renaming, remove the old group key and add the new one.
+        const oldKey = mode === "edit" && initial ? initial.name : null;
+        const updatedGroups = { ...baseCfg.groups };
+        if (oldKey && oldKey !== pathName) delete updatedGroups[oldKey];
+        if (guardRows.length > 0) {
+          updatedGroups[pathName] = guardRows.map(rowToDto);
+        } else {
+          delete updatedGroups[pathName];
+        }
+        await putGuardrailsConfig({ global: baseCfg.global, groups: updatedGroups });
+      } catch {
+        // Guardrails save failure is non-fatal: group config is already saved.
+      }
+
       router.refresh();
       reset();
       onClose();
@@ -626,6 +675,28 @@ export function GroupFormDialog({
                 </p>
               </div>
             ) : null}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+            <div>
+              <p className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">
+                Guards (optional)
+              </p>
+              <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                Per-group guards appended after the global chain. They run in order; the first
+                deny blocks the query. Manage global guards on the{" "}
+                <a href="/guardrails" className="text-indigo-600 hover:underline">
+                  Guardrails
+                </a>{" "}
+                page.
+              </p>
+            </div>
+            <GuardList
+              rows={guardRows}
+              onChange={setGuardRows}
+              emptyText="No guards for this group."
+              guardScripts={guardScripts}
+            />
           </div>
 
           {error && (

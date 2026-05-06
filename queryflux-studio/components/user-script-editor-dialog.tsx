@@ -9,8 +9,15 @@ import CodeMirror from "@uiw/react-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 
-/** Persisted as `user_scripts.kind` — translation fixups only (routing uses the Routing page chain). */
 export const KIND_TRANSLATION_FIXUP = "translation_fixup";
+
+const KIND_META: Record<string, { label: string; template: string; hint: string }> = {
+  translation_fixup: {
+    label: "Translation script",
+    template: TRANSLATION_FIXUP_TEMPLATE,
+    hint: "Define def transform(ast, src, dst) -> None:",
+  },
+};
 
 export interface UserScriptEditorDialogProps {
   open: boolean;
@@ -18,6 +25,8 @@ export interface UserScriptEditorDialogProps {
   /** `null` = create; otherwise edit this row */
   initialEdit: UserScriptRecord | null;
   onSaved: () => void;
+  /** Defaults to translation_fixup */
+  kind?: string;
 }
 
 export function UserScriptEditorDialog({
@@ -25,7 +34,10 @@ export function UserScriptEditorDialog({
   onOpenChange,
   initialEdit,
   onSaved,
+  kind: kindProp = KIND_TRANSLATION_FIXUP,
 }: UserScriptEditorDialogProps) {
+  const effectiveKind = initialEdit?.kind ?? kindProp;
+  const meta = KIND_META[effectiveKind] ?? KIND_META[KIND_TRANSLATION_FIXUP];
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formName, setFormName] = useState("");
   const [formDescription, setFormDescription] = useState("");
@@ -45,7 +57,7 @@ export function UserScriptEditorDialog({
       setEditingId(null);
       setFormName("");
       setFormDescription("");
-      setFormBody(TRANSLATION_FIXUP_TEMPLATE);
+      setFormBody(meta.template);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when opening for a different script (id) or mode
   }, [open, initialEdit?.id]);
@@ -59,7 +71,7 @@ export function UserScriptEditorDialog({
     const body: UpsertUserScript = {
       name,
       description: formDescription.trim(),
-      kind: KIND_TRANSLATION_FIXUP,
+      kind: effectiveKind,
       body: formBody,
     };
     setSaving(true);
@@ -92,7 +104,7 @@ export function UserScriptEditorDialog({
       <div className="relative w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-slate-200">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
           <h2 className="text-base font-bold text-slate-900">
-            {editingId == null ? "New translation script" : "Edit translation script"}
+            {editingId == null ? `New ${meta.label.toLowerCase()}` : `Edit ${meta.label.toLowerCase()}`}
           </h2>
           <button
             type="button"
@@ -147,13 +159,12 @@ export function UserScriptEditorDialog({
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
               <p className="text-[10px] text-slate-400 flex-1 min-w-[12rem]">
-                Define <code>def transform(ast: Expression, src: str, dst: str) -&gt; None:</code>. Keep the
-                pre-filled imports — they are required at runtime.
+                {meta.hint}
               </p>
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => setFormBody(TRANSLATION_FIXUP_TEMPLATE)}
+                onClick={() => setFormBody(meta.template)}
                 className="text-[10px] font-semibold uppercase tracking-wide text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded-md hover:bg-indigo-50 shrink-0"
               >
                 Insert template

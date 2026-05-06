@@ -11,12 +11,13 @@ use queryflux_core::{
         ClusterGroupName, ClusterName, EngineType, FrontendProtocol, ProxyQueryId,
         QueryEngineStats, QueryStatus, SqlDialect,
     },
-    session::SessionContext,
+    session::{AgentContext, SessionContext},
     tags::QueryTags,
 };
 use queryflux_engine_adapters::AdapterKind;
 use queryflux_fingerprint::{polyglot_dialect, rich_fingerprint};
-use queryflux_metrics::{MetricsStore, QueryRecord};
+use queryflux_guardrails::GuardChain;
+use queryflux_metrics::{GuardAction, MetricsStore, QueryRecord};
 use queryflux_persistence::Persistence;
 use queryflux_routing::chain::{RouterChain, RoutingTrace};
 use queryflux_translation::TranslationService;
@@ -30,6 +31,9 @@ use crate::snowflake::http::session_store::SnowflakeSessionStore;
 /// task can atomically swap the whole bundle on each reload tick.
 pub struct LiveConfig {
     pub router_chain: RouterChain,
+    /// Guard chain: global guards first, per-group guards appended at dispatch time.
+    /// `None` means guardrails are not configured — all queries pass through.
+    pub guard_chain: Option<Arc<GuardChain>>,
     pub cluster_manager: Arc<dyn ClusterGroupManager>,
     /// cluster_name → adapter (one adapter per physical cluster, shared across groups).
     pub adapters: HashMap<String, AdapterKind>,
@@ -94,6 +98,8 @@ pub struct QueryContext {
     /// Typed positional parameters extracted from the client's wire protocol.
     /// Empty when the query is not parameterized.
     pub query_params: QueryParams,
+    /// Agent identity — present when the client sends `X-Agent-Id` / `X-Conversation-Id`.
+    pub agent_context: Option<AgentContext>,
 }
 
 /// How the query ended — the fields that vary between success, failure, and cancellation.
@@ -106,6 +112,10 @@ pub struct QueryOutcome {
     pub error: Option<String>,
     pub routing_trace: Option<RoutingTrace>,
     pub engine_stats: Option<QueryEngineStats>,
+    /// All guards that evaluated this query and their verdicts.
+    pub guard_actions: Vec<GuardAction>,
+    /// True if any guard returned Deny — fast filter for Studio.
+    pub was_guard_blocked: bool,
 }
 
 impl AppState {
@@ -138,6 +148,25 @@ impl AppState {
         let translated_sql_for_fp = ctx.translated_sql.clone();
         let src_dialect = polyglot_dialect(&ctx.src_dialect);
         let tgt_dialect = polyglot_dialect(&ctx.tgt_dialect);
+
+        let agent_id = ctx.agent_context.as_ref().map(|a| a.agent_id.clone());
+        let conversation_id = ctx
+            .agent_context
+            .as_ref()
+            .map(|a| a.conversation_id.clone());
+        let step_index = ctx
+            .agent_context
+            .as_ref()
+            .and_then(|a| a.step_index)
+            .map(|s| s as i32);
+        let tool_call_id = ctx
+            .agent_context
+            .as_ref()
+            .and_then(|a| a.tool_call_id.clone());
+        let query_intent = ctx
+            .agent_context
+            .as_ref()
+            .map(|a| a.query_intent.as_str().to_string());
 
         let mut record = QueryRecord {
             proxy_query_id: ctx.query_id.0.clone(),
@@ -173,6 +202,13 @@ impl AppState {
             translated_query_hash: None,
             digest_text: None,
             translated_digest_text: None,
+            agent_id,
+            conversation_id,
+            step_index,
+            tool_call_id,
+            query_intent,
+            guard_actions: outcome.guard_actions,
+            was_guard_blocked: outcome.was_guard_blocked,
         };
         let metrics = self.metrics.clone();
         tokio::spawn(async move {

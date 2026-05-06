@@ -28,6 +28,10 @@ use queryflux_frontend::{
     trino_http::{state::AppState, TrinoHttpFrontend},
     FrontendListenerTrait,
 };
+use queryflux_guardrails::{
+    built_in::{Guard, ReadOnlyGuard, RequirePredicateGuard, RowLimitGuard},
+    GuardChain,
+};
 use queryflux_metrics::{
     buffered_store::BufferedMetricsStore, prometheus_store::PrometheusMetrics, MetricsStore,
     MultiMetricsStore,
@@ -91,6 +95,7 @@ async fn main() -> Result<()> {
             .context("Failed to init Prometheus metrics")?,
     );
     let mut pg_store: Option<Arc<PostgresStore>> = None;
+    let mut mem_store: Option<Arc<InMemoryPersistence>> = None;
 
     let (persistence, metrics): (
         Arc<dyn queryflux_persistence::Persistence>,
@@ -121,10 +126,14 @@ async fn main() -> Result<()> {
                 metrics as Arc<dyn MetricsStore>,
             )
         }
-        _ => (
-            Arc::new(InMemoryPersistence::new()),
-            prometheus.clone() as Arc<dyn MetricsStore>,
-        ),
+        _ => {
+            let mem = Arc::new(InMemoryPersistence::new());
+            mem_store = Some(mem.clone());
+            (
+                mem as Arc<dyn queryflux_persistence::Persistence>,
+                prometheus.clone() as Arc<dyn MetricsStore>,
+            )
+        }
     };
 
     // Filled when Postgres loads cluster/group rows — used for query_history FKs on ClusterState.
@@ -691,6 +700,18 @@ async fn main() -> Result<()> {
         HashMap::new()
     };
 
+    // --- Build guard chain: DB-stored config (UI-managed) takes precedence over YAML ---
+    let guard_chain = if let Some(pg) = &pg_store {
+        match pg.get_proxy_setting("guardrails_config").await {
+            Ok(Some(v)) => {
+                build_guard_chain_from_db_value(&v).or_else(|| build_guard_chain(&config))
+            }
+            _ => build_guard_chain(&config),
+        }
+    } else {
+        build_guard_chain(&config)
+    };
+
     // --- Wrap hot-reloadable fields in LiveConfig ---
     let group_default_tags: HashMap<String, queryflux_core::tags::QueryTags> = config
         .cluster_groups
@@ -700,6 +721,7 @@ async fn main() -> Result<()> {
         .collect();
     let live_config = LiveConfig {
         router_chain,
+        guard_chain,
         cluster_manager,
         adapters,
         health_check_targets,
@@ -777,7 +799,10 @@ async fn main() -> Result<()> {
 
     // --- Start admin server (Prometheus /metrics + future /admin/* endpoints) ---
     let admin_port = config.queryflux.admin_api.port;
-    let admin_store = pg_store.clone().map(|pg| pg as Arc<dyn AdminStore>);
+    let admin_store: Option<Arc<dyn AdminStore>> = pg_store
+        .clone()
+        .map(|pg| pg as Arc<dyn AdminStore>)
+        .or_else(|| mem_store.map(|m| m as Arc<dyn AdminStore>));
     let security_config = Arc::new(AdminSecurityConfigDto::from_config(
         &config.auth,
         &config.authorization,
@@ -822,6 +847,7 @@ async fn main() -> Result<()> {
         })
     });
 
+    let admin_store_for_reload = admin_store.clone();
     let admin = AdminFrontend::new(
         prometheus,
         live.clone(),
@@ -978,6 +1004,7 @@ async fn main() -> Result<()> {
         let pg = pg_store.clone();
         let cache = adapter_reload_cache.clone();
         let notify = config_reload_notify.clone();
+        let admin_for_reload = admin_store_for_reload;
         let periodic_secs = config.queryflux.periodic_config_reload_interval_secs();
         async move {
             async fn do_reload(
@@ -995,12 +1022,31 @@ async fn main() -> Result<()> {
                 }
             }
 
+            async fn reload_guard_chain_from_admin(
+                admin: &Option<Arc<dyn AdminStore>>,
+                live: &Arc<tokio::sync::RwLock<LiveConfig>>,
+            ) {
+                if let Some(store) = admin {
+                    match store.get_proxy_setting("guardrails_config").await {
+                        Ok(Some(v)) => {
+                            live.write().await.guard_chain = build_guard_chain_from_db_value(&v);
+                        }
+                        Ok(None) => {
+                            live.write().await.guard_chain = None;
+                        }
+                        Err(e) => tracing::warn!("Guard chain reload failed: {e}"),
+                    }
+                }
+            }
+
             match periodic_secs {
                 None => loop {
                     notify.notified().await;
                     tracing::debug!("Config reload requested via admin API");
                     if let Some(pg) = &pg {
                         do_reload(pg, &cache, &live).await;
+                    } else {
+                        reload_guard_chain_from_admin(&admin_for_reload, &live).await;
                     }
                 },
                 Some(interval_secs) => {
@@ -1016,6 +1062,8 @@ async fn main() -> Result<()> {
                         }
                         if let Some(pg) = &pg {
                             do_reload(pg, &cache, &live).await;
+                        } else {
+                            reload_guard_chain_from_admin(&admin_for_reload, &live).await;
                         }
                     }
                 }
@@ -1545,6 +1593,7 @@ async fn build_live_config(
 
     Ok(LiveConfig {
         router_chain,
+        guard_chain: None,
         cluster_manager,
         adapters: cache.adapters.clone(),
         health_check_targets,
@@ -1621,7 +1670,7 @@ async fn reload_live_config(
             HashMap::new()
         });
 
-    build_live_config(
+    let mut live = build_live_config(
         &cluster_records,
         &cluster_groups,
         &cluster_ids_by_name,
@@ -1631,5 +1680,125 @@ async fn reload_live_config(
         group_translation_scripts,
         cache,
     )
-    .await
+    .await?;
+
+    // Load guardrails from DB (UI-managed). Overrides any YAML-configured guard chain.
+    if let Ok(Some(v)) = pg.get_proxy_setting("guardrails_config").await {
+        live.guard_chain = build_guard_chain_from_db_value(&v);
+    }
+
+    Ok(live)
+}
+
+/// Build a `GuardChain` from the YAML `guardrails:` section.
+/// Returns `None` when the section is absent (guardrails disabled).
+fn build_guard_chain(config: &queryflux_core::config::ProxyConfig) -> Option<Arc<GuardChain>> {
+    use queryflux_core::config::GuardKindConfig;
+
+    let cfg = config.guardrails.as_ref()?;
+    let mut guards: Vec<Box<dyn Guard>> = Vec::new();
+
+    for spec in &cfg.global {
+        match &spec.kind {
+            GuardKindConfig::BuiltIn => {
+                let name = spec.name.as_deref().unwrap_or("");
+                match name {
+                    "read_only" => guards.push(Box::new(ReadOnlyGuard)),
+                    "row_limit" => guards.push(Box::new(RowLimitGuard {
+                        max_rows: spec.max_rows,
+                    })),
+                    "require_predicate" => guards.push(Box::new(RequirePredicateGuard {
+                        applies_to: spec.applies_to.clone().unwrap_or_default(),
+                    })),
+                    other => tracing::warn!(name = other, "Unknown built-in guard name; skipping"),
+                }
+            }
+            GuardKindConfig::HttpWebhook { .. } => {
+                tracing::warn!("HttpWebhook guards not yet implemented; skipping");
+            }
+        }
+    }
+
+    if guards.is_empty() {
+        return None;
+    }
+
+    Some(Arc::new(GuardChain::new(guards)))
+}
+
+/// Build a `GuardChain` from the flat JSON format stored by the Studio UI.
+///
+/// The DB format mirrors `GuardrailsConfig` from the TypeScript API types:
+/// `{ global: GuardSpecDto[], groups: Record<string, GuardSpecDto[]> }`.
+/// Only the `global` array is used here; per-group dispatch is not yet implemented.
+fn build_guard_chain_from_db_value(v: &serde_json::Value) -> Option<Arc<GuardChain>> {
+    #[allow(dead_code)]
+    struct DbGuardSpec {
+        kind: String,
+        name: Option<String>,
+        max_rows: Option<u64>,
+        applies_to: Option<Vec<String>>,
+    }
+    struct DbGuardrailsConfig {
+        global: Vec<DbGuardSpec>,
+    }
+
+    // Manual deserialization to avoid needing a `use serde::Deserialize` import.
+    let cfg: DbGuardrailsConfig = {
+        let obj = v.as_object()?;
+        let global = obj
+            .get("global")
+            .and_then(|g| g.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        let o = item.as_object()?;
+                        Some(DbGuardSpec {
+                            kind: o.get("kind")?.as_str()?.to_string(),
+                            name: o
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            max_rows: o.get("max_rows").and_then(|v| v.as_u64()),
+                            applies_to: o.get("applies_to").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            }),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        DbGuardrailsConfig { global }
+    };
+
+    let mut guards: Vec<Box<dyn Guard>> = Vec::new();
+    for spec in &cfg.global {
+        match spec.kind.as_str() {
+            "built_in" => {
+                let name = spec.name.as_deref().unwrap_or("");
+                match name {
+                    "read_only" => guards.push(Box::new(ReadOnlyGuard)),
+                    "row_limit" => guards.push(Box::new(RowLimitGuard {
+                        max_rows: spec.max_rows,
+                    })),
+                    "require_predicate" => guards.push(Box::new(RequirePredicateGuard {
+                        applies_to: spec.applies_to.clone().unwrap_or_default(),
+                    })),
+                    other => tracing::warn!(name = other, "Unknown built-in guard name; skipping"),
+                }
+            }
+            "http_webhook" => tracing::warn!("HttpWebhook guards not yet implemented; skipping"),
+            "python_script" => tracing::warn!(
+                "PythonScript guards not yet implemented; skipping (body stored inline)"
+            ),
+            other => tracing::warn!(kind = other, "Unknown guard kind; skipping"),
+        }
+    }
+
+    if guards.is_empty() {
+        return None;
+    }
+    Some(Arc::new(GuardChain::new(guards)))
 }

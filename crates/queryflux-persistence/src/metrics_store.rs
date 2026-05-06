@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use queryflux_core::{
@@ -10,6 +11,15 @@ use queryflux_core::{
     },
     tags::QueryTags,
 };
+
+/// A single guard evaluation result — stored as JSONB in `query_history.guard_actions`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuardAction {
+    pub guard: String,
+    pub action: String,
+    pub reason: Option<String>,
+    pub code: Option<String>,
+}
 
 /// A record of one completed (or failed/cancelled) query execution.
 /// Written to the metrics store at the end of every query, regardless of outcome.
@@ -60,6 +70,17 @@ pub struct QueryRecord {
     pub digest_text: Option<String>,
     /// Parameterized translated SQL digest. None when no translation occurred.
     pub translated_digest_text: Option<String>,
+    // --- Agent context fields (present when X-Agent-Id / X-Conversation-Id headers sent) ---
+    pub agent_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub step_index: Option<i32>,
+    pub tool_call_id: Option<String>,
+    pub query_intent: Option<String>,
+    // --- Guard fields ---
+    /// All guards that evaluated this query and their verdicts.
+    pub guard_actions: Vec<GuardAction>,
+    /// True if any guard returned Deny.
+    pub was_guard_blocked: bool,
 }
 
 /// A periodic snapshot of one cluster's live utilization.

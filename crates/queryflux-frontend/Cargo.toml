@@ -14,6 +14,7 @@ queryflux-persistence = { workspace = true }
 queryflux-translation = { workspace = true }
 queryflux-metrics = { workspace = true }
 queryflux-fingerprint = { workspace = true }
+queryflux-guardrails = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }

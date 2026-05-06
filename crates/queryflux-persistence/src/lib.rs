@@ -19,13 +19,15 @@ use crate::{
         ClusterConfigRecord, ClusterGroupConfigRecord, UpsertClusterConfig,
         UpsertClusterGroupConfig,
     },
-    query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
+    query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters},
 };
 
 // Re-export so callers can do `queryflux_persistence::MetricsStore` etc.
-pub use metrics_store::{ClusterSnapshot, MetricsStore, QueryRecord};
+pub use metrics_store::{ClusterSnapshot, GuardAction, MetricsStore, QueryRecord};
+pub use query_history::{AgentSummary, ConversationSummary, QuerySummary};
 pub use script_library::{
-    is_valid_script_kind, UpsertUserScript, UserScriptRecord, KIND_ROUTING, KIND_TRANSLATION_FIXUP,
+    is_valid_script_kind, UpsertUserScript, UserScriptRecord, KIND_GUARD, KIND_ROUTING,
+    KIND_TRANSLATION_FIXUP,
 };
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,15 @@ pub trait QueryHistoryStore: Send + Sync {
 
     /// Distinct engine type strings that appear in the query log.
     async fn list_engines(&self) -> Result<Vec<String>>;
+
+    /// Distinct agents that have run queries, with aggregate stats.
+    async fn list_agents(&self, limit: i64, offset: i64) -> Result<Vec<AgentSummary>>;
+
+    /// Conversations for a given agent (or all agents if `agent_id` is None).
+    async fn list_conversations(&self, agent_id: Option<&str>) -> Result<Vec<ConversationSummary>>;
+
+    /// All query records belonging to a conversation, ordered by step_index.
+    async fn get_conversation(&self, conversation_id: &str) -> Result<Vec<QuerySummary>>;
 }
 
 // ---------------------------------------------------------------------------

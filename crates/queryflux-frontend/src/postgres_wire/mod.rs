@@ -171,11 +171,19 @@ async fn handle_connection(
         .map(String::as_str)
         .unwrap_or("");
     let (tags, _) = parse_query_tags(raw_tags);
+    // Copy all remaining startup params into extra so that resolved_agent_context(),
+    // routers, and guards can read them without per-field knowledge here.
+    let well_known = ["user", "database", "query_tags", "query_tag"];
+    let extra: HashMap<String, String> = params
+        .into_iter()
+        .filter(|(k, _)| !well_known.contains(&k.as_str()))
+        .collect();
     let session = SessionContext {
         user: if user.is_empty() { None } else { Some(user) },
         database,
         tags,
-        extra: HashMap::new(),
+        extra,
+        agent_context: None,
     };
 
     // ── Command loop ─────────────────────────────────────────────────────────
@@ -535,4 +543,82 @@ fn read_cstr(data: &[u8], pos: &mut usize) -> String {
         *pos += 1; // skip NUL
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params_to_extra(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        let well_known = ["user", "database", "query_tags", "query_tag"];
+        pairs
+            .iter()
+            .filter(|(k, _)| !well_known.contains(k))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    fn session_from_params(pairs: &[(&str, &str)]) -> SessionContext {
+        let extra = params_to_extra(pairs);
+        SessionContext {
+            user: None,
+            database: None,
+            tags: queryflux_core::tags::QueryTags::new(),
+            extra,
+            agent_context: None,
+        }
+    }
+
+    #[test]
+    fn agent_context_from_startup_params() {
+        let s = session_from_params(&[
+            ("agent_id", "agent-pg"),
+            ("conversation_id", "conv-pg"),
+            ("step_index", "2"),
+            ("tool_call_id", "call_xyz"),
+            ("query_intent", "lookup"),
+        ]);
+        let ctx = s.resolved_agent_context().expect("should resolve");
+        assert_eq!(ctx.agent_id, "agent-pg");
+        assert_eq!(ctx.conversation_id, "conv-pg");
+        assert_eq!(ctx.step_index, Some(2));
+        assert_eq!(ctx.tool_call_id.as_deref(), Some("call_xyz"));
+        assert_eq!(
+            ctx.query_intent,
+            queryflux_core::session::QueryIntent::Lookup
+        );
+    }
+
+    #[test]
+    fn agent_context_requires_both_ids() {
+        let s = session_from_params(&[("agent_id", "agent-pg")]);
+        assert!(s.resolved_agent_context().is_none());
+    }
+
+    #[test]
+    fn well_known_params_not_in_extra() {
+        let extra = params_to_extra(&[
+            ("user", "alice"),
+            ("database", "mydb"),
+            ("query_tags", "team:eng"),
+            ("agent_id", "agent-1"),
+        ]);
+        assert!(!extra.contains_key("user"));
+        assert!(!extra.contains_key("database"));
+        assert!(!extra.contains_key("query_tags"));
+        assert!(extra.contains_key("agent_id"));
+    }
+
+    #[test]
+    fn unknown_startup_params_flow_through_to_extra() {
+        let s = session_from_params(&[
+            ("agent_id", "a"),
+            ("conversation_id", "c"),
+            ("custom_routing_hint", "region-us"),
+        ]);
+        assert_eq!(
+            s.extra.get("custom_routing_hint").map(String::as_str),
+            Some("region-us")
+        );
+    }
 }

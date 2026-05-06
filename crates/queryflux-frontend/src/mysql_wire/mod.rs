@@ -174,6 +174,7 @@ async fn handle_connection(
         database: schema,
         extra: HashMap::new(),
         tags: QueryTags::new(),
+        agent_context: None,
     };
 
     // Command loop.
@@ -1582,5 +1583,71 @@ mod tests {
     #[test]
     fn non_set_statement_returns_none() {
         assert_eq!(try_parse_set_kv("SELECT 1"), None);
+    }
+
+    // ── agent context via SET statements ─────────────────────────────────────
+
+    fn session_after_sets(stmts: &[&str]) -> queryflux_core::session::SessionContext {
+        let mut session = queryflux_core::session::SessionContext {
+            user: None,
+            database: None,
+            tags: queryflux_core::tags::QueryTags::new(),
+            extra: std::collections::HashMap::new(),
+            agent_context: None,
+        };
+        for stmt in stmts {
+            if let Some((key, val)) = try_parse_set_kv(stmt) {
+                session.extra.insert(key, val);
+            }
+        }
+        session
+    }
+
+    #[test]
+    fn agent_context_from_set_statements() {
+        let s = session_after_sets(&[
+            "SET agent_id = 'agent-mysql'",
+            "SET conversation_id = 'conv-mysql'",
+            "SET step_index = '5'",
+            "SET tool_call_id = 'call_abc'",
+            "SET query_intent = 'aggregation'",
+        ]);
+        let ctx = s.resolved_agent_context().expect("should resolve");
+        assert_eq!(ctx.agent_id, "agent-mysql");
+        assert_eq!(ctx.conversation_id, "conv-mysql");
+        assert_eq!(ctx.step_index, Some(5));
+        assert_eq!(ctx.tool_call_id.as_deref(), Some("call_abc"));
+        assert_eq!(
+            ctx.query_intent,
+            queryflux_core::session::QueryIntent::Aggregation
+        );
+    }
+
+    #[test]
+    fn agent_context_set_session_prefix() {
+        let s = session_after_sets(&[
+            "SET SESSION agent_id = 'a'",
+            "SET SESSION conversation_id = 'c'",
+        ]);
+        let ctx = s.resolved_agent_context().expect("should resolve");
+        assert_eq!(ctx.agent_id, "a");
+        assert_eq!(ctx.conversation_id, "c");
+    }
+
+    #[test]
+    fn agent_context_requires_both_ids() {
+        let s = session_after_sets(&["SET agent_id = 'only-agent'"]);
+        assert!(s.resolved_agent_context().is_none());
+    }
+
+    #[test]
+    fn agent_context_later_set_overwrites_earlier() {
+        let s = session_after_sets(&[
+            "SET agent_id = 'first'",
+            "SET conversation_id = 'conv'",
+            "SET agent_id = 'second'",
+        ]);
+        let ctx = s.resolved_agent_context().expect("should resolve");
+        assert_eq!(ctx.agent_id, "second");
     }
 }

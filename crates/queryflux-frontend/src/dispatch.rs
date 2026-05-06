@@ -22,6 +22,7 @@ use queryflux_core::{
 };
 use queryflux_engine_adapters::trino::api::TrinoResponse;
 use queryflux_engine_adapters::{AdapterKind, AsyncAdapter, ConnectionFormat, SyncAdapter};
+use queryflux_guardrails::{GuardContext, GuardLayer};
 use queryflux_metrics::MetricsStore;
 use queryflux_translation::SchemaContext;
 
@@ -126,8 +127,8 @@ pub async fn dispatch_query(
         )));
     }
 
-    // Clone the manager, group translation fixups, and default tags from one lock snapshot.
-    let (cluster_manager, group_fixups, group_default_tags) = {
+    // Clone the manager, group translation fixups, default tags, and guard chain in one snapshot.
+    let (cluster_manager, group_fixups, group_default_tags, guard_chain) = {
         let live = state.live.read().await;
         (
             live.cluster_manager.clone(),
@@ -139,6 +140,7 @@ pub async fn dispatch_query(
                 .get(&group.0)
                 .cloned()
                 .unwrap_or_default(),
+            live.guard_chain.clone(),
         )
     };
     let effective_tags = merge_tags(&group_default_tags, &session.tags().clone());
@@ -225,6 +227,31 @@ pub async fn dispatch_query(
     } else {
         (sql, params)
     };
+
+    // Guard chain: runs after translation (SQL is final), before engine submission.
+    if let Some(chain) = &guard_chain {
+        let resolved_agent_ctx = session.resolved_agent_context();
+        let guard_ctx = GuardContext {
+            sql: &original_sql,
+            translated_sql: &sql,
+            engine_type: &adapter.engine_type(),
+            cluster_group: &group,
+            user: session.user(),
+            agent_context: resolved_agent_ctx.as_ref(),
+            query_tags: &effective_tags,
+        };
+        let (guard_actions, was_blocked) = chain.run(&guard_ctx, GuardLayer::Plan).await;
+        if was_blocked {
+            state.metrics.on_query_finished(&group.0, &cluster_name.0);
+            let _ = cluster_manager.release_cluster(&group, &cluster_name).await;
+            let deny_reason = guard_actions
+                .iter()
+                .find(|a| a.action == "deny")
+                .and_then(|a| a.reason.clone())
+                .unwrap_or_else(|| "query blocked by guardrail".to_string());
+            return Err(QueryFluxError::Engine(deny_reason));
+        }
+    }
 
     let execution = match adapter
         .submit_query(
@@ -336,6 +363,8 @@ fn trino_submit_terminal_outcome(
                     error: Some(format!("failed to parse Trino response: {e}")),
                     routing_trace: None,
                     engine_stats,
+                    guard_actions: vec![],
+                    was_guard_blocked: false,
                 },
                 Some(warn_msg),
             );
@@ -354,6 +383,8 @@ fn trino_submit_terminal_outcome(
                 error: Some(err.message.clone()),
                 routing_trace: None,
                 engine_stats,
+                guard_actions: vec![],
+                was_guard_blocked: false,
             },
             None,
         )
@@ -367,6 +398,8 @@ fn trino_submit_terminal_outcome(
                 error: Some("Trino query FAILED".to_string()),
                 routing_trace: None,
                 engine_stats,
+                guard_actions: vec![],
+                was_guard_blocked: false,
             },
             None,
         )
@@ -380,6 +413,8 @@ fn trino_submit_terminal_outcome(
                 error: None,
                 routing_trace: None,
                 engine_stats,
+                guard_actions: vec![],
+                was_guard_blocked: false,
             },
             None,
         )
@@ -430,6 +465,7 @@ async fn finalize_trino_async_terminal_on_submit(
         },
         query_tags: executing.query_tags.clone(),
         query_params: vec![],
+        agent_context: session.resolved_agent_context(),
     };
 
     let engine_stats = adapter.terminal_stats_from_body(body);
@@ -638,6 +674,8 @@ struct SyncQuerySetup {
     credentials: QueryCredentials,
     /// Typed parameters — empty when the adapter interpolated them into `translated`.
     params: QueryParams,
+    /// Guard actions collected by the guard chain (allow/warn). Merged into QueryOutcome.
+    guard_actions: Vec<queryflux_persistence::GuardAction>,
 }
 
 /// The outcome of executing a sync query — everything record_query needs.
@@ -661,6 +699,8 @@ impl From<SyncOutcome> for QueryOutcome {
             error: o.error,
             routing_trace: None,
             engine_stats: o.engine_stats,
+            guard_actions: vec![],
+            was_guard_blocked: false,
         }
     }
 }
@@ -774,6 +814,7 @@ async fn setup_sync_query(
                 translated_sql: None,
                 query_tags: effective_tags,
                 query_params: params,
+                agent_context: session.resolved_agent_context(),
             };
             state.record_query(
                 &ctx,
@@ -785,6 +826,8 @@ async fn setup_sync_query(
                     error: Some(err_msg),
                     routing_trace: None,
                     engine_stats: None,
+                    guard_actions: vec![],
+                    was_guard_blocked: false,
                 },
             );
             slot.release().await;
@@ -813,6 +856,7 @@ async fn setup_sync_query(
         (translated, params)
     };
 
+    let agent_context = session.resolved_agent_context();
     let ctx = QueryContext {
         query_id,
         sql,
@@ -833,6 +877,7 @@ async fn setup_sync_query(
         },
         query_tags: effective_tags,
         query_params: effective_params.clone(),
+        agent_context,
     };
 
     Ok(SyncQuerySetup {
@@ -843,6 +888,7 @@ async fn setup_sync_query(
         ctx,
         credentials,
         params: effective_params,
+        guard_actions: vec![],
     })
 }
 
@@ -1123,6 +1169,8 @@ pub async fn execute_to_sink(
         return sink.on_error(&msg).await;
     }
 
+    let guard_chain = state.live.read().await.guard_chain.clone();
+
     let mut setup = match setup_sync_query(
         state,
         sql,
@@ -1140,6 +1188,48 @@ pub async fn execute_to_sink(
         Err(e) => return sink.on_error(&e.to_string()).await,
     };
 
+    // Guard chain: runs after translation (SQL is final) and after routing (group is known),
+    // before submitting to the engine.
+    if let Some(chain) = &guard_chain {
+        let ctx = &setup.ctx;
+        let guard_ctx = GuardContext {
+            sql: &ctx.sql,
+            translated_sql: ctx.translated_sql.as_deref().unwrap_or(&setup.translated),
+            engine_type: &ctx.engine_type,
+            cluster_group: &ctx.group,
+            user: ctx.session.user(),
+            agent_context: ctx.agent_context.as_ref(),
+            query_tags: &ctx.query_tags,
+        };
+        let (guard_actions, was_blocked) = chain.run(&guard_ctx, GuardLayer::Plan).await;
+        if was_blocked {
+            let deny_reason = guard_actions
+                .iter()
+                .find(|a| a.action == "deny")
+                .and_then(|a| a.reason.clone())
+                .unwrap_or_else(|| "query blocked by guardrail".to_string());
+            setup.slot.release().await;
+            state.record_query(
+                ctx,
+                QueryOutcome {
+                    backend_query_id: None,
+                    status: QueryStatus::Failed,
+                    execution_ms: setup.start.elapsed().as_millis() as u64,
+                    rows: None,
+                    error: Some(deny_reason.clone()),
+                    routing_trace: None,
+                    engine_stats: None,
+                    guard_actions,
+                    was_guard_blocked: true,
+                },
+            );
+            return sink.on_error(&deny_reason).await;
+        }
+        // Attach non-blocking guard actions (allow/warn) to the setup context so they
+        // flow into record_query at the normal exit point below.
+        setup.guard_actions = guard_actions;
+    }
+
     // Native path: skip Arrow when backend connection format matches frontend protocol.
     // All other guarantees (slot release, record_query) are upheld by this function's
     // outer structure — only the inner execution subroutine is swapped.
@@ -1156,7 +1246,13 @@ pub async fn execute_to_sink(
     // Guaranteed single exit: release slot, then record.
     // slot.release() is idempotent and sets released=true so Drop is a no-op.
     setup.slot.release().await;
-    state.record_query(&setup.ctx, outcome.into());
+    let mut final_outcome: QueryOutcome = outcome.into();
+    // Prepend guard actions (allow/warn) collected before execution.
+    if !setup.guard_actions.is_empty() {
+        setup.guard_actions.extend(final_outcome.guard_actions);
+        final_outcome.guard_actions = setup.guard_actions;
+    }
+    state.record_query(&setup.ctx, final_outcome);
 
     sink_result
 }

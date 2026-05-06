@@ -59,6 +59,23 @@ pub struct QuerySummary {
     /// xxHash-64 of the parameterized translated SQL. None when no translation occurred.
     #[serde(default)]
     pub translated_query_hash: Option<i64>,
+    // Agent context (present when X-Agent-Id / X-Conversation-Id headers were sent)
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub step_index: Option<i32>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub query_intent: Option<String>,
+    // Guard evaluation results
+    #[schema(value_type = Option<Vec<Object>>)]
+    #[serde(default)]
+    pub guard_actions: Option<serde_json::Value>,
+    #[serde(default)]
+    pub was_guard_blocked: bool,
 }
 
 /// Aggregated stats for the last hour, shown on the dashboard.
@@ -113,6 +130,27 @@ pub struct EngineStatRow {
     pub avg_queue_ms: f64,
     pub translated_queries: i64,
     pub total_rows_returned: i64,
+}
+
+/// A distinct agent seen in query_records — returned by `GET /admin/agents`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+pub struct AgentSummary {
+    pub agent_id: String,
+    pub query_count: i64,
+    pub conversation_count: i64,
+    pub first_seen: DateTime<Utc>,
+    pub last_seen: DateTime<Utc>,
+}
+
+/// A conversation (grouped steps) — returned by `GET /admin/conversations`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+pub struct ConversationSummary {
+    pub conversation_id: String,
+    pub agent_id: Option<String>,
+    pub step_count: i64,
+    pub first_seen: DateTime<Utc>,
+    pub last_seen: DateTime<Utc>,
+    pub has_blocked: bool,
 }
 
 /// Filters for `GET /admin/queries`.
