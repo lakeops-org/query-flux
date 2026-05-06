@@ -203,11 +203,15 @@ fn extract_session(headers: &HeaderMap) -> SessionContext {
     let tags = extract_trino_tags(&h);
     let user = h.get("x-trino-user").cloned();
     let database = h.get("x-trino-catalog").cloned();
+    // Agent context is NOT extracted here — it is derived lazily from `extra` in
+    // dispatch.rs via `session.resolved_agent_context()`. All HTTP frontends that
+    // store headers in `extra` (lowercase) automatically support agent headers.
     SessionContext {
         user,
         database,
         tags,
         extra: h,
+        agent_context: None,
     }
 }
 
@@ -828,6 +832,7 @@ pub async fn get_executing_statement(
         },
         query_tags: effective_tags,
         query_params: vec![],
+        agent_context: session.agent_context.clone(),
     };
 
     match poll_result {
@@ -848,6 +853,8 @@ pub async fn get_executing_statement(
                         error: None,
                         routing_trace: None,
                         engine_stats,
+                        guard_actions: vec![],
+                        was_guard_blocked: false,
                     },
                 );
                 state
@@ -881,6 +888,8 @@ pub async fn get_executing_statement(
                     error: Some(message.clone()),
                     routing_trace: None,
                     engine_stats: None,
+                    guard_actions: vec![],
+                    was_guard_blocked: false,
                 },
             );
             let _ = cluster_manager

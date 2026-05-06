@@ -109,6 +109,7 @@ impl QueryFluxFlightSql {
             database: None,
             tags: queryflux_core::tags::QueryTags::new(),
             extra: headers,
+            agent_context: None,
         }
     }
 }

@@ -1,9 +1,14 @@
 import type {
+  AgentListParams,
+  AgentSummary,
   ClusterStateDto,
+  ConversationListParams,
+  ConversationSummary,
   DashboardStats,
   EngineStatRow,
   FrontendsStatusDto,
   GroupStatRow,
+  GuardrailsConfig,
   QueryHistoryRecord,
   QueryListParams,
 } from "./api-types";
@@ -214,6 +219,35 @@ export async function getDistinctEngines(): Promise<string[]> {
   return apiFetch<string[]>("/admin/engines");
 }
 
+export async function getAgents(params: AgentListParams = {}): Promise<AgentSummary[]> {
+  const qs = new URLSearchParams();
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.offset != null) qs.set("offset", String(params.offset));
+  const query = qs.toString() ? `?${qs}` : "";
+  return apiFetch<AgentSummary[]>(`/admin/agents${query}`);
+}
+
+export async function getConversations(params: ConversationListParams = {}): Promise<ConversationSummary[]> {
+  const qs = new URLSearchParams();
+  if (params.agent_id) qs.set("agent_id", params.agent_id);
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.offset != null) qs.set("offset", String(params.offset));
+  const query = qs.toString() ? `?${qs}` : "";
+  return apiFetch<ConversationSummary[]>(`/admin/conversations${query}`);
+}
+
+export async function getConversationDetail(conversationId: string): Promise<QueryHistoryRecord[]> {
+  return apiFetch<QueryHistoryRecord[]>(`/admin/conversations/${encodeURIComponent(conversationId)}`);
+}
+
+export async function getGuardrailsConfig(): Promise<GuardrailsConfig> {
+  return apiFetch<GuardrailsConfig>("/admin/config/guardrails");
+}
+
+export async function putGuardrailsConfig(config: GuardrailsConfig): Promise<void> {
+  return apiPutNoContent("/admin/config/guardrails", config);
+}
+
 export async function getEngineStats(hours = 24): Promise<EngineStatRow[]> {
   return apiFetch<EngineStatRow[]>(`/admin/engine-stats?hours=${hours}`);
 }
@@ -402,6 +436,13 @@ export type {
   EngineStatRow,
   FrontendsStatusDto,
   GroupStatRow,
+  AgentListParams,
+  AgentSummary,
+  ConversationListParams,
+  ConversationSummary,
+  GuardAction,
+  GuardSpecDto,
+  GuardrailsConfig,
   ProtocolFrontendDto,
   GroupAuthzDto,
   LdapConfigDto,

@@ -3533,7 +3533,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3544,6 +3544,7 @@ dependencies = [
  "queryflux-core",
  "queryflux-engine-adapters",
  "queryflux-frontend",
+ "queryflux-guardrails",
  "queryflux-metrics",
  "queryflux-persistence",
  "queryflux-routing",
@@ -3556,7 +3557,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-auth"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "bcrypt",
@@ -3574,7 +3575,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-bench"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3588,7 +3589,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-cluster-manager"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "queryflux-core",
@@ -3597,7 +3598,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-config"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "queryflux-core",
@@ -3607,7 +3608,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-core"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3651,7 +3652,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-engine-adapters"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "adbc_core",
  "adbc_driver_manager",
@@ -3681,7 +3682,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-fingerprint"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "polyglot-sql 0.2.3",
  "queryflux-core",
@@ -3692,7 +3693,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-frontend"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "arrow",
@@ -3712,6 +3713,7 @@ dependencies = [
  "queryflux-core",
  "queryflux-engine-adapters",
  "queryflux-fingerprint",
+ "queryflux-guardrails",
  "queryflux-metrics",
  "queryflux-persistence",
  "queryflux-routing",
@@ -3731,8 +3733,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "queryflux-guardrails"
+version = "0.1.3"
+dependencies = [
+ "async-trait",
+ "polyglot-sql 0.3.2",
+ "queryflux-core",
+ "queryflux-persistence",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "queryflux-metrics"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "prometheus",
@@ -3744,7 +3761,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-persistence"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3758,7 +3775,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-routing"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "pyo3",
@@ -3772,7 +3789,7 @@ dependencies = [
 
 [[package]]
 name = "queryflux-translation"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "pyo3",

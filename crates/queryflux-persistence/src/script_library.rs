@@ -1,4 +1,4 @@
-//! Reusable user-defined Python scripts (translation fixups, future: routing).
+//! Reusable user-defined Python scripts (translation fixups, routing, guards).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ pub struct UserScriptRecord {
     pub id: i64,
     pub name: String,
     pub description: String,
-    /// `translation_fixup` | `routing`
+    /// `translation_fixup` | `routing` | `guard`
     pub kind: String,
     pub body: String,
     pub created_at: DateTime<Utc>,
@@ -25,14 +25,15 @@ pub struct UpsertUserScript {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    /// `translation_fixup` | `routing`
+    /// `translation_fixup` | `routing` | `guard`
     pub kind: String,
     pub body: String,
 }
 
 pub const KIND_TRANSLATION_FIXUP: &str = "translation_fixup";
 pub const KIND_ROUTING: &str = "routing";
+pub const KIND_GUARD: &str = "guard";
 
 pub fn is_valid_script_kind(kind: &str) -> bool {
-    matches!(kind, KIND_TRANSLATION_FIXUP | KIND_ROUTING)
+    matches!(kind, KIND_TRANSLATION_FIXUP | KIND_ROUTING | KIND_GUARD)
 }

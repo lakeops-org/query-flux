@@ -179,6 +179,16 @@ pub async fn query_request(
     let database = snapshot.database.unwrap_or_default();
     let schema = snapshot.schema.unwrap_or_default();
 
+    // Collect request headers into `extra` (lowercase keys) so that agent headers
+    // (x-agent-id, x-conversation-id, etc.) are resolved lazily in dispatch.
+    let extra: HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(k, v)| {
+            v.to_str()
+                .ok()
+                .map(|s| (k.as_str().to_lowercase(), s.to_string()))
+        })
+        .collect();
     let session_ctx = SessionContext {
         user,
         database: if !database.is_empty() {
@@ -189,7 +199,8 @@ pub async fn query_request(
             None
         },
         tags: QueryTags::default(),
-        extra: HashMap::new(),
+        extra,
+        agent_context: None,
     };
 
     let query_id = Uuid::new_v4().to_string();

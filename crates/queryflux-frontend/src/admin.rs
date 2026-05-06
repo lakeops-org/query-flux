@@ -25,7 +25,10 @@ use queryflux_persistence::{
         ClusterGroupConfigRecord, RenameConfigRequest, UpsertClusterConfig,
         UpsertClusterGroupConfig,
     },
-    query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
+    query_history::{
+        AgentSummary, ConversationSummary, DashboardStats, EngineStatRow, GroupStatRow,
+        QueryFilters, QuerySummary,
+    },
     routing_json::{enrich_routers_for_api, resolve_routers_for_storage},
     script_library::{UpsertUserScript, UserScriptRecord},
     AdminStore,
@@ -522,6 +525,9 @@ impl AdminFrontend {
         let protected = Router::new()
             .route("/admin/clusters", get(clusters_handler))
             .route("/admin/queries", get(list_queries_handler))
+            .route("/admin/agents", get(list_agents_handler))
+            .route("/admin/conversations", get(list_conversations_handler))
+            .route("/admin/conversations/{id}", get(get_conversation_handler))
             .route("/admin/stats", get(get_stats_handler))
             .route("/admin/engines", get(list_engines_handler))
             .route("/admin/engine-stats", get(get_engine_stats_handler))
@@ -572,6 +578,10 @@ impl AdminFrontend {
             .route(
                 "/admin/config/routing",
                 get(get_routing_config_handler).put(put_routing_config_handler),
+            )
+            .route(
+                "/admin/config/guardrails",
+                get(get_guardrails_config_handler).put(put_guardrails_config_handler),
             )
             // Auth management endpoints
             .route("/admin/auth/status", get(auth_status_handler))
@@ -817,6 +827,69 @@ async fn list_queries_handler(
             .into_response();
     };
     match pg.list_queries(&filters).await {
+        Ok(rows) => Json::<Vec<QuerySummary>>(rows).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Distinct agents that have run queries, with aggregate stats.
+async fn list_agents_handler(
+    State(state): State<Arc<AdminState>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let Some(pg) = &state.admin_store else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
+            .into_response();
+    };
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(50);
+    let offset = params
+        .get("offset")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    match pg.list_agents(limit, offset).await {
+        Ok(rows) => Json::<Vec<AgentSummary>>(rows).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Conversations grouped by conversation_id. Filter by agent_id via ?agent_id=.
+async fn list_conversations_handler(
+    State(state): State<Arc<AdminState>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let Some(pg) = &state.admin_store else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
+            .into_response();
+    };
+    let agent_id = params.get("agent_id").map(|s| s.as_str());
+    match pg.list_conversations(agent_id).await {
+        Ok(rows) => Json::<Vec<ConversationSummary>>(rows).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// All query steps for a conversation, ordered by step_index.
+async fn get_conversation_handler(
+    State(state): State<Arc<AdminState>>,
+    Path(conversation_id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pg) = &state.admin_store else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Postgres persistence not configured",
+        )
+            .into_response();
+    };
+    match pg.get_conversation(&conversation_id).await {
         Ok(rows) => Json::<Vec<QuerySummary>>(rows).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -1480,4 +1553,33 @@ async fn swagger_ui_handler() -> impl IntoResponse {
 </body>
 </html>"##;
     (StatusCode::OK, [("content-type", "text/html")], HTML)
+}
+
+async fn get_guardrails_config_handler(State(state): State<Arc<AdminState>>) -> impl IntoResponse {
+    if let Some(store) = &state.admin_store {
+        if let Ok(Some(v)) = store.get_proxy_setting("guardrails_config").await {
+            return Json(v).into_response();
+        }
+    }
+    Json(serde_json::json!({ "global": [], "groups": {} })).into_response()
+}
+
+async fn put_guardrails_config_handler(
+    State(state): State<Arc<AdminState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let Some(store) = &state.admin_store else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Persistence not configured",
+        )
+            .into_response();
+    };
+    match store.set_proxy_setting("guardrails_config", body).await {
+        Ok(()) => {
+            notify_live_config_reload(&state);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }

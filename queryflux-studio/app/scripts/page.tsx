@@ -8,19 +8,42 @@ import type { UserScriptRecord } from "@/lib/api-types";
 import { UserScriptEditorDialog } from "@/components/user-script-editor-dialog";
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
+type Tab = "translation_fixup";
+
+const TAB_META: Record<Tab, { label: string; description: React.ReactNode }> = {
+  translation_fixup: {
+    label: "Translation fixups",
+    description: (
+      <>
+        <strong>Translation fixup</strong> scripts run after sqlglot when the client dialect differs
+        from the engine. Each defines{" "}
+        <code>def transform(ast, src, dst)</code>. Attach them to cluster groups in{" "}
+        <strong>Groups</strong>.{" "}
+        <strong>Routing</strong> Python (<code>def route(query, ctx)</code>) is configured only on
+        the{" "}
+        <Link href="/routing" className="text-indigo-600 hover:text-indigo-700 font-medium">
+          Routing
+        </Link>{" "}
+        page.
+      </>
+    ),
+  },
+};
+
 export default function ScriptsPage() {
   const router = useRouter();
+  const [tab] = useState<Tab>("translation_fixup");
   const [scripts, setScripts] = useState<UserScriptRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [dialogEdit, setDialogEdit] = useState<UserScriptRecord | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (kind: Tab) => {
     setLoading(true);
     setError(null);
     try {
-      const rows = await listUserScripts("translation_fixup");
+      const rows = await listUserScripts(kind);
       setScripts(rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load scripts");
@@ -31,8 +54,8 @@ export default function ScriptsPage() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    void load(tab);
+  }, [load, tab]);
 
   function openCreate() {
     setDialogEdit(null);
@@ -49,25 +72,21 @@ export default function ScriptsPage() {
     setError(null);
     try {
       await deleteUserScript(id);
-      await load();
+      await load(tab);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
     }
   }
 
+  const meta = TAB_META[tab];
+
   return (
     <div className="p-8 max-w-5xl space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Scripts</h1>
-          <p className="text-sm text-slate-500 mt-1 max-w-2xl">
-            <strong>Translation fixup</strong> scripts run after sqlglot when the client dialect differs from
-            the engine. Each defines <code>def transform(ast, src, dst)</code>. Attach them to cluster groups in{" "}
-            <strong>Groups</strong>. <strong>Routing</strong> Python (<code>def route(query, ctx)</code>) is
-            configured only on the <Link href="/routing" className="text-indigo-600 hover:text-indigo-700 font-medium">Routing</Link>{" "}
-            page as ordered steps in the rule chain.
-          </p>
+          <p className="text-sm text-slate-500 mt-1 max-w-2xl">{meta.description}</p>
         </div>
         <button
           type="button"
@@ -93,7 +112,7 @@ export default function ScriptsPage() {
         </div>
       ) : scripts.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 px-6 py-12 text-center text-slate-500 text-sm">
-          No scripts yet. Requires Postgres persistence on the proxy.
+          No {meta.label.toLowerCase()} yet. Requires Postgres persistence on the proxy.
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
@@ -149,7 +168,7 @@ export default function ScriptsPage() {
         }}
         initialEdit={dialogEdit}
         onSaved={() => {
-          void load();
+          void load(tab);
           router.refresh();
         }}
       />

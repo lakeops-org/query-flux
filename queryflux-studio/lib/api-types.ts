@@ -62,6 +62,13 @@ export interface FrontendsStatusDto {
   protocols: ProtocolFrontendDto[];
 }
 
+export interface GuardAction {
+  guard: string;
+  action: "allow" | "warn" | "deny";
+  reason: string | null;
+  code: string | null;
+}
+
 export interface QueryHistoryRecord {
   id: number;
   proxy_query_id: string;
@@ -95,6 +102,42 @@ export interface QueryHistoryRecord {
   total_splits: number | null;
   /** Tags attached at submit time. Key-only tags have null value. Null for older rows. */
   query_tags: Record<string, string | null> | null;
+  /** Agent identity — present when query originated from an AI agent. */
+  agent_id: string | null;
+  conversation_id: string | null;
+  step_index: number | null;
+  query_intent: string | null;
+  /** Guard actions collected during the query's guard chain evaluation. */
+  guard_actions: GuardAction[] | null;
+  was_guard_blocked: boolean;
+}
+
+export interface AgentSummary {
+  agent_id: string;
+  query_count: number;
+  conversation_count: number;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface ConversationSummary {
+  conversation_id: string;
+  agent_id: string | null;
+  step_count: number;
+  first_seen: string;
+  last_seen: string;
+  has_blocked: boolean;
+}
+
+export interface AgentListParams {
+  limit?: number;
+  offset?: number;
+}
+
+export interface ConversationListParams {
+  agent_id?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface RoutingTrace {
@@ -400,4 +443,37 @@ export interface UpsertRoutingConfig {
   routingFallback?: string;
   routingFallbackGroupId?: number | null;
   routers: RouterConfigEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Guardrails config (GET /admin/config/guardrails, PUT /admin/config/guardrails)
+// ---------------------------------------------------------------------------
+
+export type GuardKind = "built_in" | "http_webhook" | "python_script";
+
+export interface GuardSpecDto {
+  kind: GuardKind;
+  /** Built-in guard name: "read_only" | "row_limit" | "require_predicate" */
+  name?: string;
+  /** row_limit: max rows before blocking */
+  max_rows?: number | null;
+  /** require_predicate: glob patterns for table names this guard applies to */
+  applies_to?: string[] | null;
+  /** http_webhook: endpoint URL */
+  url?: string;
+  /** http_webhook / python_script: timeout in ms */
+  timeout_ms?: number | null;
+  /** python_script: numeric id of a guard script (kind="guard") managed on the Guardrails page */
+  script_id?: number;
+  /** http_webhook: "deny" (default) | "allow" when the webhook is unreachable */
+  fail_behavior?: "deny" | "allow" | null;
+  /** http_webhook: extra request headers sent with every call */
+  headers?: Record<string, string> | null;
+}
+
+export interface GuardrailsConfig {
+  /** Guards that run for every query regardless of cluster group. */
+  global: GuardSpecDto[];
+  /** Per-group additional guards. Group name → guard list. */
+  groups: Record<string, GuardSpecDto[]>;
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.2...queryflux-v0.1.3) (2026-05-06)
+
+### Features
+
+* agentic guardrails: built-in SQL guard chain (read_only, row_limit, require_predicate) with per-group overrides, Python script guards, and HTTP webhook guards
+* agentic context tracking: agent_id, conversation_id, step_index, tool_call_id, and query_intent persisted per query record with indexed audit log
+* guardrails UI: QueryFlux Studio guardrails editor for configuring and managing guard chains
+
+### Miscellaneous Chores
+
+* release 0.1.3
+
 ## [0.1.2](https://github.com/lakeops-org/queryflux/compare/queryflux-v0.1.1...queryflux-v0.1.2) (2026-04-15)
 
 

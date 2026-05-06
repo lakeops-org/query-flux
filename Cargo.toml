@@ -15,10 +15,11 @@ members = [
     "crates/queryflux-config",
     "crates/queryflux-metrics",
     "crates/queryflux-fingerprint",
+    "crates/queryflux-guardrails",
 ]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/lakeops-org/queryflux"
@@ -73,6 +74,7 @@ queryflux-cluster-manager = { path = "crates/queryflux-cluster-manager" }
 queryflux-config = { path = "crates/queryflux-config" }
 queryflux-metrics = { path = "crates/queryflux-metrics" }
 queryflux-fingerprint = { path = "crates/queryflux-fingerprint" }
+queryflux-guardrails = { path = "crates/queryflux-guardrails" }
 
 # Arrow ecosystem — version must match what duckdb uses (bundled duckdb crate pins arrow)
 arrow = { version = "58.1.0", features = ["ipc"] }

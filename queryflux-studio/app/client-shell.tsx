@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  Bot,
   FileCode,
   LayoutDashboard,
   List,
@@ -11,6 +12,7 @@ import {
   Route,
   Server,
   Shield,
+  ShieldCheck,
   Zap,
 } from "lucide-react";
 import { LoginDialog } from "@/components/login-dialog";
@@ -22,7 +24,9 @@ const nav = [
   { href: "/engines", label: "Groups", icon: Layers },
   { href: "/scripts", label: "Scripts", icon: FileCode },
   { href: "/queries", label: "Query History", icon: List },
+  { href: "/agents", label: "Agents", icon: Bot },
   { href: "/security", label: "Security", icon: Shield },
+  { href: "/guardrails", label: "Guardrails", icon: ShieldCheck },
   { href: "/protocols", label: "Protocols", icon: Radio },
   { href: "/routing", label: "Routing", icon: Route },
 ];

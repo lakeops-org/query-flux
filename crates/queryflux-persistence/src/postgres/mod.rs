@@ -7,7 +7,10 @@ use crate::{
         UpsertClusterGroupConfig,
     },
     metrics_store::{ClusterSnapshot, MetricsStore, QueryRecord},
-    query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
+    query_history::{
+        AgentSummary, ConversationSummary, DashboardStats, EngineStatRow, GroupStatRow,
+        QueryFilters, QuerySummary,
+    },
     routing_slices::{
         collapse_rows_to_routers, expand_router_for_persistence, RoutingRulePersistRow,
     },
@@ -95,7 +98,9 @@ impl QueryHistoryStore for PostgresStore {
                       qr.rows_returned, qr.error_message, qr.routing_trace, qr.created_at,
                       qr.engine_elapsed_time_ms, qr.cpu_time_ms, qr.processed_rows, qr.processed_bytes,
                       qr.physical_input_bytes, qr.peak_memory_bytes, qr.spilled_bytes, qr.total_splits,
-                      qr.query_tags, qr.query_hash, qr.query_parameterized_hash, qr.translated_query_hash
+                      qr.query_tags, qr.query_hash, qr.query_parameterized_hash, qr.translated_query_hash,
+                      qr.agent_id, qr.conversation_id, qr.step_index, qr.tool_call_id, qr.query_intent,
+                      qr.guard_actions, qr.was_guard_blocked
                FROM query_records qr
                LEFT JOIN cluster_group_configs cg ON cg.id = qr.cluster_group_id
                LEFT JOIN cluster_configs cc ON cc.id = qr.cluster_id
@@ -215,6 +220,75 @@ impl QueryHistoryStore for PostgresStore {
                 .await
                 .map_err(|e| QueryFluxError::Persistence(format!("list_engines: {e}")))?;
         Ok(rows.into_iter().map(|(e,)| e).collect())
+    }
+
+    async fn list_agents(&self, limit: i64, offset: i64) -> Result<Vec<AgentSummary>> {
+        sqlx::query_as::<_, AgentSummary>(
+            r#"SELECT
+                   agent_id,
+                   COUNT(*)::bigint                           AS query_count,
+                   COUNT(DISTINCT conversation_id)::bigint    AS conversation_count,
+                   MIN(created_at)                            AS first_seen,
+                   MAX(created_at)                            AS last_seen
+               FROM query_records
+               WHERE agent_id IS NOT NULL
+               GROUP BY agent_id
+               ORDER BY last_seen DESC
+               LIMIT $1 OFFSET $2"#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("list_agents: {e}")))
+    }
+
+    async fn list_conversations(&self, agent_id: Option<&str>) -> Result<Vec<ConversationSummary>> {
+        sqlx::query_as::<_, ConversationSummary>(
+            r#"SELECT
+                   conversation_id,
+                   agent_id,
+                   COUNT(*)::bigint                                AS step_count,
+                   MIN(created_at)                                 AS first_seen,
+                   MAX(created_at)                                 AS last_seen,
+                   BOOL_OR(was_guard_blocked)                      AS has_blocked
+               FROM query_records
+               WHERE conversation_id IS NOT NULL
+                 AND ($1::text IS NULL OR agent_id = $1)
+               GROUP BY conversation_id, agent_id
+               ORDER BY last_seen DESC"#,
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("list_conversations: {e}")))
+    }
+
+    async fn get_conversation(&self, conversation_id: &str) -> Result<Vec<QuerySummary>> {
+        sqlx::query_as::<_, QuerySummary>(
+            r#"SELECT qr.id, qr.proxy_query_id, qr.backend_query_id,
+                      COALESCE(cg.name, qr.cluster_group) AS cluster_group,
+                      COALESCE(cc.name, qr.cluster_name)  AS cluster_name,
+                      qr.cluster_group_id, qr.cluster_id,
+                      qr.engine_type, qr.frontend_protocol, qr.username, qr.sql_preview, qr.translated_sql,
+                      qr.status, qr.was_translated,
+                      qr.source_dialect, qr.target_dialect, qr.queue_duration_ms, qr.execution_duration_ms,
+                      qr.rows_returned, qr.error_message, qr.routing_trace, qr.created_at,
+                      qr.engine_elapsed_time_ms, qr.cpu_time_ms, qr.processed_rows, qr.processed_bytes,
+                      qr.physical_input_bytes, qr.peak_memory_bytes, qr.spilled_bytes, qr.total_splits,
+                      qr.query_tags, qr.query_hash, qr.query_parameterized_hash, qr.translated_query_hash,
+                      qr.agent_id, qr.conversation_id, qr.step_index, qr.tool_call_id, qr.query_intent,
+                      qr.guard_actions, qr.was_guard_blocked
+               FROM query_records qr
+               LEFT JOIN cluster_group_configs cg ON cg.id = qr.cluster_group_id
+               LEFT JOIN cluster_configs cc ON cc.id = qr.cluster_id
+               WHERE qr.conversation_id = $1
+               ORDER BY qr.step_index ASC NULLS LAST, qr.created_at ASC"#,
+        )
+        .bind(conversation_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| QueryFluxError::Persistence(format!("get_conversation: {e}")))
     }
 }
 
@@ -754,42 +828,133 @@ impl ScriptLibraryStore for PostgresStore {
 #[async_trait]
 impl ProxySettingsStore for PostgresStore {
     async fn get_proxy_setting(&self, key: &str) -> Result<Option<serde_json::Value>> {
-        if key != "security_config" {
-            return Ok(None);
-        }
-        let row: Option<(serde_json::Value,)> =
-            sqlx::query_as(r#"SELECT config FROM security_settings WHERE singleton = TRUE"#)
+        match key {
+            "security_config" => {
+                let row: Option<(serde_json::Value,)> = sqlx::query_as(
+                    r#"SELECT config FROM security_settings WHERE singleton = TRUE"#,
+                )
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| QueryFluxError::Persistence(format!("get_proxy_setting: {e}")))?;
-        Ok(row.map(|(v,)| v))
+                Ok(row.map(|(v,)| v))
+            }
+            "guardrails_config" => {
+                let rows: Vec<(String, serde_json::Value)> =
+                    sqlx::query_as(r#"SELECT kind, guards FROM guardrails ORDER BY kind"#)
+                        .fetch_all(&self.pool)
+                        .await
+                        .map_err(|e| QueryFluxError::Persistence(format!("get guardrails: {e}")))?;
+                if rows.is_empty() {
+                    return Ok(None);
+                }
+                let mut global = serde_json::Value::Array(vec![]);
+                let mut groups = serde_json::Map::new();
+                for (kind, guards) in rows {
+                    if kind == "global" {
+                        global = guards;
+                    } else {
+                        groups.insert(kind, guards);
+                    }
+                }
+                Ok(Some(
+                    serde_json::json!({ "global": global, "groups": groups }),
+                ))
+            }
+            _ => Ok(None),
+        }
     }
 
     async fn set_proxy_setting(&self, key: &str, value: serde_json::Value) -> Result<()> {
-        if key != "security_config" {
-            return Ok(());
+        match key {
+            "security_config" => {
+                sqlx::query(
+                    r#"INSERT INTO security_settings (singleton, config) VALUES (TRUE, $1)
+                       ON CONFLICT (singleton) DO UPDATE SET config = EXCLUDED.config, updated_at = now()"#,
+                )
+                .bind(&value)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("set_proxy_setting: {e}")))?;
+            }
+            "guardrails_config" => {
+                let global = value
+                    .get("global")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]));
+                let groups = value
+                    .get("groups")
+                    .and_then(|g| g.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+
+                let mut tx = self
+                    .pool
+                    .begin()
+                    .await
+                    .map_err(|e| QueryFluxError::Persistence(format!("guardrails tx: {e}")))?;
+
+                // Upsert global row.
+                sqlx::query(
+                    r#"INSERT INTO guardrails (kind, guards) VALUES ('global', $1)
+                       ON CONFLICT (kind) DO UPDATE SET guards = EXCLUDED.guards, updated_at = now()"#,
+                )
+                .bind(&global)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("upsert global guardrail: {e}")))?;
+
+                // Upsert per-group rows.
+                for (group, guards) in &groups {
+                    sqlx::query(
+                        r#"INSERT INTO guardrails (kind, guards) VALUES ($1, $2)
+                           ON CONFLICT (kind) DO UPDATE SET guards = EXCLUDED.guards, updated_at = now()"#,
+                    )
+                    .bind(group)
+                    .bind(guards)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| QueryFluxError::Persistence(format!("upsert group guardrail: {e}")))?;
+                }
+
+                // Remove rows for groups no longer in the config.
+                let kept_kinds: Vec<String> = std::iter::once("global".to_string())
+                    .chain(groups.keys().cloned())
+                    .collect();
+                sqlx::query(r#"DELETE FROM guardrails WHERE kind != ALL($1)"#)
+                    .bind(&kept_kinds)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| {
+                        QueryFluxError::Persistence(format!("delete stale guardrails: {e}"))
+                    })?;
+
+                tx.commit().await.map_err(|e| {
+                    QueryFluxError::Persistence(format!("guardrails tx commit: {e}"))
+                })?;
+            }
+            _ => {}
         }
-        sqlx::query(
-            r#"INSERT INTO security_settings (singleton, config) VALUES (TRUE, $1)
-               ON CONFLICT (singleton) DO UPDATE SET config = EXCLUDED.config, updated_at = now()"#,
-        )
-        .bind(&value)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| QueryFluxError::Persistence(format!("set_proxy_setting: {e}")))?;
         Ok(())
     }
 
     async fn delete_proxy_setting(&self, key: &str) -> Result<()> {
-        if key != "security_config" {
-            return Ok(());
+        match key {
+            "security_config" => {
+                sqlx::query(
+                    r#"UPDATE security_settings SET config = '{}'::jsonb, updated_at = now() WHERE singleton = TRUE"#,
+                )
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QueryFluxError::Persistence(format!("delete_proxy_setting: {e}")))?;
+            }
+            "guardrails_config" => {
+                sqlx::query(r#"DELETE FROM guardrails"#)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| QueryFluxError::Persistence(format!("delete guardrails: {e}")))?;
+            }
+            _ => {}
         }
-        sqlx::query(
-            r#"UPDATE security_settings SET config = '{}'::jsonb, updated_at = now() WHERE singleton = TRUE"#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| QueryFluxError::Persistence(format!("delete_proxy_setting: {e}")))?;
         Ok(())
     }
 }
@@ -1110,6 +1275,8 @@ impl MetricsStore for PostgresStore {
         };
 
         let query_tags_json = tags_to_json(&r.query_tags);
+        let guard_actions_json =
+            serde_json::to_value(&r.guard_actions).unwrap_or(serde_json::Value::Array(vec![]));
         sqlx::query(
             r#"INSERT INTO query_records
                 (proxy_query_id, backend_query_id, cluster_group, cluster_name, engine_type,
@@ -1119,9 +1286,12 @@ impl MetricsStore for PostgresStore {
                  created_at, engine_elapsed_time_ms, cpu_time_ms, processed_rows, processed_bytes,
                  physical_input_bytes, peak_memory_bytes, spilled_bytes, total_splits,
                  cluster_group_id, cluster_id, query_tags,
-                 query_hash, query_parameterized_hash, translated_query_hash)
+                 query_hash, query_parameterized_hash, translated_query_hash,
+                 agent_id, conversation_id, step_index, tool_call_id, query_intent,
+                 guard_actions, was_guard_blocked)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)"#,
+                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,
+                       $36,$37,$38,$39,$40,$41,$42)"#,
         )
         .bind(&r.proxy_query_id)
         .bind(&r.backend_query_id)
@@ -1158,6 +1328,13 @@ impl MetricsStore for PostgresStore {
         .bind(r.query_hash)
         .bind(r.query_parameterized_hash)
         .bind(r.translated_query_hash)
+        .bind(&r.agent_id)
+        .bind(&r.conversation_id)
+        .bind(r.step_index)
+        .bind(&r.tool_call_id)
+        .bind(&r.query_intent)
+        .bind(guard_actions_json)
+        .bind(r.was_guard_blocked)
         .execute(&self.pool)
         .await
         .map_err(|e| QueryFluxError::Persistence(format!("Insert query_records: {e}")))?;

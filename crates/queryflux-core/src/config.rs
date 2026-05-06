@@ -69,6 +69,52 @@ pub struct ProxyConfig {
     /// Admin REST API (port 9000) configuration.
     #[serde(default)]
     pub admin_api: AdminApiConfig,
+    /// Guardrails evaluated on every query after routing and translation.
+    /// Omit to disable all guardrails.
+    #[serde(default)]
+    pub guardrails: Option<GuardrailsConfig>,
+}
+
+// ---------------------------------------------------------------------------
+// Guardrails configuration
+// ---------------------------------------------------------------------------
+
+/// Top-level guardrails section in the YAML config.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GuardrailsConfig {
+    /// Guards that run for every query regardless of cluster group.
+    #[serde(default)]
+    pub global: Vec<GuardSpecConfig>,
+    /// Per-group additional guards appended after the global chain.
+    #[serde(default)]
+    pub groups: HashMap<String, Vec<GuardSpecConfig>>,
+}
+
+/// One guard entry in the config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GuardSpecConfig {
+    pub kind: GuardKindConfig,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `row_limit`: maximum rows allowed (default: none).
+    #[serde(default)]
+    pub max_rows: Option<u64>,
+    /// `require_predicate`: table patterns this guard applies to.
+    #[serde(default)]
+    pub applies_to: Option<Vec<String>>,
+}
+
+/// Which kind of guard this is.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardKindConfig {
+    BuiltIn,
+    HttpWebhook {
+        url: String,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
+    },
 }
 
 // ---------------------------------------------------------------------------

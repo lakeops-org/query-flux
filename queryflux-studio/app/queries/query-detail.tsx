@@ -1,8 +1,131 @@
 "use client";
 
-import { X, Clock, Server, User, Rows3, Hash, ArrowRight, Fingerprint, Cpu, Database, MemoryStick, HardDrive, Tag } from "lucide-react";
+import { X, Clock, Server, User, Rows3, Hash, ArrowRight, Fingerprint, Cpu, Database, MemoryStick, HardDrive, Tag, Bot, Shield } from "lucide-react";
 import type { QueryHistoryRecord, RoutingTrace } from "@/lib/api-types";
 import { StatusBadge, EngineBadge, formatDuration, formatDateTime } from "@/components/ui-helpers";
+import { GuardActionsList } from "@/components/guard-actions-list";
+
+/** Reusable detail body — used both in the slide-over panel and inline in agent conversations. */
+export function QueryDetailContent({ query }: { query: QueryHistoryRecord }) {
+  return (
+    <>
+      {/* Meta grid */}
+      <div className="px-6 py-5 grid grid-cols-2 gap-4 border-b border-slate-100">
+        <MetaItem icon={<Clock size={13} />} label="Time" value={formatDateTime(new Date(query.created_at))} />
+        <MetaItem icon={<Clock size={13} />} label="Duration" value={formatDuration(query.execution_duration_ms)} />
+        <MetaItem icon={<Server size={13} />} label="Cluster" value={`${query.cluster_group} / ${query.cluster_name}`} />
+        <MetaItem icon={<Hash size={13} />} label="Protocol" value={query.frontend_protocol} />
+        <MetaItem icon={<User size={13} />} label="User" value={query.username ?? "—"} />
+        <MetaItem icon={<Rows3 size={13} />} label="Rows" value={query.rows_returned?.toLocaleString() ?? "—"} />
+        <MetaItem icon={<Fingerprint size={13} />} label="Proxy ID" value={query.proxy_query_id} />
+        {query.backend_query_id && (
+          <MetaItem icon={<Fingerprint size={13} />} label="Engine Query ID" value={query.backend_query_id} />
+        )}
+      </div>
+
+      <div className="px-6 py-5 space-y-6">
+        {/* Agent identity */}
+        {query.agent_id && (
+          <div>
+            <SectionLabel>Agent</SectionLabel>
+            <div className="grid grid-cols-2 gap-3">
+              <MetaItem icon={<Bot size={13} />} label="Agent ID" value={query.agent_id} />
+              {query.conversation_id && (
+                <MetaItem icon={<Bot size={13} />} label="Conversation" value={query.conversation_id} />
+              )}
+              {query.step_index != null && (
+                <MetaItem icon={<Hash size={13} />} label="Step" value={String(query.step_index)} />
+              )}
+              {query.query_intent && (
+                <MetaItem icon={<Bot size={13} />} label="Intent" value={query.query_intent} />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Guard actions */}
+        {query.guard_actions && query.guard_actions.length > 0 && (
+          <div>
+            <SectionLabel>
+              <span className="flex items-center gap-1.5">
+                <Shield size={11} />
+                Guard Actions
+              </span>
+            </SectionLabel>
+            <GuardActionsList actions={query.guard_actions} />
+          </div>
+        )}
+
+        {/* Tags */}
+        {query.query_tags && Object.keys(query.query_tags).length > 0 && (
+          <div>
+            <SectionLabel>Tags</SectionLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(query.query_tags).map(([key, val]) => (
+                <span
+                  key={key}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 text-xs font-medium"
+                >
+                  <Tag size={9} className="flex-shrink-0" />
+                  {val != null ? `${key}: ${val}` : key}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* SQL */}
+        <div>
+          <SectionLabel>SQL</SectionLabel>
+          <pre className="bg-slate-950 text-emerald-300 rounded-xl p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800">
+            {query.sql_preview || "—"}
+          </pre>
+        </div>
+
+        {/* Translation */}
+        {query.was_translated && (
+          <div>
+            <SectionLabel>Translated SQL</SectionLabel>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="px-2 py-0.5 rounded-md bg-violet-100 text-violet-700 text-xs font-mono">{query.source_dialect}</span>
+              <ArrowRight size={12} className="text-violet-400" />
+              <span className="px-2 py-0.5 rounded-md bg-violet-200 text-violet-800 text-xs font-mono font-semibold">{query.target_dialect}</span>
+            </div>
+            <pre className="bg-slate-950 text-violet-300 rounded-xl p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed border border-violet-900/40">
+              {query.translated_sql ?? "—"}
+            </pre>
+          </div>
+        )}
+
+        {/* Routing trace */}
+        {query.routing_trace && (
+          <div>
+            <SectionLabel>Routing Trace</SectionLabel>
+            <RoutingTraceView trace={query.routing_trace as RoutingTrace} />
+          </div>
+        )}
+
+        {/* Engine stats */}
+        {hasEngineStats(query) && (
+          <div>
+            <SectionLabel>Engine Stats</SectionLabel>
+            <EngineStatsView query={query} />
+          </div>
+        )}
+
+        {/* Error */}
+        {query.error_message && (
+          <div>
+            <SectionLabel className="text-red-500">Error</SectionLabel>
+            <pre className="bg-red-50 text-red-700 rounded-xl p-4 text-xs font-mono whitespace-pre-wrap border border-red-100">
+              {query.error_message}
+            </pre>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
 
 export function QueryDetail({
   query,
@@ -39,88 +162,7 @@ export function QueryDetail({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
-          {/* Meta grid */}
-          <div className="px-6 py-5 grid grid-cols-2 gap-4 border-b border-slate-100">
-            <MetaItem icon={<Clock size={13} />} label="Time" value={formatDateTime(new Date(query.created_at))} />
-            <MetaItem icon={<Clock size={13} />} label="Duration" value={formatDuration(query.execution_duration_ms)} />
-            <MetaItem icon={<Server size={13} />} label="Cluster" value={`${query.cluster_group} / ${query.cluster_name}`} />
-            <MetaItem icon={<Hash size={13} />} label="Protocol" value={query.frontend_protocol} />
-            <MetaItem icon={<User size={13} />} label="User" value={query.username ?? "—"} />
-            <MetaItem icon={<Rows3 size={13} />} label="Rows" value={query.rows_returned?.toLocaleString() ?? "—"} />
-            <MetaItem icon={<Fingerprint size={13} />} label="Proxy ID" value={query.proxy_query_id} />
-            {query.backend_query_id && (
-              <MetaItem icon={<Fingerprint size={13} />} label="Engine Query ID" value={query.backend_query_id} />
-            )}
-          </div>
-
-          <div className="px-6 py-5 space-y-6">
-            {/* Tags */}
-            {query.query_tags && Object.keys(query.query_tags).length > 0 && (
-              <div>
-                <SectionLabel>Tags</SectionLabel>
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.entries(query.query_tags).map(([key, val]) => (
-                    <span
-                      key={key}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 text-xs font-medium"
-                    >
-                      <Tag size={9} className="flex-shrink-0" />
-                      {val != null ? `${key}: ${val}` : key}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* SQL */}
-            <div>
-              <SectionLabel>SQL</SectionLabel>
-              <pre className="bg-slate-950 text-emerald-300 rounded-xl p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800">
-                {query.sql_preview || "—"}
-              </pre>
-            </div>
-
-            {/* Translation */}
-            {query.was_translated && (
-              <div>
-                <SectionLabel>Translated SQL</SectionLabel>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="px-2 py-0.5 rounded-md bg-violet-100 text-violet-700 text-xs font-mono">{query.source_dialect}</span>
-                  <ArrowRight size={12} className="text-violet-400" />
-                  <span className="px-2 py-0.5 rounded-md bg-violet-200 text-violet-800 text-xs font-mono font-semibold">{query.target_dialect}</span>
-                </div>
-                <pre className="bg-slate-950 text-violet-300 rounded-xl p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed border border-violet-900/40">
-                  {query.translated_sql ?? "—"}
-                </pre>
-              </div>
-            )}
-
-            {/* Routing trace */}
-            {query.routing_trace && (
-              <div>
-                <SectionLabel>Routing Trace</SectionLabel>
-                <RoutingTraceView trace={query.routing_trace as RoutingTrace} />
-              </div>
-            )}
-
-            {/* Engine stats */}
-            {hasEngineStats(query) && (
-              <div>
-                <SectionLabel>Engine Stats</SectionLabel>
-                <EngineStatsView query={query} />
-              </div>
-            )}
-
-            {/* Error */}
-            {query.error_message && (
-              <div>
-                <SectionLabel className="text-red-500">Error</SectionLabel>
-                <pre className="bg-red-50 text-red-700 rounded-xl p-4 text-xs font-mono whitespace-pre-wrap border border-red-100">
-                  {query.error_message}
-                </pre>
-              </div>
-            )}
-          </div>
+          <QueryDetailContent query={query} />
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { getQueries, getDistinctEngines, getClusters } from "@/lib/api";
 import { QueryTable } from "./query-table";
-import { Search, SlidersHorizontal, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronLeft, ChevronRight, History } from "lucide-react";
 
 export const revalidate = 0;
 
@@ -41,11 +41,26 @@ export default async function QueriesPage({ searchParams }: Props) {
   const filterBase = filterQs.toString() ? `?${filterQs}&` : "?";
 
   return (
-    <div className="p-8 space-y-6 max-w-7xl">
+    <div className="p-6 sm:p-8 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Query History</h1>
-        <p className="text-sm text-slate-500 mt-1">Click a row to inspect routing trace, SQL, and timing.</p>
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-indigo-50/60 px-6 py-5 shadow-xs">
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 text-xs font-medium">
+                <History size={12} />
+                History
+              </span>
+              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Query History</h1>
+            </div>
+            <p className="text-sm text-slate-500 mt-2 max-w-2xl">Click a row to inspect routing trace, SQL, and timing.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">Page <span className="tabular-nums">{page}</span></span>
+            <span className="w-px h-4 bg-slate-200" />
+            <span className="text-xs text-slate-400">Showing <span className="tabular-nums">{queries.length}</span>{queries.length === limit ? "+" : ""} results</span>
+          </div>
+        </div>
       </div>
 
       {/* Filter bar */}
@@ -113,33 +128,41 @@ export default async function QueriesPage({ searchParams }: Props) {
       <QueryTable queries={queries} />
 
       {/* Pagination */}
-      {(page > 1 || queries.length === limit) && (
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">
-            Page {page} · {queries.length} results
-          </span>
-          <div className="flex items-center gap-2">
-            {page > 1 && (
-              <a
-                href={`/queries${filterBase}page=${page - 1}`}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-white hover:border-indigo-300 hover:text-indigo-600 transition-all shadow-xs"
-              >
-                <ChevronLeft size={14} />
-                Previous
-              </a>
-            )}
-            {queries.length === limit && (
-              <a
-                href={`/queries${filterBase}page=${page + 1}`}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-white hover:border-indigo-300 hover:text-indigo-600 transition-all shadow-xs"
-              >
-                Next
-                <ChevronRight size={14} />
-              </a>
-            )}
-          </div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-slate-400">
+          Page {page} · {queries.length} result{queries.length !== 1 ? "s" : ""}
+        </span>
+        <div className="flex items-center gap-2">
+          {page > 1 ? (
+            <a
+              href={`/queries${filterBase}page=${page - 1}`}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-white hover:border-indigo-300 hover:text-indigo-600 transition-all shadow-xs"
+            >
+              <ChevronLeft size={14} />
+              Previous
+            </a>
+          ) : (
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-300 cursor-not-allowed">
+              <ChevronLeft size={14} />
+              Previous
+            </span>
+          )}
+          {queries.length === limit ? (
+            <a
+              href={`/queries${filterBase}page=${page + 1}`}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-white hover:border-indigo-300 hover:text-indigo-600 transition-all shadow-xs"
+            >
+              Next
+              <ChevronRight size={14} />
+            </a>
+          ) : (
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-300 cursor-not-allowed">
+              Next
+              <ChevronRight size={14} />
+            </span>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

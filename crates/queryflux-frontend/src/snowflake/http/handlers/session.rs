@@ -74,6 +74,7 @@ pub async fn login_request(
         database: database.clone().or_else(|| schema.clone()),
         tags: QueryTags::default(),
         extra: HashMap::new(),
+        agent_context: None,
     };
     let group = {
         let live = state.live.read().await;

@@ -15,7 +15,10 @@ use crate::{
         UpsertClusterGroupConfig,
     },
     metrics_store::{ClusterSnapshot, MetricsStore, QueryRecord},
-    query_history::{DashboardStats, EngineStatRow, GroupStatRow, QueryFilters, QuerySummary},
+    query_history::{
+        AgentSummary, ConversationSummary, DashboardStats, EngineStatRow, GroupStatRow,
+        QueryFilters, QuerySummary,
+    },
     script_library::{
         is_valid_script_kind, UpsertUserScript, UserScriptRecord, KIND_TRANSLATION_FIXUP,
     },
@@ -111,6 +114,13 @@ impl InMemoryPersistence {
             query_hash: record.query_hash,
             query_parameterized_hash: record.query_parameterized_hash,
             translated_query_hash: record.translated_query_hash,
+            agent_id: record.agent_id,
+            conversation_id: record.conversation_id,
+            step_index: record.step_index,
+            tool_call_id: record.tool_call_id,
+            query_intent: record.query_intent,
+            guard_actions: serde_json::to_value(&record.guard_actions).ok(),
+            was_guard_blocked: record.was_guard_blocked,
         }
     }
 }
@@ -304,6 +314,21 @@ impl QueryHistoryStore for InMemoryPersistence {
             .collect();
         engines.sort();
         Ok(engines)
+    }
+
+    async fn list_agents(&self, _limit: i64, _offset: i64) -> Result<Vec<AgentSummary>> {
+        Ok(vec![])
+    }
+
+    async fn list_conversations(
+        &self,
+        _agent_id: Option<&str>,
+    ) -> Result<Vec<ConversationSummary>> {
+        Ok(vec![])
+    }
+
+    async fn get_conversation(&self, _conversation_id: &str) -> Result<Vec<QuerySummary>> {
+        Ok(vec![])
     }
 }
 
