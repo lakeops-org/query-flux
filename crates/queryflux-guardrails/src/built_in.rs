@@ -224,15 +224,14 @@ impl Guard for RequirePredicateGuard {
                 if !upper.trim_start().starts_with("SELECT") {
                     return GuardResult::allow();
                 }
-                if self.applies_to.is_empty()
-                    || table_name_matches_any_str(&upper, &self.applies_to)
+                if (self.applies_to.is_empty()
+                    || table_name_matches_any_str(&upper, &self.applies_to))
+                    && !upper.contains(" WHERE ")
                 {
-                    if !upper.contains(" WHERE ") {
-                        return GuardResult::deny(
-                            "query must include a WHERE predicate",
-                            "MISSING_PREDICATE",
-                        );
-                    }
+                    return GuardResult::deny(
+                        "query must include a WHERE predicate",
+                        "MISSING_PREDICATE",
+                    );
                 }
                 GuardResult::allow()
             }
@@ -251,7 +250,7 @@ fn select_lacks_where(expr: &Expression, patterns: &[String]) -> bool {
             if patterns.is_empty() {
                 return true;
             }
-            s.from.as_ref().map_or(false, |from| {
+            s.from.as_ref().is_some_and(|from| {
                 from.expressions
                     .iter()
                     .any(|e| from_expr_matches(e, patterns))
